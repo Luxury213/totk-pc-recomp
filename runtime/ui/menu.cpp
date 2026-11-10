@@ -710,24 +710,25 @@ static const char *coop_action_name(int act) {
 }
 
 static void rows_coop(void) {
-    opt_group_text("Multijugador cooperativo (Mundo compartido)");
+    opt_group_text("Multijugador experimental (Presencia)");
     static const char *const modes[] = {"off", "bot", "host", "client"};
     static const char *const mode_names[] = {
         "Desactivado",
         "Bot de prueba (3D local)",
-        "Crear sala (Host UDP)",
-        "Unirse (Cliente UDP)",
+        "Crear sala (Host ENet)",
+        "Unirse (Cliente ENet)",
     };
     const char *cur = cfg_value("TOTK_COOP_MODE");
     int idx = 0;
     for (int i = 0; i < 4; i++)
         if (!strcmp(cur, modes[i])) idx = i;
     int s = opt_text_row("TOTK_COOP_MODE", "Modo cooperativo", mode_names[idx], nullptr,
-                         "Sincroniza un mundo compartido entre los jugadores conectados.\n\n"
-                         "- Bot de prueba (3D local): genera un compañero en 3D frente a Link para probar el marcador "
-                         "en el mundo y las notificaciones de misiones compartidas sin abrir dos instancias del juego.\n"
-                         "- Crear sala (Host UDP): abre el puerto UDP 7777 y actúa como autoridad del mundo compartido.\n"
-                         "- Unirse (Cliente UDP): se conecta al Host configurado en totk.ini (coop_ip / coop_port).",
+                         "Prototipo experimental: muestra posiciones y avisos entre dos jugadores. "
+                         "Todavía no comparte enemigos, físicas, misiones ni guardados.\n\n"
+                         "- Bot de prueba (3D local): dibuja un compañero visual; no tiene colisiones ni IA del juego.\n"
+                         "- Crear sala (Host ENet): escucha en el puerto UDP configurado (7777 por defecto).\n"
+                         "- Unirse (Cliente ENet): usa la dirección IPv4 del anfitrión en la VPN privada "
+                         "(coop_ip / coop_port). Ambos necesitan esta versión cooperativa y TotK 1.4.3.",
                          false);
     if (s == 2 || s == 1) {
         cfg_set("TOTK_COOP_MODE", modes[(idx + 1) % 4]);
@@ -739,21 +740,46 @@ static void rows_coop(void) {
     if (g_coop.mode != COOP_OFF) {
         char desc[768];
         snprintf(desc, sizeof desc,
-                 "Estado de la sesión de mundo compartido:\n"
+                 "Estado del prototipo de presencia:\n"
                  "- Conexión: %s\n"
-                 "- Posición 3D de Link: (%.1f, %.1f, %.1f) · Estado: %s\n"
-                 "- Posición 3D del compañero: (%.1f, %.1f, %.1f) · Estado: %s\n"
-                 "- Paquetes UDP enviados / recibidos: %u / %u\n"
-                 "- Eventos de mundo / misiones sincronizados: %u",
+                 "- Posición 3D exacta de Link: (%.2f, %.2f, %.2f) · Estado: %s\n"
+                 "- Posición 3D del compañero: (%.2f, %.2f, %.2f) · Estado: %s\n"
+                 "- Mensajes ENet enviados / recibidos: %u / %u\n"
+                 "- Avisos de sesión (sin replicar progreso): %u",
                  g_coop.status_text, g_coop.local_pos[0], g_coop.local_pos[1], g_coop.local_pos[2],
                  coop_action_name(g_coop.local_action), g_coop.peer_pos[0], g_coop.peer_pos[1], g_coop.peer_pos[2],
                  coop_action_name(g_coop.peer_action), g_coop.packets_tx, g_coop.packets_rx, g_coop.world_syncs);
         opt_text_row("##coop_status", "Estado de la sala y posición 3D", g_coop.status_text, nullptr, desc, false);
-        int call = opt_text_row("##coop_sync", "Sincronizar misión / Llamar compañero", "Enviar ahora", nullptr,
-                                "Envía un evento de progreso del mundo compartido por red y coloca la baliza del "
-                                "compañero frente a la posición actual de Link en Hyrule.",
+        opt_text_row("##coop_native", "Personaje remoto e interacción", "Integración pendiente", nullptr,
+                     "Esta compilación permite probar la conexión y los marcadores visuales. "
+                     "El personaje remoto real, las físicas y el progreso compartido aún no están habilitados. "
+                     "Las acciones nativas permanecen bloqueadas mientras se verifica la integración con el motor.", false);
+
+        if (g_coop.has_local_pos) {
+            opt_disable_next_text("No disponible en este prototipo");
+            opt_text_row("##coop_tp", "Teletransportarse al compañero", "No disponible", nullptr,
+                         "El teletransporte todavía no está implementado de forma segura.", false);
+        }
+
+        if (!g_coop.has_local_pos) opt_disable_next_text("Carga una partida para enviar una baliza");
+        int call = opt_text_row("##coop_sync", "Llamar compañero / Enviar baliza", "Enviar ahora", nullptr,
+                                "Coloca al bot visual 4.5 m frente a Link. En una sesión UDP solo envía un aviso; "
+                                "no mueve al otro jugador ni sincroniza misiones.",
                                 false);
         if (call == 2) coop_summon_partner();
+
+        if (g_coop.mode == COOP_BOT) {
+            const char *bm_label =
+                g_coop.bot_mode == COOP_BOT_STAY ? "Esperar en posición fija" : "Seguir a Link corriendo";
+            int bm = opt_text_row("##coop_bot_mode", "Comportamiento del Bot 3D", bm_label, nullptr,
+                                  "Elige cómo actúa el compañero de prueba 3D en Hyrule:\n\n"
+                                  "- Seguir a Link corriendo: se queda quieto cuando estás cerca y corre tras de ti "
+                                  "cuando te alejas más de 5.5 m.\n"
+                                  "- Esperar en posición fija: mantiene su coordenada actual mientras te alejas. "
+                                  "El teletransporte no está disponible todavía.",
+                                  false);
+            if (bm == 2 || bm == 1 || bm == -1) coop_toggle_bot_mode();
+        }
     }
 }
 
@@ -1553,10 +1579,137 @@ static void perf_draw(const MenuTarget *t, float scale) {
     dl->AddText(ImVec2(p.x + pad, p.y + pad), IM_COL32(255, 255, 255, 235), g_perf_text);
 }
 
+static bool coop_proj_pt(const float vp[16], float x, float y, float z, float w, float h, ImVec2 *out) {
+    float cx = vp[0] * x + vp[1] * y + vp[2] * z + vp[3];
+    float cy = vp[4] * x + vp[5] * y + vp[6] * z + vp[7];
+    float cw = vp[12] * x + vp[13] * y + vp[14] * z + vp[15];
+    if (cw <= 0.1f) return false;
+    out->x = ((cx / cw) * 0.5f + 0.5f) * w;
+    out->y = (0.5f - (cy / cw) * 0.5f) * h;
+    return true;
+}
+
+static void coop_draw_3d_avatar(ImDrawList *dl, float w, float h, float scale) {
+    const float *vp = g_coop.vp;
+    float px = g_coop.peer_pos[0], py = g_coop.peer_pos[1], pz = g_coop.peer_pos[2];
+    float yaw = g_coop.peer_yaw * (3.14159265f / 180.0f);
+    float sy = sinf(yaw), cy = cosf(yaw);
+    // Character local basis in 3D world space: F = forward (+Z_char), R = right shoulder (+X_char), U = up (+Y)
+    auto wpt = [&](float rx, float uy, float fz, ImVec2 *out) -> bool {
+        float wx = px + cy * rx + sy * fz;
+        float wy = py + uy;
+        float wz = pz - sy * rx + cy * fz;
+        return coop_proj_pt(vp, wx, wy, wz, w, h, out);
+    };
+
+    ImU32 c_ring = IM_COL32(65, 240, 175, 195);
+    ImU32 c_tunic_fill = IM_COL32(28, 175, 148, 155);
+    ImU32 c_tunic_edge = IM_COL32(125, 255, 215, 240);
+    ImU32 c_limb = IM_COL32(215, 255, 240, 235);
+    ImU32 c_gold = IM_COL32(255, 220, 95, 240);
+
+    // 1. 3D Ground Ring (radius 0.52 m on terrain plane Y = py) + forward direction chevron
+    ImVec2 ring[12];
+    int ring_ok = 1;
+    for (int i = 0; i < 12; i++) {
+        float a = (float)i * (6.2831853f / 12.0f);
+        if (!wpt(cosf(a) * 0.52f, 0.02f, sinf(a) * 0.52f, &ring[i])) ring_ok = 0;
+    }
+    if (ring_ok) {
+        dl->AddPolyline(ring, 12, c_ring, ImDrawFlags_Closed, 2.0f * scale);
+        ImVec2 tip, fl, fr;
+        if (wpt(0.0f, 0.03f, 0.78f, &tip) && wpt(-0.20f, 0.03f, 0.48f, &fl) && wpt(0.20f, 0.03f, 0.48f, &fr)) {
+            dl->AddTriangleFilled(tip, fl, fr, c_gold);
+        }
+    }
+
+    // 2. Articulated 3D Link Silhouette (1.72 m tall in world space)
+    float walk = g_coop.peer_speed > 0.15f ? sinf(g_coop.peer_anim_phase) : 0.0f;
+    float stride = walk * 0.28f;
+    float lift_l = walk > 0.0f ? walk * 0.10f : 0.0f;
+    float lift_r = walk < 0.0f ? -walk * 0.10f : 0.0f;
+
+    ImVec2 hip_l, hip_r, knee_l, knee_r, foot_l, foot_r;
+    ImVec2 sh_l, sh_r, neck, pelv, head_top, head_chin, head_l, head_r, hood_back;
+    if (wpt(-0.13f, 0.86f, 0.0f, &hip_l) && wpt(0.13f, 0.86f, 0.0f, &hip_r) &&
+        wpt(-0.14f, 0.45f + lift_l * 0.5f, stride * 0.55f, &knee_l) &&
+        wpt(0.14f, 0.45f + lift_r * 0.5f, -stride * 0.55f, &knee_r) &&
+        wpt(-0.14f, 0.02f + lift_l, stride, &foot_l) && wpt(0.14f, 0.02f + lift_r, -stride, &foot_r) &&
+        wpt(-0.22f, 1.36f, 0.0f, &sh_l) && wpt(0.22f, 1.36f, 0.0f, &sh_r) &&
+        wpt(0.0f, 1.40f, 0.0f, &neck) && wpt(0.0f, 0.86f, 0.0f, &pelv)) {
+        // Legs
+        dl->AddLine(hip_l, knee_l, c_limb, 2.8f * scale);
+        dl->AddLine(knee_l, foot_l, c_limb, 2.6f * scale);
+        dl->AddLine(hip_r, knee_r, c_limb, 2.8f * scale);
+        dl->AddLine(knee_r, foot_r, c_limb, 2.6f * scale);
+
+        // Champion's Tunic 3D torso quad
+        dl->AddQuadFilled(sh_l, sh_r, hip_r, hip_l, c_tunic_fill);
+        dl->AddQuad(sh_l, sh_r, hip_r, hip_l, c_tunic_edge, 2.2f * scale);
+
+        // Head & Hylian hood point
+        if (wpt(0.0f, 1.72f, 0.02f, &head_top) && wpt(0.0f, 1.44f, 0.06f, &head_chin) &&
+            wpt(-0.13f, 1.58f, 0.0f, &head_l) && wpt(0.13f, 1.58f, 0.0f, &head_r)) {
+            dl->AddQuadFilled(head_top, head_r, head_chin, head_l, IM_COL32(65, 235, 185, 190));
+            dl->AddQuad(head_top, head_r, head_chin, head_l, c_tunic_edge, 2.0f * scale);
+            if (wpt(0.0f, 1.52f, -0.22f, &hood_back)) {
+                dl->AddLine(head_top, hood_back, c_gold, 2.0f * scale);
+            }
+        }
+
+        // Arms & Action Equipment in 3D space
+        ImVec2 elb_l, elb_r, hand_l, hand_r;
+        if (g_coop.peer_action == COOP_ACT_BOW) {
+            // Aiming Bow pose: left hand holds a 3D bow arc forward, right hand draws string to cheek
+            if (wpt(-0.10f, 1.35f, 0.28f, &elb_l) && wpt(0.0f, 1.35f, 0.56f, &hand_l) &&
+                wpt(0.26f, 1.38f, -0.10f, &elb_r) && wpt(0.06f, 1.42f, 0.10f, &hand_r)) {
+                dl->AddLine(sh_l, elb_l, c_limb, 2.5f * scale);
+                dl->AddLine(elb_l, hand_l, c_limb, 2.5f * scale);
+                dl->AddLine(sh_r, elb_r, c_limb, 2.5f * scale);
+                dl->AddLine(elb_r, hand_r, c_limb, 2.5f * scale);
+                ImVec2 bow_t, bow_m, bow_b, arr_tip;
+                if (wpt(0.0f, 1.78f, 0.44f, &bow_t) && wpt(0.0f, 1.35f, 0.62f, &bow_m) &&
+                    wpt(0.0f, 0.92f, 0.44f, &bow_b) && wpt(0.0f, 1.36f, 0.80f, &arr_tip)) {
+                    dl->AddLine(bow_t, bow_m, c_gold, 2.6f * scale);
+                    dl->AddLine(bow_m, bow_b, c_gold, 2.6f * scale);
+                    dl->AddLine(bow_t, hand_r, IM_COL32(255, 255, 255, 200), 1.4f * scale);
+                    dl->AddLine(bow_b, hand_r, IM_COL32(255, 255, 255, 200), 1.4f * scale);
+                    dl->AddLine(hand_r, arr_tip, IM_COL32(120, 255, 220, 255), 2.2f * scale);
+                }
+            }
+        } else if (g_coop.peer_action == COOP_ACT_ABILITY) {
+            // Zonai Ability pose (Ultrahand / Recall): right hand raised channeling glowing Zonai energy
+            if (wpt(-0.28f, 1.12f, 0.05f, &elb_l) && wpt(-0.26f, 0.90f, 0.12f, &hand_l) &&
+                wpt(0.28f, 1.52f, 0.20f, &elb_r) && wpt(0.22f, 1.82f, 0.36f, &hand_r)) {
+                dl->AddLine(sh_l, elb_l, c_limb, 2.5f * scale);
+                dl->AddLine(elb_l, hand_l, c_limb, 2.5f * scale);
+                dl->AddLine(sh_r, elb_r, c_limb, 2.6f * scale);
+                dl->AddLine(elb_r, hand_r, IM_COL32(95, 255, 175, 255), 3.0f * scale);
+                dl->AddCircleFilled(hand_r, 7.0f * scale, IM_COL32(80, 255, 165, 230));
+                dl->AddCircle(hand_r, 12.0f * scale, c_gold, 16, 2.0f * scale);
+            }
+        } else {
+            // Exploring / Running pose with swinging arms and Master Sword on back
+            if (wpt(-0.26f, 1.10f, -stride * 0.45f, &elb_l) && wpt(-0.25f, 0.86f, -stride * 0.85f, &hand_l) &&
+                wpt(0.26f, 1.10f, stride * 0.45f, &elb_r) && wpt(0.25f, 0.86f, stride * 0.85f, &hand_r)) {
+                dl->AddLine(sh_l, elb_l, c_limb, 2.5f * scale);
+                dl->AddLine(elb_l, hand_l, c_limb, 2.5f * scale);
+                dl->AddLine(sh_r, elb_r, c_limb, 2.5f * scale);
+                dl->AddLine(elb_r, hand_r, c_limb, 2.5f * scale);
+            }
+            ImVec2 sw_hilt, sw_tip;
+            if (wpt(0.16f, 1.58f, -0.14f, &sw_hilt) && wpt(-0.18f, 0.88f, -0.15f, &sw_tip)) {
+                dl->AddLine(sw_hilt, sw_tip, c_gold, 2.4f * scale);
+            }
+        }
+    }
+}
+
 static void coop_draw(const MenuTarget *t, float scale) {
     if (g_coop.mode == COOP_OFF) return;
     ImDrawList *dl = g_open.load(std::memory_order_relaxed) ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
     float w = (float)t->width;
+    float h = (float)t->height;
     float pad = 6.0f * scale;
 
     // 1. Top-left compact Co-op status badge
@@ -1570,7 +1723,7 @@ static void coop_draw(const MenuTarget *t, float scale) {
                 5.0f * scale, 0, 1.5f * scale);
     dl->AddText(ImVec2(hp.x + pad, hp.y + pad), IM_COL32(225, 255, 240, 245), hud);
 
-    // 2. Shared-world progression toast banner (top center)
+    // 2. Session notification banner (top center)
     if (g_coop.event_banner[0] && g_coop.event_alpha > 0.01f) {
         int a = (int)(g_coop.event_alpha * 235.0f);
         ImVec2 bsz = ImGui::CalcTextSize(g_coop.event_banner);
@@ -1582,21 +1735,25 @@ static void coop_draw(const MenuTarget *t, float scale) {
         dl->AddText(ImVec2(bp.x + pad * 1.6f, bp.y + pad), IM_COL32(240, 255, 245, a), g_coop.event_banner);
     }
 
-    // 3. 3D In-World Partner Diamond Marker & Zonai Pillar
-    if (g_coop.has_peer_pos && g_coop.has_local_pos) {
+    // 3. 3D In-World Partner Avatar & Overhead Marker
+    if (g_coop.has_peer_pos && g_coop.has_local_pos && g_coop.has_camera) {
         float sx = g_coop.peer_screen[0], sy = g_coop.peer_screen[1];
         float fx = g_coop.peer_foot_screen[0], fy = g_coop.peer_foot_screen[1];
-        float r = 11.0f * scale;
-        ImU32 col_fill = g_coop.peer_on_screen ? IM_COL32(55, 230, 165, 220) : IM_COL32(255, 195, 65, 220);
+        float r = 9.5f * scale;
+        ImU32 col_fill = g_coop.peer_on_screen ? IM_COL32(55, 230, 165, 225) : IM_COL32(255, 195, 65, 225);
         ImU32 col_edge = IM_COL32(235, 255, 245, 245);
 
         if (g_coop.peer_on_screen) {
-            // Vertical Zonai beacon line from partner's overhead diamond to their ground position
-            dl->AddLine(ImVec2(sx, sy + r), ImVec2(fx, fy), IM_COL32(55, 230, 165, 135), 2.2f * scale);
-            dl->AddCircleFilled(ImVec2(fx, fy), 4.5f * scale, IM_COL32(55, 230, 165, 190));
+            if (g_coop.peer_dist < 150.0f) {
+                coop_draw_3d_avatar(dl, w, h, scale);
+            } else {
+                // Distant beacon pillar when partner is > 150 m away across Hyrule
+                dl->AddLine(ImVec2(sx, sy + r), ImVec2(fx, fy), IM_COL32(55, 230, 165, 135), 2.2f * scale);
+                dl->AddCircleFilled(ImVec2(fx, fy), 4.5f * scale, IM_COL32(55, 230, 165, 190));
+            }
         }
 
-        // Floating 3D Diamond Marker
+        // Floating 3D Diamond Marker above partner's head
         ImVec2 top(sx, sy - r), right(sx + r * 0.8f, sy), bot(sx, sy + r), left(sx - r * 0.8f, sy);
         dl->AddQuadFilled(top, right, bot, left, col_fill);
         dl->AddQuad(top, right, bot, left, col_edge, 2.0f * scale);

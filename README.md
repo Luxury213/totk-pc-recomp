@@ -13,6 +13,11 @@ Early development. The game is playable on Windows and Linux; visual bugs and cr
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The experimental co-op prototype provides ENet sessions,
+presence overlays and native integration diagnostics; a playable shared campaign is still pending.
+See [development status and contribution checks](docs/coop-development.md). The synthetic tests require no game
+files, keys, save data or GPU; a Windows CI workflow is included.
+
 ## Features
 
 - Native code, not emulation

@@ -1,178 +1,21 @@
-// Shared-world cooperative multiplayer (TOTK_COOP_MODE, TOTK_COOP_IP, TOTK_COOP_PORT).
+// Experimental co-op presence (TOTK_COOP_MODE, TOTK_COOP_IP, TOTK_COOP_PORT).
 //
-// Reads the 3D camera uniform block (bank c4, size 0x940: rows 0-2 view matrix, rows 3-6 view-projection matrix)
-// captured during scene draws in vk_exec_draw.c and the PlayerLink action component (main+0x3969918 on 1.4.3, as in
-// mouse_direct.c). Exchanges 3D world coordinates, action verbs and shared world progression events over a
-// non-blocking UDP socket, and projects the remote partner's 3D position into window coordinates for the ImGui
-// background overlay.
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
-
+// Presentation reads copies from the guest observer and ENet worker. It never touches actor or physics memory.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 #include "cfg.h"
 #include "coop.h"
+#include "coop_adapter.h"
+#include "coop_net.h"
+#include "coop_interp.h"
 #include "host.h"
-#include "layout.h"
 #include "nvn_api.h"
 #include "platform/platform.h"
 #include "vk.h"
 
-#define COOP_MAGIC 0x504F4F43u   // "COOP"
-#define COOP_VERSION 1u
-#define SEND_INTERVAL_NS 33333333ull   // 30 Hz state updates
-#define PEER_TIMEOUT_NS 5000000000ull  // 5 s without packets marks peer disconnected
-#define EVENT_SHOW_NS 6000000000ull    // 6 s banner display duration
-
-enum {
-    PKT_STATE = 1,
-    PKT_WORLD_EVENT = 2,
-};
-
-typedef struct {
-    uint32_t magic;
-    uint8_t version;
-    uint8_t kind;
-    uint8_t action;
-    uint8_t flags;
-    uint32_t seq;
-    uint32_t tx_ms;
-    uint32_t echo_ms;
-    float pos[3];
-    float yaw;
-    uint32_t world_syncs;
-    char label[96];
-} CoopPacket;
-
-// ---- minimal dynamic Winsock loader on Windows (avoids adding -lws2_32 to existing build.ninja files)
-#ifdef _WIN32
-typedef uintptr_t CoopSock;
-#define COOP_BAD_SOCK (~(uintptr_t)0)
-#define COOP_AF_INET 2
-#define COOP_SOCK_DGRAM 2
-#define COOP_IPPROTO_UDP 17
-#define COOP_FIONBIO 0x8004667Eu
-
-typedef struct {
-    int16_t sin_family;
-    uint16_t sin_port;
-    uint32_t sin_addr;
-    char sin_zero[8];
-} CoopSockAddrIn;
-
-typedef struct {
-    uint16_t wVersion;
-    uint16_t wHighVersion;
-    char szDescription[257];
-    char szSystemStatus[129];
-    uint16_t iMaxSockets;
-    uint16_t iMaxUdpDg;
-    char *lpVendorInfo;
-} CoopWsaData;
-
-static struct {
-    int ready;
-    int ok;
-    int (WINAPI *startup)(uint16_t, CoopWsaData *);
-    CoopSock (WINAPI *socket)(int, int, int);
-    int (WINAPI *bind)(CoopSock, const CoopSockAddrIn *, int);
-    int (WINAPI *sendto)(CoopSock, const char *, int, int, const CoopSockAddrIn *, int);
-    int (WINAPI *recvfrom)(CoopSock, char *, int, int, CoopSockAddrIn *, int *);
-    int (WINAPI *ioctlsocket)(CoopSock, long, unsigned long *);
-    int (WINAPI *closesocket)(CoopSock);
-    unsigned long (WINAPI *inet_addr)(const char *);
-} W;
-
-static int net_init(void) {
-    if (W.ready) return W.ok;
-    W.ready = 1;
-    HMODULE m = LoadLibraryA("ws2_32.dll");
-    if (!m) return 0;
-    W.startup = (void *)GetProcAddress(m, "WSAStartup");
-    W.socket = (void *)GetProcAddress(m, "socket");
-    W.bind = (void *)GetProcAddress(m, "bind");
-    W.sendto = (void *)GetProcAddress(m, "sendto");
-    W.recvfrom = (void *)GetProcAddress(m, "recvfrom");
-    W.ioctlsocket = (void *)GetProcAddress(m, "ioctlsocket");
-    W.closesocket = (void *)GetProcAddress(m, "closesocket");
-    W.inet_addr = (void *)GetProcAddress(m, "inet_addr");
-    if (!W.startup || !W.socket || !W.bind || !W.sendto || !W.recvfrom || !W.ioctlsocket || !W.closesocket ||
-        !W.inet_addr)
-        return 0;
-    CoopWsaData d;
-    W.ok = W.startup(0x0202, &d) == 0;
-    return W.ok;
-}
-
-static uint16_t net_htons(uint16_t v) { return (uint16_t)((v >> 8) | (v << 8)); }
-#else
-typedef int CoopSock;
-#define COOP_BAD_SOCK (-1)
-typedef struct sockaddr_in CoopSockAddrIn;
-static int net_init(void) { return 1; }
-static uint16_t net_htons(uint16_t v) { return htons(v); }
-#endif
-
-// ---- player action verb inspection (1.4.3 PlayerLink root slot main+0x3969918, matching mouse_direct.c)
-enum { VERB_USE_BOW = 59, VERB_USE_SPECIAL_POWER = 61, VERB_DRAWN_BOW = 205, VERB_INVALID = 284 };
-
-static int guest_readable(uint64_t p, uint64_t n) {
-    return p >= 0x10000 && p < (1ull << 47) && !(p & 7) && mem_guest_readable(p, n);
-}
-
-static uint64_t guest_pointer(uint64_t at) {
-    uint64_t v;
-    memcpy(&v, (void *)(uintptr_t)at, sizeof v);
-    return v;
-}
-
-static int32_t guest_s32(uint64_t at) {
-    int32_t v;
-    memcpy(&v, (void *)(uintptr_t)at, sizeof v);
-    return v;
-}
-
-static int read_player_action(void) {
-    if (rt_game_version != 143) return COOP_ACT_EXPLORING;
-    uint64_t slot = MOD_MAIN_BASE + 0x3969918ull;
-    if (!guest_readable(slot, 8)) return COOP_ACT_EXPLORING;
-    uint64_t var = guest_pointer(slot);
-    if (!guest_readable(var, 8)) return COOP_ACT_EXPLORING;
-    uint64_t root = guest_pointer(var);
-    if (!guest_readable(root, 0x38)) return COOP_ACT_EXPLORING;
-    uint64_t link = root + 0x20, unit = guest_pointer(link + 8);
-    int32_t id = guest_s32(link + 0x10);
-    if (id == -1 || !guest_readable(unit, 0x50) || guest_s32(unit + 0x48) != id) return COOP_ACT_EXPLORING;
-    uint64_t proc = guest_pointer(unit + 0x40);
-    if (!guest_readable(proc, 0x230)) return COOP_ACT_EXPLORING;
-    uint64_t vt = guest_pointer(proc);
-    if (vt < MOD_MAIN_BASE || vt >= MOD_MAIN_BASE + 0x3adf000ull) return COOP_ACT_EXPLORING;
-    if ((uint32_t)(guest_s32(proc + 0x24) - 7) < 5) return COOP_ACT_EXPLORING;
-    uint64_t comps = guest_pointer(proc + 0x228);
-    if (!guest_readable(comps, 0x160)) return COOP_ACT_EXPLORING;
-    uint64_t as = guest_pointer(comps + 0x158);
-    if (!guest_readable(as, 0x1f0 + 5 * 8)) return COOP_ACT_EXPLORING;
-    for (int i = 0; i < 5; i++) {
-        uint64_t s = guest_pointer(as + 0x1f0 + 8ull * i);
-        if (!guest_readable(s, 0x50)) continue;
-        int32_t v = guest_s32(s + 0x28);
-        if (v == VERB_INVALID) v = guest_s32(s + 0x4c);
-        if (v == VERB_USE_SPECIAL_POWER) return COOP_ACT_ABILITY;
-        if (v == VERB_USE_BOW || v == VERB_DRAWN_BOW) return COOP_ACT_BOW;
-    }
-    return COOP_ACT_EXPLORING;
-}
+#define EVENT_SHOW_NS 6000000000ull
 
 // ---- state protected by lock
 static PlatMutex C_lock = PLAT_MUTEX_INIT;
@@ -181,15 +24,22 @@ static volatile int C_active_flag;
 static struct {
     unsigned cfg_ver;
     int mode;
+    int bot_mode;
     char ip[64];
     int port;
-    CoopSock sock;
-    CoopSockAddrIn peer_addr;
-    int have_peer_addr;
+    CoopNet *net;
+    uint64_t last_notices;
+    uint64_t net_session;
+    int session_state;
+    CoopInterpolator interpolation;
+    uint64_t received_ns;
 
-    // Camera & local player state from the render thread
+    // Camera & local player state
     uint64_t cam_frame;
+    int has_camera;
     int has_local;
+    int has_actor_pos;
+    uint64_t actor;
     float local_pos[3];
     float local_fwd[3];
     float local_yaw;
@@ -201,24 +51,23 @@ static struct {
     float peer_pos[3];
     float peer_target[3];
     float peer_yaw;
+    float peer_speed;
+    float peer_anim_phase;
     int peer_action;
     uint64_t last_rx_ns;
-    uint64_t last_tx_ns;
-    uint32_t last_peer_tx_ms;
     uint32_t ping_ms;
-    uint32_t seq;
     uint32_t packets_tx;
     uint32_t packets_rx;
     uint32_t world_syncs;
 
     // Bot companion state
     int bot_spawned;
-    double bot_angle;
+    int bot_walking;
 
     // Banner notification
     char event_banner[160];
     uint64_t event_until_ns;
-} C = {.sock = COOP_BAD_SOCK};
+} C;
 
 static int parse_mode(const char *s) {
     if (!s || !strcmp(s, "off") || !strcmp(s, "0")) return COOP_OFF;
@@ -228,70 +77,25 @@ static int parse_mode(const char *s) {
     return COOP_OFF;
 }
 
-static void close_sock(void) {
-    if (C.sock == COOP_BAD_SOCK) return;
-#ifdef _WIN32
-    if (W.closesocket) W.closesocket(C.sock);
-#else
-    close(C.sock);
-#endif
-    C.sock = COOP_BAD_SOCK;
-}
-
-static void open_sock(void) {
-    close_sock();
-    C.have_peer_addr = 0;
-    if (C.mode == COOP_OFF || !net_init()) return;
-#ifdef _WIN32
-    C.sock = W.socket(COOP_AF_INET, COOP_SOCK_DGRAM, COOP_IPPROTO_UDP);
-    if (C.sock == COOP_BAD_SOCK) return;
-    unsigned long nb = 1;
-    W.ioctlsocket(C.sock, (long)COOP_FIONBIO, &nb);
-    if (C.mode == COOP_HOST || C.mode == COOP_BOT) {
-        CoopSockAddrIn bind_addr = {0};
-        bind_addr.sin_family = COOP_AF_INET;
-        bind_addr.sin_port = net_htons((uint16_t)(C.mode == COOP_BOT ? 0 : C.port));
-        bind_addr.sin_addr = 0;   // INADDR_ANY
-        if (W.bind(C.sock, &bind_addr, sizeof bind_addr) != 0 && C.mode == COOP_HOST) {
-            rt_log("coop: failed to bind UDP port %d", C.port);
-            close_sock();
-            return;
+static void configure_net_locked(void) {
+    if (!C.net && (C.mode == COOP_HOST || C.mode == COOP_CLIENT)) C.net = coop_net_create();
+    CoopNetConfig config = {.mode = C.mode == COOP_HOST ? 1 : C.mode == COOP_CLIENT ? 2 : 0,
+                            .port = (uint16_t)C.port, .game_version = (uint32_t)rt_game_version,
+                            .capabilities = coop_adapter_capabilities()};
+    snprintf(config.ip, sizeof config.ip, "%s", C.ip);
+    if (config.mode) {
+        char content[256] = "";
+        size_t at = 0;
+        for (int i = 0; i < rt_exefs_sha256_count; i++) {
+            const RtFileHash *h = &rt_exefs_sha256[i];
+            if (!strcmp(h->file, "main") || !strcmp(h->file, "sdk") || !strcmp(h->file, "subsdk0"))
+                at += (size_t)snprintf(content + at, sizeof content - at, "%s", h->sha256);
         }
+        rt_sha256(content, at, config.content_id);
+        if (!coop_net_player_id(rt_config()->profile, &config.player))
+            rt_log("coop: cannot load or persist the isolated profile's player identity");
     }
-    if (C.mode == COOP_CLIENT) {
-        memset(&C.peer_addr, 0, sizeof C.peer_addr);
-        C.peer_addr.sin_family = COOP_AF_INET;
-        C.peer_addr.sin_port = net_htons((uint16_t)C.port);
-        unsigned long a = W.inet_addr(C.ip);
-        C.peer_addr.sin_addr = a == 0xFFFFFFFFul ? W.inet_addr("127.0.0.1") : (uint32_t)a;
-        C.have_peer_addr = 1;
-    }
-#else
-    C.sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (C.sock < 0) {
-        C.sock = COOP_BAD_SOCK;
-        return;
-    }
-    int flags = fcntl(C.sock, F_GETFL, 0);
-    fcntl(C.sock, F_SETFL, flags | O_NONBLOCK);
-    if (C.mode == COOP_HOST) {
-        struct sockaddr_in b = {0};
-        b.sin_family = AF_INET;
-        b.sin_port = htons((uint16_t)C.port);
-        b.sin_addr.s_addr = htonl(INADDR_ANY);
-        if (bind(C.sock, (struct sockaddr *)&b, sizeof b) < 0) {
-            close_sock();
-            return;
-        }
-    } else if (C.mode == COOP_CLIENT) {
-        memset(&C.peer_addr, 0, sizeof C.peer_addr);
-        C.peer_addr.sin_family = AF_INET;
-        C.peer_addr.sin_port = htons((uint16_t)C.port);
-        C.peer_addr.sin_addr.s_addr = inet_addr(C.ip);
-        C.have_peer_addr = 1;
-    }
-#endif
-    rt_log("coop: started mode=%d ip=%s port=%d", C.mode, C.ip, C.port);
+    coop_net_configure(C.net, &config);
 }
 
 static void refresh_cfg_locked(void) {
@@ -309,148 +113,142 @@ static void refresh_cfg_locked(void) {
     __atomic_store_n(&C_active_flag, m != COOP_OFF, __ATOMIC_RELEASE);
     if (changed) {
         C.has_peer = 0;
+        C.has_local = C.has_actor_pos = C.has_camera = 0;
+        C.actor = C.cam_frame = 0;
+        memset(C.local_pos, 0, sizeof C.local_pos);
+        memset(C.local_fwd, 0, sizeof C.local_fwd);
+        memset(C.vp, 0, sizeof C.vp);
+        memset(C.peer_pos, 0, sizeof C.peer_pos);
+        memset(C.peer_target, 0, sizeof C.peer_target);
+        C.local_yaw = C.peer_yaw = 0;
         C.bot_spawned = 0;
+        C.bot_walking = 0;
+        C.peer_speed = C.peer_anim_phase = 0;
+        C.last_rx_ns = 0;
+        C.ping_ms = C.world_syncs = 0;
+        C.last_notices = C.net_session = 0;
+        C.interpolation.count = 0; C.received_ns = 0;
+        C.event_until_ns = 0;
+        C.event_banner[0] = 0;
         C.packets_rx = C.packets_tx = 0;
-        open_sock();
+        configure_net_locked();
     }
 }
 
 int coop_active(void) {
     static unsigned seen_ver;
     unsigned v = cfg_version();
-    if (v != seen_ver || !seen_ver) {
+    unsigned seen = __atomic_load_n(&seen_ver, __ATOMIC_RELAXED);
+    if (v != seen || !seen) {
         plat_mutex_lock(&C_lock);
         refresh_cfg_locked();
-        seen_ver = C.cfg_ver;
+        __atomic_store_n(&seen_ver, C.cfg_ver, __ATOMIC_RELAXED);
         plat_mutex_unlock(&C_lock);
     }
     return __atomic_load_n(&C_active_flag, __ATOMIC_ACQUIRE);
+}
+
+void coop_guest_observe(const Cpu *cpu) {
+    int active = coop_active();
+    coop_adapter_trace_enable(active && rt_game_version == 143 && cfg_bool("TOTK_COOP_TRACE_GUEST"));
+    if (!active) return;
+    coop_adapter_observe(cpu);
+    CoopAdapterSnapshot adapter;
+    coop_adapter_snapshot(&adapter);
+    plat_mutex_lock(&C_lock);
+    coop_net_publish(C.net, &adapter.sample);
+    plat_mutex_unlock(&C_lock);
 }
 
 // Called from vk_exec_draw.c when bank c4 (0x940 camera block) is bound on a scene depth draw.
 void coop_capture_camera(uint64_t cam_addr) {
     if (!__atomic_load_n(&C_active_flag, __ATOMIC_RELAXED) || !cam_addr) return;
     uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
-    if (frame == C.cam_frame && C.has_local) return;
+    plat_mutex_lock(&C_lock);
+    int captured = frame == C.cam_frame && C.has_camera;
+    plat_mutex_unlock(&C_lock);
+    if (captured) return;
     const float *f = (const float *)vk_usnap_bytes(cam_addr, 112);   // rows 0-2 (view) + rows 3-6 (view-projection)
     if (!f) return;
-    // Row-major 3x4 view matrix V = [R | t] in f[0..11]: camera world position C = -R^T * t.
-    float cx = -(f[0] * f[3] + f[4] * f[7] + f[8] * f[11]);
-    float cy = -(f[1] * f[3] + f[5] * f[7] + f[9] * f[11]);
-    float cz = -(f[2] * f[3] + f[6] * f[7] + f[10] * f[11]);
-    if (!isfinite(cx) || !isfinite(cy) || !isfinite(cz)) return;
-    if (fabsf(cx) < 1e-3f && fabsf(cy) < 1e-3f && fabsf(cz) < 1e-3f) return;
+    for (int i = 0; i < 28; i++) if (!isfinite(f[i])) return;
     // Camera forward vector (-row 2 of R)
     float fx = -f[8], fy = -f[9], fz = -f[10];
-    float fh = sqrtf(fx * fx + fz * fz);
-    float hfx = fh > 1e-4f ? fx / fh : 0.0f;
-    float hfz = fh > 1e-4f ? fz / fh : 1.0f;
-    // Link stands roughly 4.2 m in front of the third-person orbit camera
-    float lx = cx + hfx * 4.2f;
-    float ly = cy + fy * 4.2f - 0.5f;
-    float lz = cz + hfz * 4.2f;
-
     plat_mutex_lock(&C_lock);
     C.cam_frame = frame;
-    C.has_local = 1;
-    C.local_pos[0] = lx;
-    C.local_pos[1] = ly;
-    C.local_pos[2] = lz;
+    C.has_camera = 1;
     C.local_fwd[0] = fx;
     C.local_fwd[1] = fy;
     C.local_fwd[2] = fz;
-    C.local_yaw = atan2f(hfx, hfz) * (180.0f / 3.14159265f);
     memcpy(C.vp, f + 12, 16 * sizeof(float));
     plat_mutex_unlock(&C_lock);
 }
 
-static void send_packet_locked(const CoopPacket *pkt) {
-    if (C.sock == COOP_BAD_SOCK || !C.have_peer_addr) return;
-#ifdef _WIN32
-    int r = W.sendto(C.sock, (const char *)pkt, (int)sizeof *pkt, 0, &C.peer_addr, (int)sizeof C.peer_addr);
-#else
-    int r = (int)sendto(C.sock, pkt, sizeof *pkt, 0, (const struct sockaddr *)&C.peer_addr, sizeof C.peer_addr);
-#endif
-    if (r == (int)sizeof *pkt) C.packets_tx++;
-}
-
-static void poll_socket_locked(uint64_t now_ns) {
-    if (C.sock == COOP_BAD_SOCK) return;
-    for (int i = 0; i < 16; i++) {
-        CoopPacket pkt;
-        CoopSockAddrIn from = {0};
-#ifdef _WIN32
-        int from_len = sizeof from;
-        int n = W.recvfrom(C.sock, (char *)&pkt, (int)sizeof pkt, 0, &from, &from_len);
-#else
-        socklen_t from_len = sizeof from;
-        int n = (int)recvfrom(C.sock, &pkt, sizeof pkt, 0, (struct sockaddr *)&from, &from_len);
-#endif
-        if (n <= 0) break;
-        if (n < (int)sizeof(CoopPacket) || pkt.magic != COOP_MAGIC || pkt.version != COOP_VERSION) continue;
-        if (C.mode == COOP_HOST) {
-            C.peer_addr = from;
-            C.have_peer_addr = 1;
-        }
-        C.packets_rx++;
-        C.last_rx_ns = now_ns;
-        C.last_peer_tx_ms = pkt.tx_ms;
-        uint32_t now_ms = (uint32_t)(now_ns / 1000000ull);
-        if (pkt.echo_ms && now_ms >= pkt.echo_ms && now_ms - pkt.echo_ms < 10000)
-            C.ping_ms = now_ms - pkt.echo_ms;
-        if (pkt.kind == PKT_STATE) {
-            if (isfinite(pkt.pos[0]) && isfinite(pkt.pos[1]) && isfinite(pkt.pos[2])) {
-                if (!C.has_peer) {
-                    memcpy(C.peer_pos, pkt.pos, sizeof C.peer_pos);
-                }
-                memcpy(C.peer_target, pkt.pos, sizeof C.peer_target);
-                C.peer_yaw = pkt.yaw;
-                C.peer_action = pkt.action;
-                C.has_peer = 1;
-            }
-        } else if (pkt.kind == PKT_WORLD_EVENT) {
-            C.world_syncs = pkt.world_syncs > C.world_syncs ? pkt.world_syncs : C.world_syncs + 1;
-            pkt.label[sizeof pkt.label - 1] = 0;
-            snprintf(C.event_banner, sizeof C.event_banner, "%s", pkt.label);
-            C.event_until_ns = now_ns + EVENT_SHOW_NS;
-            rt_log("coop: received shared world event #%u: %s", C.world_syncs, C.event_banner);
-        }
-    }
-}
-
 static void tick_bot_locked(uint64_t now_ns, double dt) {
-    C.last_rx_ns = now_ns;
-    C.ping_ms = 1;
-    if (!C.has_local) return;
+    if (!C.has_actor_pos) return;
     float lx = C.local_pos[0], ly = C.local_pos[1], lz = C.local_pos[2];
     if (!C.bot_spawned) {
         float fx = C.local_fwd[0], fz = C.local_fwd[2];
         float fh = sqrtf(fx * fx + fz * fz);
         float hfx = fh > 1e-4f ? fx / fh : 0.0f;
         float hfz = fh > 1e-4f ? fz / fh : 1.0f;
-        C.peer_pos[0] = C.peer_target[0] = lx + hfx * 6.0f;
+        C.peer_pos[0] = C.peer_target[0] = lx + hfx * 4.5f;
         C.peer_pos[1] = C.peer_target[1] = ly;
-        C.peer_pos[2] = C.peer_target[2] = lz + hfz * 6.0f;
+        C.peer_pos[2] = C.peer_target[2] = lz + hfz * 4.5f;
+        C.peer_yaw = atan2f(-hfx, -hfz) * (180.0f / 3.14159265f);
+        C.peer_speed = 0.0f;
         C.bot_spawned = 1;
+        C.bot_walking = 0;
         C.has_peer = 1;
         snprintf(C.event_banner, sizeof C.event_banner,
-                 "Compañero de prueba conectado en el mundo compartido (6 m frente a Link)");
+                 "Bot visual de prueba: 4.5 m frente a Link");
         C.event_until_ns = now_ns + EVENT_SHOW_NS;
     }
-    C.bot_angle += dt * 0.65;
-    // Target point orbits gently 5.5 m around Link's vicinity and follows if Link walks away
-    float desired_x = lx + (float)cos(C.bot_angle) * 5.5f;
-    float desired_y = ly + (float)sin(C.bot_angle * 2.0) * 0.15f;
-    float desired_z = lz + (float)sin(C.bot_angle) * 5.5f;
-    float rate = (float)fmin(1.0, dt * 3.5);
-    C.peer_pos[0] += (desired_x - C.peer_pos[0]) * rate;
-    C.peer_pos[1] += (desired_y - C.peer_pos[1]) * rate;
-    C.peer_pos[2] += (desired_z - C.peer_pos[2]) * rate;
-    C.peer_yaw = (float)fmod(C.bot_angle * (180.0 / 3.14159265) + 90.0, 360.0);
-    int phase = (int)(now_ns / 4000000000ull) % 3;
-    C.peer_action = phase == 0 ? COOP_ACT_EXPLORING : phase == 1 ? COOP_ACT_BOW : COOP_ACT_ABILITY;
-    C.packets_rx = (uint32_t)(now_ns / 33333333ull);
-    C.packets_tx = C.packets_rx;
+
+    float to_link_x = lx - C.peer_pos[0];
+    float to_link_y = ly - C.peer_pos[1];
+    float to_link_z = lz - C.peer_pos[2];
+    float dist_xz = sqrtf(to_link_x * to_link_x + to_link_z * to_link_z);
+
+    if (C.bot_mode == COOP_BOT_STAY) {
+        // Hold fixed 3D position in Hyrule so the player can walk far away and test "Teleport to Partner"
+        C.bot_walking = 0;
+        C.peer_speed = 0.0f;
+        if (dist_xz > 0.25f) {
+            C.peer_yaw = atan2f(to_link_x, to_link_z) * (180.0f / 3.14159265f);
+        }
+    } else {
+        // Follow mode with hysteresis: stand calmly when within 5.5 m, jog after Link when further away
+        if (dist_xz > 5.5f) C.bot_walking = 1;
+        else if (dist_xz < 3.4f) C.bot_walking = 0;
+
+        if (C.bot_walking && dist_xz > 0.1f) {
+            float dir_x = to_link_x / dist_xz;
+            float dir_z = to_link_z / dist_xz;
+            float speed = (dist_xz - 3.0f) * 2.2f;
+            if (speed < 2.6f) speed = 2.6f;
+            if (speed > 8.0f) speed = 8.0f;
+            float step = (float)fmin((double)speed * dt, (double)(dist_xz - 3.2f));
+            if (step > 0.0f) {
+                C.peer_pos[0] += dir_x * step;
+                C.peer_pos[2] += dir_z * step;
+            }
+            float y_rate = (float)fmin(1.0, dt * 6.0);
+            C.peer_pos[1] += to_link_y * y_rate;
+            C.peer_yaw = atan2f(dir_x, dir_z) * (180.0f / 3.14159265f);
+            C.peer_speed = speed;
+            C.peer_anim_phase = fmodf(C.peer_anim_phase + (float)dt * speed * 2.5f, 6.2831853f);
+        } else {
+            C.peer_speed = 0.0f;
+            float y_rate = (float)fmin(1.0, dt * 4.0);
+            if (fabsf(to_link_y) < 3.0f) C.peer_pos[1] += to_link_y * y_rate;
+            if (dist_xz > 0.25f) {
+                C.peer_yaw = atan2f(to_link_x, to_link_z) * (180.0f / 3.14159265f);
+            }
+        }
+    }
+
+    // Mirror Link's combat/ability stance so the user can test bow and Zonai ability poses in real time
+    C.peer_action = C.local_action;
 }
 
 // Projects a 3D world point (x, y, z) through the row-major 4x4 View-Projection matrix vp[0..15] to 2D window pixels.
@@ -493,7 +291,13 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
     if (dt < 0.0001 || dt > 0.25) dt = 1.0 / 60.0;
     last_tick_ns = now;
 
-    int act = __atomic_load_n(&C_active_flag, __ATOMIC_RELAXED) ? read_player_action() : COOP_ACT_EXPLORING;
+    CoopAdapterSnapshot adapter;
+    coop_adapter_snapshot(&adapter);
+    int observed = adapter.sample.time_ns && now - adapter.sample.time_ns < 1000000000ull;
+    uint64_t actor = observed && (adapter.sample.flags & COOP_SAMPLE_PLAYER) ? adapter.actor : 0;
+    const float *actor_pos = adapter.sample.pos;
+    float actor_yaw = adapter.sample.yaw;
+    int act = (int)adapter.sample.action;
 
     plat_mutex_lock(&C_lock);
     refresh_cfg_locked();
@@ -503,69 +307,120 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
         return;
     }
 
+    float jump = actor && C.has_actor_pos
+                     ? hypotf(hypotf(actor_pos[0] - C.local_pos[0], actor_pos[2] - C.local_pos[2]),
+                              actor_pos[1] - C.local_pos[1]) : 0;
+    if (!actor || actor != C.actor || jump > 128.0f) {
+        C.bot_spawned = C.bot_walking = 0;
+        if (C.mode == COOP_BOT) C.has_peer = 0;
+    }
+    C.actor = actor;
+    C.has_local = C.has_actor_pos = actor != 0;
+    if (actor) {
+        memcpy(C.local_pos, actor_pos, sizeof C.local_pos);
+        C.local_yaw = actor_yaw;
+    } else {
+        memset(C.local_pos, 0, sizeof C.local_pos);
+        C.local_yaw = 0;
+    }
+
     if (C.mode == COOP_BOT) {
         tick_bot_locked(now, dt);
     } else {
-        poll_socket_locked(now);
-        if (C.has_peer) {
-            float rate = (float)fmin(1.0, dt * 12.0);
-            for (int k = 0; k < 3; k++) C.peer_pos[k] += (C.peer_target[k] - C.peer_pos[k]) * rate;
+        CoopNetSnapshot network;
+        coop_net_snapshot(C.net, &network);
+        C.session_state = network.state;
+        C.packets_tx = network.packets_tx; C.packets_rx = network.packets_rx; C.ping_ms = network.ping_ms;
+        if (C.net_session != network.session) {
+            C.has_peer = 0; C.last_notices = 0; C.net_session = network.session;
+            C.interpolation.count = 0; C.received_ns = 0;
         }
-        if (now - C.last_tx_ns >= SEND_INTERVAL_NS && C.have_peer_addr) {
-            C.last_tx_ns = now;
-            CoopPacket pkt = {
-                .magic = COOP_MAGIC,
-                .version = COOP_VERSION,
-                .kind = PKT_STATE,
-                .action = (uint8_t)C.local_action,
-                .flags = (uint8_t)C.has_local,
-                .seq = ++C.seq,
-                .tx_ms = (uint32_t)(now / 1000000ull),
-                .echo_ms = C.last_peer_tx_ms,
-                .pos = {C.local_pos[0], C.local_pos[1], C.local_pos[2]},
-                .yaw = C.local_yaw,
-                .world_syncs = C.world_syncs,
-            };
-            send_packet_locked(&pkt);
+        C.has_peer = network.has_remote;
+        if (C.has_peer) {
+            if (C.received_ns != network.state_received_ns) {
+                coop_interp_push(&C.interpolation, &network.remote, network.state_received_ns);
+                C.received_ns = network.state_received_ns;
+            }
+            CoopSample visual = network.remote;
+            coop_interp_read(&C.interpolation, now, &visual);
+            memcpy(C.peer_pos, visual.pos, sizeof C.peer_pos);
+            C.peer_yaw = visual.yaw; C.peer_action = (int)visual.action;
+            C.peer_speed = hypotf(visual.velocity[0], visual.velocity[2]);
+            C.last_rx_ns = now;
+        } else {
+            C.last_rx_ns = 0; C.peer_speed = 0; C.interpolation.count = 0; C.received_ns = 0;
+        }
+        if (network.notices != C.last_notices) {
+            if (network.notices > C.last_notices) C.world_syncs += (uint32_t)(network.notices - C.last_notices);
+            C.last_notices = network.notices;
+            snprintf(C.event_banner, sizeof C.event_banner, "%s", network.notice);
+            C.event_until_ns = now + EVENT_SHOW_NS;
+        }
+        if (network.error[0]) snprintf(out->status_text, sizeof out->status_text, "%s", network.error);
+        if (C.has_peer) {
+            if (C.peer_speed > 0.1f) {
+                C.peer_anim_phase = fmodf(C.peer_anim_phase + (float)dt * C.peer_speed * 2.5f, 6.2831853f);
+            }
         }
     }
 
-    int connected = C.last_rx_ns && (now - C.last_rx_ns < PEER_TIMEOUT_NS);
+    int connected = C.mode == COOP_BOT ? C.bot_spawned && C.has_actor_pos
+                                         : C.session_state == COOP_SESSION_LOADING || C.session_state == COOP_SESSION_READY;
     out->mode = C.mode;
+    out->session_state = C.session_state;
+    out->native_capabilities = coop_adapter_capabilities();
+    out->observation_generation = adapter.sample.generation;
+    out->commands_rejected = adapter.commands_rejected + adapter.commands_stale;
+    snprintf(out->adapter_status, sizeof out->adapter_status, "%s", adapter.reason[0] ? adapter.reason :
+             "Waiting for the guest observer; native actor operations disabled");
+    out->bot_mode = C.bot_mode;
     out->connected = connected;
     out->ping_ms = C.ping_ms;
     out->packets_tx = C.packets_tx;
     out->packets_rx = C.packets_rx;
     out->world_syncs = C.world_syncs;
     out->has_local_pos = C.has_local;
+    out->has_camera = C.has_camera;
     memcpy(out->local_pos, C.local_pos, sizeof out->local_pos);
     memcpy(out->local_fwd, C.local_fwd, sizeof out->local_fwd);
+    memcpy(out->vp, C.vp, sizeof out->vp);
     out->local_action = C.local_action;
     out->has_peer_pos = connected && C.has_peer;
     if (out->has_peer_pos) {
         memcpy(out->peer_pos, C.peer_pos, sizeof out->peer_pos);
         out->peer_yaw = C.peer_yaw;
+        out->peer_speed = C.peer_speed;
+        out->peer_anim_phase = C.peer_anim_phase;
         out->peer_action = C.peer_action;
         float dx = C.peer_pos[0] - C.local_pos[0];
         float dy = C.peer_pos[1] - C.local_pos[1];
         float dz = C.peer_pos[2] - C.local_pos[2];
         out->peer_dist = sqrtf(dx * dx + dy * dy + dz * dz);
-        if (C.has_local && width > 0 && height > 0) {
-            float head[3] = {C.peer_pos[0], C.peer_pos[1] + 1.9f, C.peer_pos[2]};
+        if (C.has_local && C.has_camera && width > 0 && height > 0) {
+            float head[3] = {C.peer_pos[0], C.peer_pos[1] + 2.05f, C.peer_pos[2]};
             out->peer_on_screen = project_3d(C.vp, head, (float)width, (float)height, out->peer_screen);
             project_3d(C.vp, C.peer_pos, (float)width, (float)height, out->peer_foot_screen);
         }
     }
 
     if (C.mode == COOP_BOT) {
-        snprintf(out->status_text, sizeof out->status_text, "Bot activo · %.1f m · Mundo compartido", out->peer_dist);
+        if (C.has_actor_pos)
+            snprintf(out->status_text, sizeof out->status_text, "Bot visual (%s) · %.1f m",
+                     C.bot_mode == COOP_BOT_STAY ? "Posición fija" : "Siguiendo", out->peer_dist);
+        else snprintf(out->status_text, sizeof out->status_text, "Bot visual: esperando partida cargada");
+    } else if (out->status_text[0]) {
+        // The worker already supplied a concrete initialization or negotiation error.
     } else if (connected) {
-        snprintf(out->status_text, sizeof out->status_text, "Conectado (%s:%d) · %u ms · %.1f m", C.ip, C.port,
+        snprintf(out->status_text, sizeof out->status_text, "ENet conectado · %u ms · %.1f m · motor pendiente",
                  out->ping_ms, out->peer_dist);
+    } else if (!C.net) {
+        snprintf(out->status_text, sizeof out->status_text, "No se pudo iniciar el trabajador de red");
+    } else if (C.session_state == COOP_SESSION_DISCONNECTED) {
+        snprintf(out->status_text, sizeof out->status_text, "Desconectado: vuelve a entrar para reconectar");
     } else if (C.mode == COOP_HOST) {
-        snprintf(out->status_text, sizeof out->status_text, "Esperando jugador en UDP :%d...", C.port);
+        snprintf(out->status_text, sizeof out->status_text, "Esperando compañero en ENet :%d...", C.port);
     } else {
-        snprintf(out->status_text, sizeof out->status_text, "Conectando a %s:%d...", C.ip, C.port);
+        snprintf(out->status_text, sizeof out->status_text, "ENet: %s:%d · conectando/cargando...", C.ip, C.port);
     }
 
     if (now < C.event_until_ns && C.event_banner[0]) {
@@ -582,38 +437,28 @@ void coop_notify_world_event(const char *label) {
     plat_mutex_lock(&C_lock);
     C.world_syncs++;
     snprintf(C.event_banner, sizeof C.event_banner, "%s (Evento #%u)",
-             label && *label ? label : "Mundo compartido sincronizado", C.world_syncs);
+             label && *label ? label : "Aviso de sesión", C.world_syncs);
     C.event_until_ns = now + EVENT_SHOW_NS;
-    if (C.mode == COOP_HOST || C.mode == COOP_CLIENT) {
-        CoopPacket pkt = {
-            .magic = COOP_MAGIC,
-            .version = COOP_VERSION,
-            .kind = PKT_WORLD_EVENT,
-            .seq = ++C.seq,
-            .tx_ms = (uint32_t)(now / 1000000ull),
-            .echo_ms = C.last_peer_tx_ms,
-            .pos = {C.local_pos[0], C.local_pos[1], C.local_pos[2]},
-            .yaw = C.local_yaw,
-            .world_syncs = C.world_syncs,
-        };
-        snprintf(pkt.label, sizeof pkt.label, "%s", C.event_banner);
-        send_packet_locked(&pkt);
-    }
-    rt_log("coop: world event #%u broadcast: %s", C.world_syncs, C.event_banner);
+    if (C.mode == COOP_HOST || C.mode == COOP_CLIENT) coop_net_notice(C.net, C.event_banner);
+    rt_log("coop: notification #%u sent: %s", C.world_syncs, C.event_banner);
     plat_mutex_unlock(&C_lock);
 }
 
 void coop_on_save_commit(int changed_files) {
     if (!__atomic_load_n(&C_active_flag, __ATOMIC_RELAXED) || changed_files <= 0) return;
     char msg[128];
-    snprintf(msg, sizeof msg, "Mundo compartido: progreso guardado (%d archivos sincronizados)", changed_files);
+    snprintf(msg, sizeof msg, "Guardado local completado (%d archivos; sin replicar)", changed_files);
     coop_notify_world_event(msg);
 }
 
 void coop_summon_partner(void) {
     if (!coop_active()) return;
     plat_mutex_lock(&C_lock);
-    if (C.has_local) {
+    if (!C.has_actor_pos) {
+        plat_mutex_unlock(&C_lock);
+        return;
+    }
+    if (C.mode == COOP_BOT) {
         float fx = C.local_fwd[0], fz = C.local_fwd[2];
         float fh = sqrtf(fx * fx + fz * fz);
         float hfx = fh > 1e-4f ? fx / fh : 0.0f;
@@ -621,9 +466,32 @@ void coop_summon_partner(void) {
         C.peer_pos[0] = C.peer_target[0] = C.local_pos[0] + hfx * 4.5f;
         C.peer_pos[1] = C.peer_target[1] = C.local_pos[1];
         C.peer_pos[2] = C.peer_target[2] = C.local_pos[2] + hfz * 4.5f;
+        C.peer_yaw = atan2f(-hfx, -hfz) * (180.0f / 3.14159265f);
+        C.peer_speed = 0.0f;
         C.has_peer = 1;
         C.bot_spawned = 1;
+        C.bot_walking = 0;
     }
     plat_mutex_unlock(&C_lock);
-    coop_notify_world_event("Mundo compartido: baliza de misión y posición sincronizadas");
+    coop_notify_world_event("Solicitud de reunión en la posición de Link (baliza visual)");
+}
+
+void coop_teleport_to_partner(void) {
+    if (!coop_active()) return;
+    plat_mutex_lock(&C_lock);
+    // No guest writes or success event: neither the actor/physics operation nor its scheduling phase is verified.
+    // See docs/coop.md. Being on a guest thread or near the destination does not establish safety.
+    snprintf(C.event_banner, sizeof C.event_banner, "Teletransporte no disponible: integración con el motor pendiente");
+    C.event_until_ns = plat_now_ns() + EVENT_SHOW_NS;
+    plat_mutex_unlock(&C_lock);
+}
+
+void coop_toggle_bot_mode(void) {
+    plat_mutex_lock(&C_lock);
+    C.bot_mode = (C.bot_mode == COOP_BOT_FOLLOW) ? COOP_BOT_STAY : COOP_BOT_FOLLOW;
+    int bm = C.bot_mode;
+    plat_mutex_unlock(&C_lock);
+    coop_notify_world_event(bm == COOP_BOT_STAY
+                                ? "Bot visual: posición fija activada"
+                                : "Bot visual: seguimiento de Link activado");
 }

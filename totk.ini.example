@@ -269,13 +269,17 @@
 # discord_image = totk_512x512
 
 [coop]
-# Shared-world cooperative multiplayer mode: off, host, client or bot (local 3D companion for testing).
+# Experimental co-op presence: off, host, client or bot (local visual companion for testing).
+# Exchanges positions and notification labels only; enemies, physics, missions and saves are not replicated.
 # Changes while the game runs take effect at once.
 # coop_mode = off
 # Host IPv4 address to connect to when coop_mode = client.
 # coop_ip = 127.0.0.1
-# UDP port used for cooperative session state and shared world progression events.
+# UDP port used for player presence and session notifications (experimental LAN transport).
 # coop_port = 7777
+# Log up to 64 observations of native transform-related function entries. Diagnostic only; may slow the game.
+# Does not enable native actor spawning, movement, teleport or world writes. Restart after changing.
+# coop_trace_guest = 0
 
 [audio]
 # none mixes without opening an audio device.

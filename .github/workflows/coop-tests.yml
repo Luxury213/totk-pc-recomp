@@ -1,0 +1,47 @@
+name: Experimental co-op checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-checks:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-vulkan-headers
+            mingw-w64-ucrt-x86_64-vulkan-memory-allocator
+      - name: Test without game files or keys
+        shell: pwsh
+        env:
+          MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          $ucrt = Join-Path $env:MSYS2_LOCATION 'ucrt64'
+          $compiler = Join-Path $ucrt 'bin/clang.exe'
+          $env:PATH = (Join-Path $ucrt 'bin') + ';' + $env:PATH
+          python tests/coop_check.py --cc $compiler --deps (Join-Path $ucrt 'include')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/coop_network_check.py --cc $compiler
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/coop_native_audit_check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/settings_doc_check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check_content.py
+          exit $LASTEXITCODE
