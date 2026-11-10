@@ -268,6 +268,15 @@
 # The key of the application's uploaded art asset shown as the status's large image.
 # discord_image = totk_512x512
 
+[coop]
+# Shared-world cooperative multiplayer mode: off, host, client or bot (local 3D companion for testing).
+# Changes while the game runs take effect at once.
+# coop_mode = off
+# Host IPv4 address to connect to when coop_mode = client.
+# coop_ip = 127.0.0.1
+# UDP port used for cooperative session state and shared world progression events.
+# coop_port = 7777
+
 [audio]
 # none mixes without opening an audio device.
 # audio = default

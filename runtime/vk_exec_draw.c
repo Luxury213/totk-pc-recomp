@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "cfg.h"
+#include "coop.h"
 #include "host.h"
 #include "nvn_api.h"
 #include "nvn_hmap.h"
@@ -2205,6 +2206,9 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
         if (ex->mark && vk_exec_frame.draws == ex->mark_draws0) ex->mark->first[0] = vs, ex->mark->first[1] = fs;
     }
     vk_dlaa_draw(ex);
+    if (ex->ubo[0][1].size == 0x940 && ex->ubo[0][1].addr && ex->depth.image && ex->depth.width >= 640 &&
+        ex->depth.format == VK_FORMAT_D32_SFLOAT)
+        coop_capture_camera(ex->ubo[0][1].addr);
     vk_mvsurvey_draw(ex);
     vk_mvprev_draw(ex);
     record_fixed(ex);

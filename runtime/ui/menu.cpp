@@ -38,6 +38,7 @@ extern "C" {
 #include "amiibo.h"
 #include "cheats.h"
 #include "cfg.h"
+#include "coop.h"
 #include "fs.h"
 #include "input.h"
 #include "input_map.h"
@@ -698,6 +699,64 @@ static void tab_screen(float scale) {
     opt_end();
 }
 
+static CoopSnapshot g_coop;
+
+static const char *coop_action_name(int act) {
+    switch (act) {
+    case COOP_ACT_BOW: return "Arco";
+    case COOP_ACT_ABILITY: return "Habilidad";
+    default: return "Explorando";
+    }
+}
+
+static void rows_coop(void) {
+    opt_group_text("Multijugador cooperativo (Mundo compartido)");
+    static const char *const modes[] = {"off", "bot", "host", "client"};
+    static const char *const mode_names[] = {
+        "Desactivado",
+        "Bot de prueba (3D local)",
+        "Crear sala (Host UDP)",
+        "Unirse (Cliente UDP)",
+    };
+    const char *cur = cfg_value("TOTK_COOP_MODE");
+    int idx = 0;
+    for (int i = 0; i < 4; i++)
+        if (!strcmp(cur, modes[i])) idx = i;
+    int s = opt_text_row("TOTK_COOP_MODE", "Modo cooperativo", mode_names[idx], nullptr,
+                         "Sincroniza un mundo compartido entre los jugadores conectados.\n\n"
+                         "- Bot de prueba (3D local): genera un compañero en 3D frente a Link para probar el marcador "
+                         "en el mundo y las notificaciones de misiones compartidas sin abrir dos instancias del juego.\n"
+                         "- Crear sala (Host UDP): abre el puerto UDP 7777 y actúa como autoridad del mundo compartido.\n"
+                         "- Unirse (Cliente UDP): se conecta al Host configurado en totk.ini (coop_ip / coop_port).",
+                         false);
+    if (s == 2 || s == 1) {
+        cfg_set("TOTK_COOP_MODE", modes[(idx + 1) % 4]);
+        opt_save_soon();
+    } else if (s == -1) {
+        cfg_set("TOTK_COOP_MODE", modes[(idx + 3) % 4]);
+        opt_save_soon();
+    }
+    if (g_coop.mode != COOP_OFF) {
+        char desc[768];
+        snprintf(desc, sizeof desc,
+                 "Estado de la sesión de mundo compartido:\n"
+                 "- Conexión: %s\n"
+                 "- Posición 3D de Link: (%.1f, %.1f, %.1f) · Estado: %s\n"
+                 "- Posición 3D del compañero: (%.1f, %.1f, %.1f) · Estado: %s\n"
+                 "- Paquetes UDP enviados / recibidos: %u / %u\n"
+                 "- Eventos de mundo / misiones sincronizados: %u",
+                 g_coop.status_text, g_coop.local_pos[0], g_coop.local_pos[1], g_coop.local_pos[2],
+                 coop_action_name(g_coop.local_action), g_coop.peer_pos[0], g_coop.peer_pos[1], g_coop.peer_pos[2],
+                 coop_action_name(g_coop.peer_action), g_coop.packets_tx, g_coop.packets_rx, g_coop.world_syncs);
+        opt_text_row("##coop_status", "Estado de la sala y posición 3D", g_coop.status_text, nullptr, desc, false);
+        int call = opt_text_row("##coop_sync", "Sincronizar misión / Llamar compañero", "Enviar ahora", nullptr,
+                                "Envía un evento de progreso del mundo compartido por red y coloca la baliza del "
+                                "compañero frente a la posición actual de Link en Hyrule.",
+                                false);
+        if (call == 2) coop_summon_partner();
+    }
+}
+
 static void tab_game(float scale) {
     opt_begin("##game", scale);
     row_fps_limit();
@@ -706,6 +765,7 @@ static void tab_game(float scale) {
     static const UiTextId mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
     opt_choice("TOTK_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);
     opt_toggle("TOTK_ASSUME_FOCUS", UI_MENU_ASSUME_FOCUS, UI_MENU_ASSUME_FOCUS_DESC);
+    rows_coop();
     opt_end();
 }
 
@@ -1493,6 +1553,67 @@ static void perf_draw(const MenuTarget *t, float scale) {
     dl->AddText(ImVec2(p.x + pad, p.y + pad), IM_COL32(255, 255, 255, 235), g_perf_text);
 }
 
+static void coop_draw(const MenuTarget *t, float scale) {
+    if (g_coop.mode == COOP_OFF) return;
+    ImDrawList *dl = g_open.load(std::memory_order_relaxed) ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
+    float w = (float)t->width;
+    float pad = 6.0f * scale;
+
+    // 1. Top-left compact Co-op status badge
+    char hud[192];
+    snprintf(hud, sizeof hud, "CO-OP · %s", g_coop.status_text);
+    ImVec2 hsz = ImGui::CalcTextSize(hud);
+    ImVec2 hp(12.0f * scale, 12.0f * scale);
+    dl->AddRectFilled(hp, ImVec2(hp.x + hsz.x + pad * 2.0f, hp.y + hsz.y + pad * 2.0f), IM_COL32(10, 26, 22, 185),
+                      5.0f * scale);
+    dl->AddRect(hp, ImVec2(hp.x + hsz.x + pad * 2.0f, hp.y + hsz.y + pad * 2.0f), IM_COL32(72, 235, 168, 210),
+                5.0f * scale, 0, 1.5f * scale);
+    dl->AddText(ImVec2(hp.x + pad, hp.y + pad), IM_COL32(225, 255, 240, 245), hud);
+
+    // 2. Shared-world progression toast banner (top center)
+    if (g_coop.event_banner[0] && g_coop.event_alpha > 0.01f) {
+        int a = (int)(g_coop.event_alpha * 235.0f);
+        ImVec2 bsz = ImGui::CalcTextSize(g_coop.event_banner);
+        ImVec2 bp((w - bsz.x) * 0.5f - pad * 1.6f, 54.0f * scale);
+        dl->AddRectFilled(bp, ImVec2(bp.x + bsz.x + pad * 3.2f, bp.y + bsz.y + pad * 2.0f), IM_COL32(14, 34, 28, a),
+                          6.0f * scale);
+        dl->AddRect(bp, ImVec2(bp.x + bsz.x + pad * 3.2f, bp.y + bsz.y + pad * 2.0f), IM_COL32(90, 245, 180, a),
+                    6.0f * scale, 0, 2.0f * scale);
+        dl->AddText(ImVec2(bp.x + pad * 1.6f, bp.y + pad), IM_COL32(240, 255, 245, a), g_coop.event_banner);
+    }
+
+    // 3. 3D In-World Partner Diamond Marker & Zonai Pillar
+    if (g_coop.has_peer_pos && g_coop.has_local_pos) {
+        float sx = g_coop.peer_screen[0], sy = g_coop.peer_screen[1];
+        float fx = g_coop.peer_foot_screen[0], fy = g_coop.peer_foot_screen[1];
+        float r = 11.0f * scale;
+        ImU32 col_fill = g_coop.peer_on_screen ? IM_COL32(55, 230, 165, 220) : IM_COL32(255, 195, 65, 220);
+        ImU32 col_edge = IM_COL32(235, 255, 245, 245);
+
+        if (g_coop.peer_on_screen) {
+            // Vertical Zonai beacon line from partner's overhead diamond to their ground position
+            dl->AddLine(ImVec2(sx, sy + r), ImVec2(fx, fy), IM_COL32(55, 230, 165, 135), 2.2f * scale);
+            dl->AddCircleFilled(ImVec2(fx, fy), 4.5f * scale, IM_COL32(55, 230, 165, 190));
+        }
+
+        // Floating 3D Diamond Marker
+        ImVec2 top(sx, sy - r), right(sx + r * 0.8f, sy), bot(sx, sy + r), left(sx - r * 0.8f, sy);
+        dl->AddQuadFilled(top, right, bot, left, col_fill);
+        dl->AddQuad(top, right, bot, left, col_edge, 2.0f * scale);
+
+        char tag[128];
+        snprintf(tag, sizeof tag, "Compañero · %.1f m [%s]", g_coop.peer_dist, coop_action_name(g_coop.peer_action));
+        ImVec2 tsz = ImGui::CalcTextSize(tag);
+        ImVec2 tp(sx - tsz.x * 0.5f - pad, sy - r - tsz.y - pad * 2.2f);
+        if (tp.x < 8.0f) tp.x = 8.0f;
+        if (tp.x + tsz.x + pad * 2.0f > w - 8.0f) tp.x = w - 8.0f - tsz.x - pad * 2.0f;
+        if (tp.y < 8.0f) tp.y = sy + r + 6.0f * scale;
+        dl->AddRectFilled(tp, ImVec2(tp.x + tsz.x + pad * 2.0f, tp.y + tsz.y + pad * 1.6f), IM_COL32(8, 20, 18, 200),
+                          4.0f * scale);
+        dl->AddText(ImVec2(tp.x + pad, tp.y + pad * 0.8f), IM_COL32(235, 255, 245, 250), tag);
+    }
+}
+
 extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
     *shot = NULL;
     cheats_frame(frame);   // the data cheats and the buttons of the cheats that need them held
@@ -1501,6 +1622,9 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     if (g_perf_save.exchange(0)) cfg_save();
     perf_tick(plat_now_ns(), t);
     amiibo_tick();
+    int coop_on = coop_active();
+    if (coop_on) coop_tick(t->width, t->height, &g_coop);
+    else g_coop.mode = COOP_OFF;
     bool open = g_open.load(std::memory_order_relaxed);
     if (!open) {
         if (g_save_pending) g_save_pending = opt_save_tick(1);   // closed: the last change goes to totk.ini now
@@ -1510,7 +1634,7 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
             g_tab_request = 0;
             set_open(1);
             open = true;
-        } else if (!g_perf_mode) {
+        } else if (!g_perf_mode && !coop_on) {
             return 0;
         }
     }
@@ -1560,6 +1684,7 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     ImGui::NewFrame();
     if (open) layout_menu(t->width, t->height, scale);
     perf_draw(t, scale);
+    coop_draw(t, scale);
     ImGui::Render();
     if (open) g_save_pending = opt_save_tick(0);
     g_cost_ns += plat_now_ns() - t0;

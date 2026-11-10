@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "coop.h"
 #include "fs.h"
 #include "host.h"
 #include "platform/platform.h"
@@ -541,6 +542,7 @@ static uint32_t save_commit_locked(void) {
     if (tx_dead) return FS_R_INVALID_ARGUMENT;
     rt_log("fs commit save: %d files, %d changed (%.1f MiB written), %d unchanged linked, in %.0f ms%s", nfiles,
            nfiles - linked, bytes / 1048576.0, linked, (plat_now_ns() - t0) / 1e6, waits ? "; waits in save-tx" : "");
+    coop_on_save_commit(nfiles - linked);
     return 0;
 }
 
