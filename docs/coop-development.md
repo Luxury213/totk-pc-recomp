@@ -29,6 +29,9 @@ the common checkpoint. The final campaign must work from the prologue. Players i
   and 16 each for the two physics candidates, so title traffic and common body updates cannot exhaust every slot.
   Resolution discovery and co-op tracing use separate profiler
   bits, so disabling tracing preserves the resolution observer.
+- A separate opt-in, bounded constructor trace starts before player observation. It retains at most 16,384
+  `GameActor` constructor entries and reports only entries whose object pointer matches the observed local player.
+  The diagnostic also records the entry count at first playable observation. It does not call the constructor.
 
 The remote silhouette and local bot are diagnostic overlays. Native remote actors, shared pause, combat, inventory,
 quest events, checkpoints and cinematic control are **not implemented or enabled**. Losing a peer disconnects its
@@ -108,6 +111,14 @@ The first diagnostic attempt timed out on title-screen navigation. The runner no
 and repeats confirmation instead of relying on four fixed button events; the corrected run succeeds. This checks
 observation and isolation, not actor creation or a playable multiplayer campaign. No lifter algorithm or generated
 C was edited by hand in this work.
+
+The next isolated 1.4.3 diagnostic confirmed the local player's vtable and found a `GameActor` constructor entry
+whose object pointer exactly matched the observed player. Its caller resolves to an allocator wrapper, and a
+separate static path registers that wrapper as the `GameActor` factory. There were 779 constructor entries before
+the first playable observation; the former 64-entry capture filled before reaching the player. The revised audit
+reports the matched invocation and its caller without exporting generated bodies. The copied save exited cleanly,
+and the source save remained byte-identical. This verifies construction of the existing player object; scene
+registration, input/camera ownership, destruction requests and a safe world mutation phase remain unknown.
 
 ## Contributing and review milestones
 

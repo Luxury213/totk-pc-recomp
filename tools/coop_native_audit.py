@@ -19,6 +19,9 @@ DIRECT_CALL = re.compile(r'\bf_([0-9a-fA-F]+)\(c\)')
 TRACE = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+),.*?host thread (\d+)'
                    r'(?:, generation (\d+), kind ([a-z_]+))?;')
 CANDIDATE = re.compile(r'player vtable\+0x200 -> main\+(0x[0-9a-fA-F]+), generation (\d+);')
+VTABLE = re.compile(r'player main\+(0x[0-9a-fA-F]+), generation (\d+);')
+CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
+                         r'0x[0-9a-fA-F]+, host thread (\d+), observed player (same|different);')
 
 
 def number(value):
@@ -41,12 +44,26 @@ def audit(generated, diagnostic):
             entries.append(dict(address=base + int(match[1], 16), caller=int(match[2], 16),
                                 thread=int(match[3]), generation=int(match[4]) if match[4] else None,
                                 kind=match[5] or 'legacy_unscoped'))
+    for line in report.get('native_constructor_observations', []):
+        match = CONSTRUCTOR.search(line)
+        if match:
+            entries.append(dict(address=base + int(match[1], 16), caller=int(match[2], 16),
+                                thread=int(match[3]), generation=None,
+                                kind='constructor_same_actor' if match[4] == 'same' else 'constructor_other_actor'))
     candidates = defaultdict(set)
     for line in report.get('native_method_candidates', []):
         match = CANDIDATE.search(line)
         if match:
             candidates[base + int(match[1], 16)].add(int(match[2]))
-    if not entries and not candidates:
+    vtables = defaultdict(set)
+    for line in report.get('native_vtable_observations', []):
+        match = VTABLE.search(line)
+        if match:
+            address = base + int(match[1], 16)
+            if not text_high <= address < limit or address & 7:
+                raise ValueError(f'Player vtable outside aligned main data at {address:#x}')
+            vtables[address].add(int(match[2]))
+    if not entries and not candidates and not vtables:
         raise ValueError('The diagnostic contains no recognizable native observations or candidates')
 
     # Index definitions only. Prototypes and function tables are not function bodies.
@@ -118,13 +135,17 @@ def audit(generated, diagnostic):
                 executable_sha256=report.get('executable_sha256'),
                 playable_actor_observed=report.get('playable_actor_observed', False),
                 trace_count=len(entries), trace_kinds=dict(kinds),
+                player_vtables=[dict(address=label(address), generations=sorted(generations))
+                                for address, generations in sorted(vtables.items())],
                 player_method_candidates=len(candidates),
+                constructor_same_actor_count=kinds['constructor_same_actor'],
                 player_epoch_trace_count=sum(e['generation'] is not None for e in entries),
                 native_actor_creation_verified=False, world_mutation_phase_verified=False,
                 functions=functions,
                 frequently_observed_callers=[dict(function=label(a), observations=count)
                                              for a, count in caller_totals.most_common()],
                 limitations=['Function entry and x0 matching do not establish the full native ABI.',
+                             'A matching constructor invocation does not verify scene registration or safe spawning.',
                              'Physical host-thread identity does not establish guest task ownership or a safe phase.',
                              'Direct callees omit indirect dispatch targets and are not a complete call graph.',
                              'No actor creation, guest calls, memory writes or capability changes are performed.'])

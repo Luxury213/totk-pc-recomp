@@ -9,6 +9,7 @@ typedef struct {
     uint32_t commands_rejected, commands_stale, queued;
     uint32_t native_trace_count;
     uint32_t native_traces_by_kind[3]; // player method, physics component, matrix holder
+    uint32_t native_constructor_trace_count;
     char reason[128];
 } CoopAdapterSnapshot;
 

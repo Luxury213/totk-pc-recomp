@@ -84,12 +84,18 @@ def main():
     observations = [line for line in lines if 'coop adapter:' in line]
     traces = [line for line in lines if 'coop native trace:' in line]
     candidates = [line for line in lines if 'coop native candidate:' in line]
+    vtables = [line for line in lines if 'coop native vtable:' in line]
+    constructors = [line for line in lines if 'coop native constructor:' in line]
+    constructor_budgets = [line for line in lines if 'coop native constructor budget:' in line]
     kinds = Counter(match[1] for line in traces if (match := re.search(r'kind ([a-z_]+);', line)))
     intact = before == save_hashes(seed / 'save')
     report = dict(executable_sha256=info['executable_sha256'], exit_code=result, timed_out=timed_out,
                   elapsed_seconds=round(time.monotonic() - started, 2), source_save_unchanged=intact,
                   observations=observations, native_function_observations=traces,
-                  native_method_candidates=candidates, native_trace_kinds=dict(kinds),
+                  native_method_candidates=candidates, native_vtable_observations=vtables,
+                  native_constructor_observations=constructors,
+                  native_constructor_budgets=constructor_budgets,
+                  native_trace_kinds=dict(kinds),
                   player_epoch_trace_count=sum('generation ' in line for line in traces),
                   playable_actor_observed=any('player observed' in line for line in observations),
                   native_actor_creation_verified=False, world_mutation_phase_verified=False,

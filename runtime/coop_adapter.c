@@ -152,6 +152,13 @@ static struct {
     uint32_t host_thread, generation, kind;
     unsigned ready;
 } trace_entries[64];
+enum { CONSTRUCTOR_TRACE_LIMIT = 16384 };
+static unsigned constructor_claimed, constructor_consumed, constructor_summary_logged;
+static struct {
+    uint64_t caller, actor;
+    uint32_t host_thread;
+    unsigned ready;
+} constructor_entries[CONSTRUCTOR_TRACE_LIMIT];
 
 void coop_adapter_trace_enable(int enable) {
     __atomic_store_n(&trace_enabled, enable, __ATOMIC_RELEASE);
@@ -162,6 +169,18 @@ void coop_adapter_trace_enable(int enable) {
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
+    // The GameActor constructor associated with the observed vtable runs before presence is ready.
+    // Keep its separate bounded trace until actor observation can correlate an allocated object.
+    if (address == MOD_MAIN_BASE + 0x6898dcull) {
+        unsigned slot = __atomic_fetch_add(&constructor_claimed, 1, __ATOMIC_RELAXED);
+        if (slot < CONSTRUCTOR_TRACE_LIMIT) {
+            constructor_entries[slot].caller = caller;
+            constructor_entries[slot].actor = argument;
+            constructor_entries[slot].host_thread = plat_thread_id();
+            __atomic_store_n(&constructor_entries[slot].ready, 1, __ATOMIC_RELEASE);
+        }
+        return;
+    }
     uint32_t generation = __atomic_load_n(&trace_generation, __ATOMIC_ACQUIRE);
     if (!generation) return;   // title/loading observations must not consume the gameplay trace budget
     uint64_t actor = __atomic_load_n(&trace_actor, __ATOMIC_RELAXED);
@@ -208,8 +227,30 @@ void coop_adapter_observe(const Cpu *cpu) {
                (unsigned long long)(cpu ? cpu->x[30] : 0), plat_thread_id());
     }
     observed.actor = actor; observed.scene_address = scene; observed.observations++;
-    uint64_t method = actor ? guest_pointer(guest_pointer(actor) + 0x200) : 0;
+    if (actor) {
+        if (!constructor_summary_logged) {
+            rt_log("coop native constructor budget: %u entries before first playable actor, limit %u; observation only",
+                   __atomic_load_n(&constructor_claimed, __ATOMIC_ACQUIRE), CONSTRUCTOR_TRACE_LIMIT);
+            constructor_summary_logged = 1;
+        }
+        while (constructor_consumed < CONSTRUCTOR_TRACE_LIMIT &&
+               __atomic_load_n(&constructor_entries[constructor_consumed].ready, __ATOMIC_ACQUIRE)) {
+            unsigned i = constructor_consumed++;
+            if (constructor_entries[i].actor == actor) {
+                rt_log("coop native constructor: entry main+0x6898dc, caller %#llx, x0 %#llx, host thread %u, observed player same; observation only",
+                       (unsigned long long)constructor_entries[i].caller,
+                       (unsigned long long)constructor_entries[i].actor,
+                       constructor_entries[i].host_thread);
+                observed.native_constructor_trace_count++;
+            }
+        }
+    }
+    uint64_t vtable = actor ? guest_pointer(actor) : 0;
+    uint64_t method = vtable ? guest_pointer(vtable + 0x200) : 0;
     if (method < MOD_MAIN_BASE || method >= MOD_MAIN_BASE + 0x3adf000ull || (method & 3)) method = 0;
+    if (changed && actor && vtable >= MOD_MAIN_BASE && vtable < MOD_MAIN_BASE + 0x3adf000ull)
+        rt_log("coop native vtable: player main+%#llx, generation %u; observation only",
+               (unsigned long long)(vtable - MOD_MAIN_BASE), observed.sample.generation);
     if (changed && method)
         rt_log("coop native candidate: player vtable+0x200 -> main+%#llx, generation %u; observation only",
                (unsigned long long)(method - MOD_MAIN_BASE), observed.sample.generation);
