@@ -25,6 +25,9 @@ static float camera[28];
 static uint64_t mgr;
 static unsigned char root[0x38], unit[0x50], actor[0x400];
 static unsigned char vtable[0x220];
+static unsigned char scene_module[0x1f0], scene[0x60], components[14*8];
+static unsigned char residents[0x30], resident_links[0x70], resident_data[0x48];
+static char actor_name[] = "Player";
 static int fail_reads;
 
 unsigned cfg_version(void) { return config_version; }
@@ -32,7 +35,7 @@ const char *cfg_value(const char *key) {
     return !strcmp(key, "TOTK_COOP_MODE") ? mode : "127.0.0.1";
 }
 int cfg_int(const char *key) { (void)key; return 7777; }
-int cfg_bool(const char *key) { (void)key; return 0; }
+int cfg_bool(const char *key) { return !strcmp(key, "TOTK_COOP_TRACE_GUEST"); }
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 uint64_t plat_now_ns(void) { return now; }
@@ -46,14 +49,22 @@ static int in_range(uint64_t p, uint64_t n, const void *base, uint64_t size) {
 }
 int mem_guest_readable(uint64_t p, uint64_t n) {
     if (p == MOD_MAIN_BASE + 0x3969918ull && n <= 8) return 1;
+    if (p == MOD_MAIN_BASE + 0x3add238ull && n <= 8) return 1;
     if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x100),sizeof vtable)) return 1;
     return in_range(p,n,&mgr,sizeof mgr) || in_range(p,n,root,sizeof root) ||
-           in_range(p,n,unit,sizeof unit) || in_range(p,n,actor,sizeof actor);
+           in_range(p,n,unit,sizeof unit) || in_range(p,n,actor,sizeof actor) ||
+           in_range(p,n,scene_module,sizeof scene_module) || in_range(p,n,scene,sizeof scene) ||
+           in_range(p,n,components,sizeof components) || in_range(p,n,residents,sizeof residents) ||
+           in_range(p,n,resident_links,sizeof resident_links) ||
+           in_range(p,n,resident_data,sizeof resident_data) ||
+           in_range(p,n,actor_name,sizeof actor_name);
 }
 int plat_mem_read(uint64_t p, void *out, size_t n) {
     if (fail_reads || !mem_guest_readable(p,n)) return 0;
     if (p == MOD_MAIN_BASE + 0x3969918ull) {
         uint64_t slot = (uintptr_t)&mgr; memcpy(out,&slot,n);
+    } else if (p == MOD_MAIN_BASE + 0x3add238ull) {
+        uint64_t slot = (uintptr_t)scene_module; memcpy(out,&slot,n);
     } else if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x100),sizeof vtable)) {
         memcpy(out,vtable+(p-(MOD_MAIN_BASE+0x100)),n);
     } else memcpy(out,(const void *)(uintptr_t)p,n);
@@ -67,7 +78,17 @@ static void player(float x, float y, float z) {
     int32_t id = 42; memcpy(root + 0x30,&id,4); memcpy(unit + 0x48,&id,4);
     ptr(unit + 0x40,(uintptr_t)actor);
     ptr(actor,MOD_MAIN_BASE + 0x100);
+    ptr(actor + 0x218,(uintptr_t)actor_name);
     ptr(vtable + 0x200,MOD_MAIN_BASE + 0x1000);
+    ptr(scene_module + 0x1e8,(uintptr_t)scene);
+    int32_t count = 14, one = 1;
+    memcpy(scene + 0x50,&count,4);
+    ptr(scene + 0x58,(uintptr_t)components);
+    ptr(components + 13*8,(uintptr_t)residents);
+    memcpy(residents + 0x20,&one,4);
+    ptr(residents + 0x28,(uintptr_t)resident_links);
+    ptr(resident_links + 8,(uintptr_t)resident_data);
+    ptr(resident_data + 0x40,(uintptr_t)actor);
     scalar(actor + 0x2b4,x); scalar(actor + 0x2b8,y); scalar(actor + 0x2bc,z);
     scalar(actor + 0x2e0,1);
 }
@@ -94,7 +115,13 @@ int main(void) {
     camera[12] = camera[17] = camera[22] = camera[27] = 1;
     coop_capture_camera(1);
     coop_adapter_trace_enable(1);
+    coop_adapter_function(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,77);
+    coop_adapter_function(MOD_MAIN_BASE+0x3d40f0,MOD_MAIN_BASE+0x3d3e44,77);
+    coop_adapter_function(MOD_MAIN_BASE+0x689894,MOD_MAIN_BASE+0x3d4114,77);
     coop_adapter_function(MOD_MAIN_BASE+0x6898dc,MOD_MAIN_BASE+0x6898cc,(uintptr_t)actor);
+    assert(constructor_entries[0].factory_caller==MOD_MAIN_BASE+0x3d4114);
+    assert(constructor_entries[0].request_caller==MOD_MAIN_BASE+0x3d3e44);
+    assert(constructor_entries[0].pipeline_caller==MOD_MAIN_BASE+0x2340);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa11af0,99,77);
     CoopSnapshot s = tick();
     CoopAdapterSnapshot title; coop_adapter_snapshot(&title);
@@ -103,7 +130,8 @@ int main(void) {
     player(0,144,0); s = tick(); assert(!s.has_local_pos); // title actor
     player(-686,144,839); s = tick();
     assert(s.has_local_pos && s.has_peer_pos && s.connected && fabsf(s.peer_dist - 4.5f) < .01f);
-    coop_adapter_snapshot(&title); assert(title.native_constructor_trace_count==1);
+    coop_adapter_snapshot(&title);
+    assert(title.native_constructor_trace_count==1 && title.native_resident_match);
     coop_adapter_trace_enable(1);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa11af0,99,77);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa0f3f0,99,77);
@@ -129,7 +157,8 @@ int main(void) {
     coop_toggle_bot_mode(); s = tick(); assert(s.peer_speed > 0 && s.peer_pos[0] > fixed);
     coop_toggle_bot_mode();
     player(1000,200,1000); s = tick(); assert(fabsf(s.peer_dist - 4.5f) < .01f);
-    mgr = 0; s = tick(); assert(!s.has_local_pos && !s.has_peer_pos && !s.connected);
+    mgr = 0; memset(residents + 0x20,0,4);
+    s = tick(); assert(!s.has_local_pos && !s.has_peer_pos && !s.connected);
     player(1000,200,1000); s = tick(); assert(s.has_peer_pos);
     fail_reads = 1; s = tick(); assert(!s.has_local_pos && !s.has_peer_pos); fail_reads = 0;
     s = tick(); assert(s.has_local_pos);

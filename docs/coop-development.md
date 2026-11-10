@@ -118,7 +118,14 @@ separate static path registers that wrapper as the `GameActor` factory. There we
 the first playable observation; the former 64-entry capture filled before reaching the player. The revised audit
 reports the matched invocation and its caller without exporting generated bodies. The copied save exited cleanly,
 and the source save remained byte-identical. This verifies construction of the existing player object; scene
-registration, input/camera ownership, destruction requests and a safe world mutation phase remain unknown.
+registration requests, input/camera ownership, destruction requests and a safe world mutation phase remain unknown.
+
+A further read-only trace followed the matched constructor through its allocator wrapper, factory dispatcher and
+guarded initialization routine to a caller in the engine's task-processing path. The player's pointer also matched
+the independent scene resident-actors list during gameplay. Constructor and presentation observations occurred on
+different physical host threads. The audit records the caller chain and the scene-list match without exporting game
+code. These observations establish how the existing player is constructed and where it resides; they do not establish
+the request ABI, scene ownership, a safe call site, or how to create and remove a second actor.
 
 ## Contributing and review milestones
 

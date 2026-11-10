@@ -21,7 +21,10 @@ TRACE = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+),.*?ho
 CANDIDATE = re.compile(r'player vtable\+0x200 -> main\+(0x[0-9a-fA-F]+), generation (\d+);')
 VTABLE = re.compile(r'player main\+(0x[0-9a-fA-F]+), generation (\d+);')
 CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
-                         r'0x[0-9a-fA-F]+, host thread (\d+), observed player (same|different);')
+                         r'0x[0-9a-fA-F]+, host thread (\d+)(?:, factory caller (0x[0-9a-fA-F]+))?'
+                         r'(?:, request caller (0x[0-9a-fA-F]+))?'
+                         r'(?:, pipeline caller (0x[0-9a-fA-F]+))?, '
+                         r'observed player (same|different);')
 
 
 def number(value):
@@ -49,7 +52,10 @@ def audit(generated, diagnostic):
         if match:
             entries.append(dict(address=base + int(match[1], 16), caller=int(match[2], 16),
                                 thread=int(match[3]), generation=None,
-                                kind='constructor_same_actor' if match[4] == 'same' else 'constructor_other_actor'))
+                                factory_caller=int(match[4], 16) if match[4] else None,
+                                request_caller=int(match[5], 16) if match[5] else None,
+                                pipeline_caller=int(match[6], 16) if match[6] else None,
+                                kind='constructor_same_actor' if match[7] == 'same' else 'constructor_other_actor'))
     candidates = defaultdict(set)
     for line in report.get('native_method_candidates', []):
         match = CANDIDATE.search(line)
@@ -109,11 +115,20 @@ def audit(generated, diagnostic):
             body = path.read_text(encoding='utf-8')[start:end]
             calls = sorted({int(m[1], 16) for m in DIRECT_CALL.finditer(body)})
         callers = defaultdict(list)
+        factory_callers = defaultdict(int)
+        request_callers = defaultdict(int)
+        pipeline_callers = defaultdict(int)
         for entry in observed:
             owner = containing(entry['caller'])
             callers[owner].append(entry)
             if owner is not None:
                 caller_totals[owner] += 1
+            if entry.get('factory_caller'):
+                factory_callers[containing(entry['factory_caller'])] += 1
+            if entry.get('request_caller'):
+                request_callers[containing(entry['request_caller'])] += 1
+            if entry.get('pipeline_caller'):
+                pipeline_callers[containing(entry['pipeline_caller'])] += 1
         functions.append(dict(function=label(address), definition_found=location is not None,
                               source=location[0].relative_to(generated).as_posix() if location else None,
                               observations=len(observed), kinds=dict(Counter(e['kind'] for e in observed)),
@@ -128,12 +143,26 @@ def audit(generated, diagnostic):
                                                      return_sites=sorted({label(e['caller']) for e in group}),
                                                      host_threads=sorted({e['thread'] for e in group}))
                                                 for owner, group in sorted(callers.items(),
+                                                                           key=lambda item: -1 if item[0] is None else item[0])],
+                              factory_callers=[dict(function=label(owner) if owner is not None else None,
+                                                    observations=count)
+                                               for owner, count in sorted(factory_callers.items(),
+                                                                          key=lambda item: -1 if item[0] is None else item[0])],
+                              request_callers=[dict(function=label(owner) if owner is not None else None,
+                                                    observations=count)
+                                               for owner, count in sorted(request_callers.items(),
+                                                                          key=lambda item: -1 if item[0] is None else item[0])],
+                              pipeline_callers=[dict(function=label(owner) if owner is not None else None,
+                                                     observations=count)
+                                                for owner, count in sorted(pipeline_callers.items(),
                                                                            key=lambda item: -1 if item[0] is None else item[0])]))
     kinds = Counter(e['kind'] for e in entries)
     return dict(marker=GENERATED_MARKER, schema_version=1, status='observations_only',
                 diagnostic_sha256=hashlib.sha256(diagnostic.read_bytes()).hexdigest(),
                 executable_sha256=report.get('executable_sha256'),
                 playable_actor_observed=report.get('playable_actor_observed', False),
+                player_scene_resident_observed=any('player matched;' in line for line in
+                                                  report.get('native_scene_resident_observations', [])),
                 trace_count=len(entries), trace_kinds=dict(kinds),
                 player_vtables=[dict(address=label(address), generations=sorted(generations))
                                 for address, generations in sorted(vtables.items())],

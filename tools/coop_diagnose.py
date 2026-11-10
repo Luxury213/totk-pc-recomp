@@ -87,6 +87,7 @@ def main():
     vtables = [line for line in lines if 'coop native vtable:' in line]
     constructors = [line for line in lines if 'coop native constructor:' in line]
     constructor_budgets = [line for line in lines if 'coop native constructor budget:' in line]
+    scene_resident_observations = [line for line in lines if 'coop native scene resident:' in line]
     kinds = Counter(match[1] for line in traces if (match := re.search(r'kind ([a-z_]+);', line)))
     intact = before == save_hashes(seed / 'save')
     report = dict(executable_sha256=info['executable_sha256'], exit_code=result, timed_out=timed_out,
@@ -95,6 +96,7 @@ def main():
                   native_method_candidates=candidates, native_vtable_observations=vtables,
                   native_constructor_observations=constructors,
                   native_constructor_budgets=constructor_budgets,
+                  native_scene_resident_observations=scene_resident_observations,
                   native_trace_kinds=dict(kinds),
                   player_epoch_trace_count=sum('generation ' in line for line in traces),
                   playable_actor_observed=any('player observed' in line for line in observations),

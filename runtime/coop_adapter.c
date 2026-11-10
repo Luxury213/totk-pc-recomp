@@ -33,32 +33,10 @@ static float guest_f32(uint64_t at) {
     return v;
 }
 
-// Returns the validated PlayerLink ActorBase pointer (proc) on 1.4.3, or 0 when not spawned.
-// Checks both the PlayerMgr singleton (main+0x3969918) and the Scene resident-actors list
-// (main+0x3add238 -> +0x1e8 -> +0x58 -> comp[13], as in runtime/frame_rate.c:player_pos).
-static uint64_t player_proc(void) {
+// Finds the named actor in the scene's resident-actors list, as in runtime/frame_rate.c:player_pos.
+// This is also checked independently when tracing; the PlayerMgr pointer alone does not prove scene membership.
+static uint64_t resident_player_proc(void) {
     if (rt_game_version != 143) return 0;
-    uint64_t slot = MOD_MAIN_BASE + 0x3969918ull;
-    if (guest_readable(slot, 8)) {
-        uint64_t var = guest_pointer(slot);
-        if (guest_readable(var, 8)) {
-            uint64_t root = guest_pointer(var);
-            if (guest_readable(root, 0x38)) {
-                uint64_t link = root + 0x20, unit = guest_pointer(link + 8);
-                int32_t id = guest_s32(link + 0x10);
-                if (id != -1 && guest_readable(unit, 0x50) && guest_s32(unit + 0x48) == id) {
-                    uint64_t proc = guest_pointer(unit + 0x40);
-                    if (guest_readable(proc, 0x300)) {
-                        uint64_t vt = guest_pointer(proc);
-                        if (vt >= MOD_MAIN_BASE && vt < MOD_MAIN_BASE + 0x3adf000ull &&
-                            (uint32_t)guest_s32(proc + 0x24) - 7u >= 5u) {
-                            return proc;
-                        }
-                    }
-                }
-            }
-        }
-    }
     uint64_t mod_slot = MOD_MAIN_BASE + 0x3add238ull;
     if (!guest_readable(mod_slot, 8)) return 0;
     uint64_t module = guest_pointer(mod_slot);
@@ -86,6 +64,32 @@ static uint64_t player_proc(void) {
             (uint32_t)guest_s32(actor + 0x24) - 7u >= 5u) return actor;
     }
     return 0;
+}
+
+// Returns the validated PlayerLink ActorBase pointer (proc) on 1.4.3, or 0 when not spawned.
+// Checks PlayerMgr first (main+0x3969918), then the scene resident list as a fallback.
+static uint64_t player_proc(void) {
+    if (rt_game_version != 143) return 0;
+    uint64_t slot = MOD_MAIN_BASE + 0x3969918ull;
+    if (guest_readable(slot, 8)) {
+        uint64_t var = guest_pointer(slot);
+        if (guest_readable(var, 8)) {
+            uint64_t root = guest_pointer(var);
+            if (guest_readable(root, 0x38)) {
+                uint64_t link = root + 0x20, unit = guest_pointer(link + 8);
+                int32_t id = guest_s32(link + 0x10);
+                if (id != -1 && guest_readable(unit, 0x50) && guest_s32(unit + 0x48) == id) {
+                    uint64_t proc = guest_pointer(unit + 0x40);
+                    if (guest_readable(proc, 0x300)) {
+                        uint64_t vt = guest_pointer(proc);
+                        if (vt >= MOD_MAIN_BASE && vt < MOD_MAIN_BASE + 0x3adf000ull &&
+                            (uint32_t)guest_s32(proc + 0x24) - 7u >= 5u) return proc;
+                    }
+                }
+            }
+        }
+    }
+    return resident_player_proc();
 }
 
 // Reads Link's exact 3D ActorBase position (proc+0x2b4), facing yaw (proc+0x2c0) and action verb (comps+0x158).
@@ -154,8 +158,10 @@ static struct {
 } trace_entries[64];
 enum { CONSTRUCTOR_TRACE_LIMIT = 16384 };
 static unsigned constructor_claimed, constructor_consumed, constructor_summary_logged;
+static _Thread_local uint64_t factory_caller, factory_request_caller, wrapper_request_caller;
+static _Thread_local uint64_t pipeline_caller, request_pipeline_caller, wrapper_pipeline_caller;
 static struct {
-    uint64_t caller, actor;
+    uint64_t caller, actor, factory_caller, request_caller, pipeline_caller;
     uint32_t host_thread;
     unsigned ready;
 } constructor_entries[CONSTRUCTOR_TRACE_LIMIT];
@@ -169,13 +175,37 @@ void coop_adapter_trace_enable(int enable) {
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
+    if (address == MOD_MAIN_BASE + 0x3d3dd0ull) {
+        pipeline_caller = caller;
+        return;
+    }
+    if (address == MOD_MAIN_BASE + 0x3d40f0ull) {
+        factory_request_caller = caller; // the caller requested a factory-created object
+        request_pipeline_caller = caller == MOD_MAIN_BASE + 0x3d3e44ull ? pipeline_caller : 0;
+        return;
+    }
+    if (address == MOD_MAIN_BASE + 0x689894ull) {
+        factory_caller = caller; // this wrapper allocates before calling the GameActor constructor
+        wrapper_request_caller = caller == MOD_MAIN_BASE + 0x3d4114ull ? factory_request_caller : 0;
+        wrapper_pipeline_caller = caller == MOD_MAIN_BASE + 0x3d4114ull ? request_pipeline_caller : 0;
+        return;
+    }
     // The GameActor constructor associated with the observed vtable runs before presence is ready.
     // Keep its separate bounded trace until actor observation can correlate an allocated object.
     if (address == MOD_MAIN_BASE + 0x6898dcull) {
+        uint64_t outer_caller = caller == MOD_MAIN_BASE + 0x6898ccull ? factory_caller : 0;
+        uint64_t request_caller = outer_caller == MOD_MAIN_BASE + 0x3d4114ull ? wrapper_request_caller : 0;
+        uint64_t upstream_caller = request_caller == MOD_MAIN_BASE + 0x3d3e44ull ? wrapper_pipeline_caller : 0;
+        factory_caller = 0;
+        wrapper_request_caller = 0;
+        wrapper_pipeline_caller = 0;
         unsigned slot = __atomic_fetch_add(&constructor_claimed, 1, __ATOMIC_RELAXED);
         if (slot < CONSTRUCTOR_TRACE_LIMIT) {
             constructor_entries[slot].caller = caller;
             constructor_entries[slot].actor = argument;
+            constructor_entries[slot].factory_caller = outer_caller;
+            constructor_entries[slot].request_caller = request_caller;
+            constructor_entries[slot].pipeline_caller = upstream_caller;
             constructor_entries[slot].host_thread = plat_thread_id();
             __atomic_store_n(&constructor_entries[slot].ready, 1, __ATOMIC_RELEASE);
         }
@@ -211,11 +241,14 @@ void coop_adapter_observe(const Cpu *cpu) {
     float pos[3] = {0}, yaw = 0;
     int action = COOP_ACT_EXPLORING;
     uint64_t actor = read_player_state(pos, &yaw, &action);
+    uint64_t resident_actor = actor && __atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) ?
+                              resident_player_proc() : 0;
     uint64_t scene = 0, module = rt_game_version == 143 ? guest_pointer(MOD_MAIN_BASE + 0x3add238ull) : 0;
     if (module) scene = guest_pointer(module + 0x1e8ull);
     uint64_t now = plat_now_ns();
     plat_mutex_lock(&adapter_lock);
     CoopSample previous = observed.sample;
+    uint32_t resident_match = actor && resident_actor == actor;
     float displacement = hypotf(hypotf(pos[0] - previous.pos[0], pos[2] - previous.pos[2]),
                                 pos[1] - previous.pos[1]);
     int changed = !observed.observations || actor != observed.actor || scene != observed.scene_address ||
@@ -226,6 +259,10 @@ void coop_adapter_observe(const Cpu *cpu) {
                observed.sample.generation, actor ? "observed" : "absent", scene ? "present" : "absent",
                (unsigned long long)(cpu ? cpu->x[30] : 0), plat_thread_id());
     }
+    if (actor && (changed || resident_match != observed.native_resident_match))
+        rt_log("coop native scene resident: player %s; observation only",
+               resident_match ? "matched" : "unmatched");
+    observed.native_resident_match = resident_match;
     observed.actor = actor; observed.scene_address = scene; observed.observations++;
     if (actor) {
         if (!constructor_summary_logged) {
@@ -237,10 +274,13 @@ void coop_adapter_observe(const Cpu *cpu) {
                __atomic_load_n(&constructor_entries[constructor_consumed].ready, __ATOMIC_ACQUIRE)) {
             unsigned i = constructor_consumed++;
             if (constructor_entries[i].actor == actor) {
-                rt_log("coop native constructor: entry main+0x6898dc, caller %#llx, x0 %#llx, host thread %u, observed player same; observation only",
+                rt_log("coop native constructor: entry main+0x6898dc, caller %#llx, x0 %#llx, host thread %u, factory caller %#llx, request caller %#llx, pipeline caller %#llx, observed player same; observation only",
                        (unsigned long long)constructor_entries[i].caller,
                        (unsigned long long)constructor_entries[i].actor,
-                       constructor_entries[i].host_thread);
+                       constructor_entries[i].host_thread,
+                       (unsigned long long)constructor_entries[i].factory_caller,
+                       (unsigned long long)constructor_entries[i].request_caller,
+                       (unsigned long long)constructor_entries[i].pipeline_caller);
                 observed.native_constructor_trace_count++;
             }
         }
