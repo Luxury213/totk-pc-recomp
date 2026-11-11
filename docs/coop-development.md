@@ -140,6 +140,12 @@ target shows actor metadata setup and an actor virtual call. The private audit r
 holder relationship without exporting guest pointers or function bodies. The copied-save run exited cleanly and
 left the original save unchanged. The resident-list insertion, task producer and destruction request remain open.
 
+The next scoped trace confirmed the existing player's first initializer dispatch at `main+0x20d530`, followed by
+two calls to a short virtual routine. Each call used the task descriptor's `+0x18` context, and the independent
+resident list matched the player. The wrapper balances a reference count around initialization, while the first
+target reads scene-related state and performs substantial setup. Its complete side effects, the resident-list
+insertion and the destruction request still require verification before a companion actor can be attempted.
+
 ## Contributing and review milestones
 
 The ENet session layer, isolated builder, read-only adapter and synthetic regression tests form one reviewable

@@ -209,7 +209,7 @@ void rt_dispatch(Cpu *c) {
     if (__builtin_expect(c->thread && kern_preempt_pending(c->thread), 0))
         __attribute__((musttail)) return dispatch_preempt(c);
     if (__builtin_expect((__atomic_load_n(&g_fnprof, __ATOMIC_RELAXED) & 2) != 0, 0))
-        coop_adapter_task_dispatch(c->pc, c->x[30], c->x[0], c->x[1], c->x[2]);
+        coop_adapter_native_dispatch(c->pc, c->x[30], c->x[0], c->x[1], c->x[2]);
     uint64_t i = __builtin_rotateright64(c->pc - D.lo, 2);
     uint32_t off = i < D.slots ? D.slot[i] : 0;
     if (__builtin_expect(!off, 0)) __attribute__((musttail)) return dispatch_slow(c);

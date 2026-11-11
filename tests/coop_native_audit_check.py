@@ -70,6 +70,9 @@ void f_1000000200(Cpu *c) {
             candidate_data['native_holder_observations'] = [
                 '[host] coop native holder: target 0x1000000300, caller 0x1000000210, x0 0x4567, '
                 'x1 player same, x2 1, host thread 7, inline task holder yes; observation only']
+            candidate_data['native_initializer_observations'] = [
+                '[host] coop native initializer: target 0x1000000300, caller 0x1000000210, '
+                'x0 player same, x1 task+0x18 yes, host thread 7; observation only']
             trace.write_text(json.dumps(candidate_data))
             candidate_report = native.audit(gen, trace)
             self.assertEqual(candidate_report['player_method_candidates'], 1)
@@ -79,6 +82,8 @@ void f_1000000200(Cpu *c) {
             self.assertEqual(candidate_report['constructor_task_descriptor_count'], 1)
             self.assertEqual(candidate_report['holder_same_actor_count'], 1)
             self.assertEqual(candidate_report['holder_inline_task_count'], 1)
+            self.assertEqual(candidate_report['initializer_same_actor_count'], 1)
+            self.assertEqual(candidate_report['initializer_inline_task_count'], 1)
             self.assertTrue(candidate_report['player_scene_resident_observed'])
             ctor = next(f for f in candidate_report['functions'] if f['function'] == 'main+0x300')
             self.assertEqual(ctor['factory_callers'], [dict(function='main+0x100', observations=1)])

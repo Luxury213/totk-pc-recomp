@@ -29,6 +29,8 @@ CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+)
 HOLDER = re.compile(r'target (0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
                     r'0x[0-9a-fA-F]+, x1 player same, x2 (\d+), host thread (\d+)'
                     r'(?:, inline task holder (yes|no|unknown))?;')
+INITIALIZER = re.compile(r'target (0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), '
+                         r'x0 player same, x1 task\+0x18 (yes|no|unknown), host thread (\d+);')
 
 
 def number(value):
@@ -71,6 +73,15 @@ def audit(generated, diagnostic):
                                 thread=int(match[4]), generation=None, holder_mode=int(match[3]),
                                 inline_task_holder=match[5],
                                 kind='holder_same_actor'))
+    for line in report.get('native_initializer_observations', []):
+        match = INITIALIZER.search(line)
+        if match:
+            address = int(match[1], 16)
+            if not text_low <= address < text_high:
+                raise ValueError(f'Observed initializer target outside executable main text at {address:#x}')
+            entries.append(dict(address=address, caller=int(match[2], 16),
+                                thread=int(match[4]), generation=None, inline_task_context=match[3],
+                                kind='initializer_same_actor'))
     candidates = defaultdict(set)
     for line in report.get('native_method_candidates', []):
         match = CANDIDATE.search(line)
@@ -187,6 +198,8 @@ def audit(generated, diagnostic):
                 constructor_task_descriptor_count=sum(bool(e.get('task_descriptor_observed')) for e in entries),
                 holder_same_actor_count=kinds['holder_same_actor'],
                 holder_inline_task_count=sum(e.get('inline_task_holder') == 'yes' for e in entries),
+                initializer_same_actor_count=kinds['initializer_same_actor'],
+                initializer_inline_task_count=sum(e.get('inline_task_context') == 'yes' for e in entries),
                 player_epoch_trace_count=sum(e['generation'] is not None for e in entries),
                 native_actor_creation_verified=False, world_mutation_phase_verified=False,
                 functions=functions,

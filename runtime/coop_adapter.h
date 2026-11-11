@@ -11,6 +11,7 @@ typedef struct {
     uint32_t native_traces_by_kind[3]; // player method, physics component, matrix holder
     uint32_t native_constructor_trace_count;
     uint32_t native_holder_trace_count;
+    uint32_t native_initializer_trace_count;
     uint32_t native_resident_match;
     char reason[128];
 } CoopAdapterSnapshot;
@@ -29,5 +30,5 @@ int coop_adapter_submit(const CoopGuestCommand *command);
 uint32_t coop_adapter_capabilities(void);
 void coop_adapter_trace_enable(int enable);
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument);
-void coop_adapter_task_dispatch(uint64_t address, uint64_t caller, uint64_t x0,
-                                uint64_t x1, uint64_t x2);
+void coop_adapter_native_dispatch(uint64_t address, uint64_t caller, uint64_t x0,
+                                  uint64_t x1, uint64_t x2);

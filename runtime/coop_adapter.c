@@ -175,6 +175,13 @@ static struct {
     uint32_t mode, host_thread;
     unsigned ready;
 } holder_entries[HOLDER_TRACE_LIMIT];
+enum { INITIALIZER_TRACE_LIMIT = 8192 };
+static unsigned initializer_claimed, initializer_consumed;
+static struct {
+    uint64_t address, caller, actor, context;
+    uint32_t host_thread;
+    unsigned ready;
+} initializer_entries[INITIALIZER_TRACE_LIMIT];
 
 void coop_adapter_trace_enable(int enable) {
     __atomic_store_n(&trace_enabled, enable, __ATOMIC_RELEASE);
@@ -183,25 +190,39 @@ void coop_adapter_trace_enable(int enable) {
     else __atomic_fetch_and(&g_fnprof, ~2, __ATOMIC_RELAXED);
 }
 
-// Capture the popped task descriptor and the factory's holder dispatch before the target runs.
+// Capture the task descriptor, holder call and actor initializer dispatches before their targets run.
 // Return sites identify the observed call path; neither call is made by the adapter.
-void coop_adapter_task_dispatch(uint64_t address, uint64_t caller, uint64_t x0,
-                                uint64_t x1, uint64_t x2) {
+void coop_adapter_native_dispatch(uint64_t address, uint64_t caller, uint64_t x0,
+                                  uint64_t x1, uint64_t x2) {
     if (rt_game_version != 143) return;
     if (address == MOD_MAIN_BASE + 0x3d3dd0ull) {
         dispatched_caller = caller;
         dispatched_descriptor = x1;
     }
-    if ((caller != MOD_MAIN_BASE + 0x3d4150ull && caller != MOD_MAIN_BASE + 0x3d4198ull) || !x1) return;
-    unsigned slot = __atomic_fetch_add(&holder_claimed, 1, __ATOMIC_RELAXED);
-    if (slot >= HOLDER_TRACE_LIMIT) return;
-    holder_entries[slot].address = address;
-    holder_entries[slot].caller = caller;
-    holder_entries[slot].holder = x0;
-    holder_entries[slot].actor = x1;
-    holder_entries[slot].mode = (uint32_t)x2;
-    holder_entries[slot].host_thread = plat_thread_id();
-    __atomic_store_n(&holder_entries[slot].ready, 1, __ATOMIC_RELEASE);
+    if ((caller == MOD_MAIN_BASE + 0x3d4150ull || caller == MOD_MAIN_BASE + 0x3d4198ull) && x1) {
+        unsigned slot = __atomic_fetch_add(&holder_claimed, 1, __ATOMIC_RELAXED);
+        if (slot < HOLDER_TRACE_LIMIT) {
+            holder_entries[slot].address = address;
+            holder_entries[slot].caller = caller;
+            holder_entries[slot].holder = x0;
+            holder_entries[slot].actor = x1;
+            holder_entries[slot].mode = (uint32_t)x2;
+            holder_entries[slot].host_thread = plat_thread_id();
+            __atomic_store_n(&holder_entries[slot].ready, 1, __ATOMIC_RELEASE);
+        }
+    }
+    if ((caller == MOD_MAIN_BASE + 0x3d4264ull || caller == MOD_MAIN_BASE + 0x3d4284ull ||
+         caller == MOD_MAIN_BASE + 0x3d42a0ull) && x0) {
+        unsigned slot = __atomic_fetch_add(&initializer_claimed, 1, __ATOMIC_RELAXED);
+        if (slot < INITIALIZER_TRACE_LIMIT) {
+            initializer_entries[slot].address = address;
+            initializer_entries[slot].caller = caller;
+            initializer_entries[slot].actor = x0;
+            initializer_entries[slot].context = x1;
+            initializer_entries[slot].host_thread = plat_thread_id();
+            __atomic_store_n(&initializer_entries[slot].ready, 1, __ATOMIC_RELEASE);
+        }
+    }
 }
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
@@ -340,6 +361,19 @@ void coop_adapter_observe(const Cpu *cpu) {
                        (unsigned long long)holder_entries[i].holder,
                        holder_entries[i].mode, holder_entries[i].host_thread, inline_task);
                 observed.native_holder_trace_count++;
+            }
+        }
+        while (initializer_consumed < INITIALIZER_TRACE_LIMIT &&
+               __atomic_load_n(&initializer_entries[initializer_consumed].ready, __ATOMIC_ACQUIRE)) {
+            unsigned i = initializer_consumed++;
+            if (initializer_entries[i].actor == actor) {
+                const char *inline_task = !matched_task_descriptor ? "unknown" :
+                    initializer_entries[i].context == matched_task_descriptor + 0x18ull ? "yes" : "no";
+                rt_log("coop native initializer: target %#llx, caller %#llx, x0 player same, x1 task+0x18 %s, host thread %u; observation only",
+                       (unsigned long long)initializer_entries[i].address,
+                       (unsigned long long)initializer_entries[i].caller,
+                       inline_task, initializer_entries[i].host_thread);
+                observed.native_initializer_trace_count++;
             }
         }
     }
