@@ -160,8 +160,10 @@ enum { CONSTRUCTOR_TRACE_LIMIT = 16384 };
 static unsigned constructor_claimed, constructor_consumed, constructor_summary_logged;
 static _Thread_local uint64_t factory_caller, factory_request_caller, wrapper_request_caller;
 static _Thread_local uint64_t pipeline_caller, request_pipeline_caller, wrapper_pipeline_caller;
+static _Thread_local uint64_t dispatched_caller, dispatched_descriptor;
+static _Thread_local uint64_t pipeline_descriptor, request_descriptor, wrapper_descriptor;
 static struct {
-    uint64_t caller, actor, factory_caller, request_caller, pipeline_caller;
+    uint64_t caller, actor, factory_caller, request_caller, pipeline_caller, task_descriptor;
     uint32_t host_thread;
     unsigned ready;
 } constructor_entries[CONSTRUCTOR_TRACE_LIMIT];
@@ -173,21 +175,33 @@ void coop_adapter_trace_enable(int enable) {
     else __atomic_fetch_and(&g_fnprof, ~2, __ATOMIC_RELAXED);
 }
 
+// Only the observed task processor is captured. Its x1 is the queue's popped descriptor;
+// the direct factory call is checked separately by its return site before attribution.
+void coop_adapter_task_dispatch(uint64_t address, uint64_t caller, uint64_t descriptor) {
+    if (rt_game_version != 143 || address != MOD_MAIN_BASE + 0x3d3dd0ull) return;
+    dispatched_caller = caller;
+    dispatched_descriptor = descriptor;
+}
+
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
     if (address == MOD_MAIN_BASE + 0x3d3dd0ull) {
         pipeline_caller = caller;
+        pipeline_descriptor = caller == dispatched_caller ? dispatched_descriptor : 0;
+        dispatched_caller = dispatched_descriptor = 0;
         return;
     }
     if (address == MOD_MAIN_BASE + 0x3d40f0ull) {
         factory_request_caller = caller; // the caller requested a factory-created object
         request_pipeline_caller = caller == MOD_MAIN_BASE + 0x3d3e44ull ? pipeline_caller : 0;
+        request_descriptor = request_pipeline_caller ? pipeline_descriptor : 0;
         return;
     }
     if (address == MOD_MAIN_BASE + 0x689894ull) {
         factory_caller = caller; // this wrapper allocates before calling the GameActor constructor
         wrapper_request_caller = caller == MOD_MAIN_BASE + 0x3d4114ull ? factory_request_caller : 0;
         wrapper_pipeline_caller = caller == MOD_MAIN_BASE + 0x3d4114ull ? request_pipeline_caller : 0;
+        wrapper_descriptor = caller == MOD_MAIN_BASE + 0x3d4114ull ? request_descriptor : 0;
         return;
     }
     // The GameActor constructor associated with the observed vtable runs before presence is ready.
@@ -196,9 +210,11 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
         uint64_t outer_caller = caller == MOD_MAIN_BASE + 0x6898ccull ? factory_caller : 0;
         uint64_t request_caller = outer_caller == MOD_MAIN_BASE + 0x3d4114ull ? wrapper_request_caller : 0;
         uint64_t upstream_caller = request_caller == MOD_MAIN_BASE + 0x3d3e44ull ? wrapper_pipeline_caller : 0;
+        uint64_t task_descriptor = upstream_caller ? wrapper_descriptor : 0;
         factory_caller = 0;
         wrapper_request_caller = 0;
         wrapper_pipeline_caller = 0;
+        wrapper_descriptor = 0;
         unsigned slot = __atomic_fetch_add(&constructor_claimed, 1, __ATOMIC_RELAXED);
         if (slot < CONSTRUCTOR_TRACE_LIMIT) {
             constructor_entries[slot].caller = caller;
@@ -206,6 +222,7 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
             constructor_entries[slot].factory_caller = outer_caller;
             constructor_entries[slot].request_caller = request_caller;
             constructor_entries[slot].pipeline_caller = upstream_caller;
+            constructor_entries[slot].task_descriptor = task_descriptor;
             constructor_entries[slot].host_thread = plat_thread_id();
             __atomic_store_n(&constructor_entries[slot].ready, 1, __ATOMIC_RELEASE);
         }
@@ -274,13 +291,14 @@ void coop_adapter_observe(const Cpu *cpu) {
                __atomic_load_n(&constructor_entries[constructor_consumed].ready, __ATOMIC_ACQUIRE)) {
             unsigned i = constructor_consumed++;
             if (constructor_entries[i].actor == actor) {
-                rt_log("coop native constructor: entry main+0x6898dc, caller %#llx, x0 %#llx, host thread %u, factory caller %#llx, request caller %#llx, pipeline caller %#llx, observed player same; observation only",
+                rt_log("coop native constructor: entry main+0x6898dc, caller %#llx, x0 %#llx, host thread %u, factory caller %#llx, request caller %#llx, pipeline caller %#llx, task descriptor %#llx, observed player same; observation only",
                        (unsigned long long)constructor_entries[i].caller,
                        (unsigned long long)constructor_entries[i].actor,
                        constructor_entries[i].host_thread,
                        (unsigned long long)constructor_entries[i].factory_caller,
                        (unsigned long long)constructor_entries[i].request_caller,
-                       (unsigned long long)constructor_entries[i].pipeline_caller);
+                       (unsigned long long)constructor_entries[i].pipeline_caller,
+                       (unsigned long long)constructor_entries[i].task_descriptor);
                 observed.native_constructor_trace_count++;
             }
         }

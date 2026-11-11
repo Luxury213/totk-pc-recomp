@@ -127,6 +127,13 @@ different physical host threads. The audit records the caller chain and the scen
 code. These observations establish how the existing player is constructed and where it resides; they do not establish
 the request ABI, scene ownership, a safe call site, or how to create and remove a second actor.
 
+A targeted indirect-dispatch observer now captures the task descriptor passed to the guarded initializer. One
+copied-save 1.4.3 run linked a nonzero descriptor to the existing player's constructor and resident-scene match;
+the original save remained byte-identical. The private audit reports the descriptor observation as a count and
+does not export the pointer. Static inspection shows the task processor pops and orders descriptors, then calls
+the initializer. The producer, complete request format and ownership rules remain unverified. This trace still
+does not enable native actor creation or establish a safe world update phase.
+
 ## Contributing and review milestones
 
 The ENet session layer, isolated builder, read-only adapter and synthetic regression tests form one reviewable

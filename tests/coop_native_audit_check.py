@@ -65,13 +65,15 @@ void f_1000000200(Cpu *c) {
             candidate_data['native_constructor_observations'] = [
                 '[host] coop native constructor: entry main+0x300, caller 0x1000000220, x0 0x1234, '
                 'host thread 7, factory caller 0x1000000110, request caller 0x1000000210, '
-                'pipeline caller 0x1000000310, observed player same; observation only']
+                'pipeline caller 0x1000000310, task descriptor 0x5678, '
+                'observed player same; observation only']
             trace.write_text(json.dumps(candidate_data))
             candidate_report = native.audit(gen, trace)
             self.assertEqual(candidate_report['player_method_candidates'], 1)
             self.assertEqual(candidate_report['player_vtables'],
                              [dict(address='main+0x500', generations=[4])])
             self.assertEqual(candidate_report['constructor_same_actor_count'], 1)
+            self.assertEqual(candidate_report['constructor_task_descriptor_count'], 1)
             self.assertTrue(candidate_report['player_scene_resident_observed'])
             ctor = next(f for f in candidate_report['functions'] if f['function'] == 'main+0x300')
             self.assertEqual(ctor['factory_callers'], [dict(function='main+0x100', observations=1)])

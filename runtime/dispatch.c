@@ -11,6 +11,7 @@
 // locks or per-thread caches. Host (HLE) functions at addresses outside the modules live in a small hash table that
 // is also fixed at init; they are looked up only after the flat table misses.
 #include "dispatch.h"
+#include "coop_adapter.h"
 #include "host.h"
 #include "platform/platform.h"
 
@@ -207,6 +208,8 @@ static __attribute__((noinline)) void dispatch_preempt(Cpu *c) {
 void rt_dispatch(Cpu *c) {
     if (__builtin_expect(c->thread && kern_preempt_pending(c->thread), 0))
         __attribute__((musttail)) return dispatch_preempt(c);
+    if (__builtin_expect((__atomic_load_n(&g_fnprof, __ATOMIC_RELAXED) & 2) != 0, 0))
+        coop_adapter_task_dispatch(c->pc, c->x[30], c->x[1]);
     uint64_t i = __builtin_rotateright64(c->pc - D.lo, 2);
     uint32_t off = i < D.slots ? D.slot[i] : 0;
     if (__builtin_expect(!off, 0)) __attribute__((musttail)) return dispatch_slow(c);

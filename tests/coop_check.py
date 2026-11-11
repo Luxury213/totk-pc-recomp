@@ -115,6 +115,7 @@ int main(void) {
     camera[12] = camera[17] = camera[22] = camera[27] = 1;
     coop_capture_camera(1);
     coop_adapter_trace_enable(1);
+    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,88);
     coop_adapter_function(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,77);
     coop_adapter_function(MOD_MAIN_BASE+0x3d40f0,MOD_MAIN_BASE+0x3d3e44,77);
     coop_adapter_function(MOD_MAIN_BASE+0x689894,MOD_MAIN_BASE+0x3d4114,77);
@@ -122,6 +123,13 @@ int main(void) {
     assert(constructor_entries[0].factory_caller==MOD_MAIN_BASE+0x3d4114);
     assert(constructor_entries[0].request_caller==MOD_MAIN_BASE+0x3d3e44);
     assert(constructor_entries[0].pipeline_caller==MOD_MAIN_BASE+0x2340);
+    assert(constructor_entries[0].task_descriptor==88);
+    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,99);
+    coop_adapter_function(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2344,77);
+    coop_adapter_function(MOD_MAIN_BASE+0x3d40f0,MOD_MAIN_BASE+0x3d3e44,77);
+    coop_adapter_function(MOD_MAIN_BASE+0x689894,MOD_MAIN_BASE+0x3d4114,77);
+    coop_adapter_function(MOD_MAIN_BASE+0x6898dc,MOD_MAIN_BASE+0x6898cc,1234);
+    assert(!constructor_entries[1].task_descriptor);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa11af0,99,77);
     CoopSnapshot s = tick();
     CoopAdapterSnapshot title; coop_adapter_snapshot(&title);

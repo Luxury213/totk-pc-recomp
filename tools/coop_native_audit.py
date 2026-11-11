@@ -23,7 +23,8 @@ VTABLE = re.compile(r'player main\+(0x[0-9a-fA-F]+), generation (\d+);')
 CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
                          r'0x[0-9a-fA-F]+, host thread (\d+)(?:, factory caller (0x[0-9a-fA-F]+))?'
                          r'(?:, request caller (0x[0-9a-fA-F]+))?'
-                         r'(?:, pipeline caller (0x[0-9a-fA-F]+))?, '
+                         r'(?:, pipeline caller (0x[0-9a-fA-F]+))?'
+                         r'(?:, task descriptor (0x[0-9a-fA-F]+))?, '
                          r'observed player (same|different);')
 
 
@@ -55,7 +56,8 @@ def audit(generated, diagnostic):
                                 factory_caller=int(match[4], 16) if match[4] else None,
                                 request_caller=int(match[5], 16) if match[5] else None,
                                 pipeline_caller=int(match[6], 16) if match[6] else None,
-                                kind='constructor_same_actor' if match[7] == 'same' else 'constructor_other_actor'))
+                                task_descriptor_observed=bool(match[7] and int(match[7], 16)),
+                                kind='constructor_same_actor' if match[8] == 'same' else 'constructor_other_actor'))
     candidates = defaultdict(set)
     for line in report.get('native_method_candidates', []):
         match = CANDIDATE.search(line)
@@ -168,6 +170,7 @@ def audit(generated, diagnostic):
                                 for address, generations in sorted(vtables.items())],
                 player_method_candidates=len(candidates),
                 constructor_same_actor_count=kinds['constructor_same_actor'],
+                constructor_task_descriptor_count=sum(bool(e.get('task_descriptor_observed')) for e in entries),
                 player_epoch_trace_count=sum(e['generation'] is not None for e in entries),
                 native_actor_creation_verified=False, world_mutation_phase_verified=False,
                 functions=functions,

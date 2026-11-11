@@ -28,3 +28,4 @@ int coop_adapter_submit(const CoopGuestCommand *command);
 uint32_t coop_adapter_capabilities(void);
 void coop_adapter_trace_enable(int enable);
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument);
+void coop_adapter_task_dispatch(uint64_t address, uint64_t caller, uint64_t descriptor);
