@@ -167,6 +167,14 @@ static struct {
     uint32_t host_thread;
     unsigned ready;
 } constructor_entries[CONSTRUCTOR_TRACE_LIMIT];
+enum { HOLDER_TRACE_LIMIT = 4096 };
+static unsigned holder_claimed, holder_consumed;
+static uint64_t matched_task_actor, matched_task_descriptor;
+static struct {
+    uint64_t address, caller, holder, actor;
+    uint32_t mode, host_thread;
+    unsigned ready;
+} holder_entries[HOLDER_TRACE_LIMIT];
 
 void coop_adapter_trace_enable(int enable) {
     __atomic_store_n(&trace_enabled, enable, __ATOMIC_RELEASE);
@@ -175,12 +183,25 @@ void coop_adapter_trace_enable(int enable) {
     else __atomic_fetch_and(&g_fnprof, ~2, __ATOMIC_RELAXED);
 }
 
-// Only the observed task processor is captured. Its x1 is the queue's popped descriptor;
-// the direct factory call is checked separately by its return site before attribution.
-void coop_adapter_task_dispatch(uint64_t address, uint64_t caller, uint64_t descriptor) {
-    if (rt_game_version != 143 || address != MOD_MAIN_BASE + 0x3d3dd0ull) return;
-    dispatched_caller = caller;
-    dispatched_descriptor = descriptor;
+// Capture the popped task descriptor and the factory's holder dispatch before the target runs.
+// Return sites identify the observed call path; neither call is made by the adapter.
+void coop_adapter_task_dispatch(uint64_t address, uint64_t caller, uint64_t x0,
+                                uint64_t x1, uint64_t x2) {
+    if (rt_game_version != 143) return;
+    if (address == MOD_MAIN_BASE + 0x3d3dd0ull) {
+        dispatched_caller = caller;
+        dispatched_descriptor = x1;
+    }
+    if ((caller != MOD_MAIN_BASE + 0x3d4150ull && caller != MOD_MAIN_BASE + 0x3d4198ull) || !x1) return;
+    unsigned slot = __atomic_fetch_add(&holder_claimed, 1, __ATOMIC_RELAXED);
+    if (slot >= HOLDER_TRACE_LIMIT) return;
+    holder_entries[slot].address = address;
+    holder_entries[slot].caller = caller;
+    holder_entries[slot].holder = x0;
+    holder_entries[slot].actor = x1;
+    holder_entries[slot].mode = (uint32_t)x2;
+    holder_entries[slot].host_thread = plat_thread_id();
+    __atomic_store_n(&holder_entries[slot].ready, 1, __ATOMIC_RELEASE);
 }
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
@@ -281,6 +302,10 @@ void coop_adapter_observe(const Cpu *cpu) {
                resident_match ? "matched" : "unmatched");
     observed.native_resident_match = resident_match;
     observed.actor = actor; observed.scene_address = scene; observed.observations++;
+    if (actor != matched_task_actor) {
+        matched_task_actor = actor;
+        matched_task_descriptor = 0;
+    }
     if (actor) {
         if (!constructor_summary_logged) {
             rt_log("coop native constructor budget: %u entries before first playable actor, limit %u; observation only",
@@ -291,6 +316,7 @@ void coop_adapter_observe(const Cpu *cpu) {
                __atomic_load_n(&constructor_entries[constructor_consumed].ready, __ATOMIC_ACQUIRE)) {
             unsigned i = constructor_consumed++;
             if (constructor_entries[i].actor == actor) {
+                matched_task_descriptor = constructor_entries[i].task_descriptor;
                 rt_log("coop native constructor: entry main+0x6898dc, caller %#llx, x0 %#llx, host thread %u, factory caller %#llx, request caller %#llx, pipeline caller %#llx, task descriptor %#llx, observed player same; observation only",
                        (unsigned long long)constructor_entries[i].caller,
                        (unsigned long long)constructor_entries[i].actor,
@@ -300,6 +326,20 @@ void coop_adapter_observe(const Cpu *cpu) {
                        (unsigned long long)constructor_entries[i].pipeline_caller,
                        (unsigned long long)constructor_entries[i].task_descriptor);
                 observed.native_constructor_trace_count++;
+            }
+        }
+        while (holder_consumed < HOLDER_TRACE_LIMIT &&
+               __atomic_load_n(&holder_entries[holder_consumed].ready, __ATOMIC_ACQUIRE)) {
+            unsigned i = holder_consumed++;
+            if (holder_entries[i].actor == actor) {
+                const char *inline_task = !matched_task_descriptor ? "unknown" :
+                    holder_entries[i].holder == matched_task_descriptor + 0xf0ull ? "yes" : "no";
+                rt_log("coop native holder: target %#llx, caller %#llx, x0 %#llx, x1 player same, x2 %u, host thread %u, inline task holder %s; observation only",
+                       (unsigned long long)holder_entries[i].address,
+                       (unsigned long long)holder_entries[i].caller,
+                       (unsigned long long)holder_entries[i].holder,
+                       holder_entries[i].mode, holder_entries[i].host_thread, inline_task);
+                observed.native_holder_trace_count++;
             }
         }
     }

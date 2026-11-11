@@ -115,7 +115,7 @@ int main(void) {
     camera[12] = camera[17] = camera[22] = camera[27] = 1;
     coop_capture_camera(1);
     coop_adapter_trace_enable(1);
-    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,88);
+    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,0,88,0);
     coop_adapter_function(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,77);
     coop_adapter_function(MOD_MAIN_BASE+0x3d40f0,MOD_MAIN_BASE+0x3d3e44,77);
     coop_adapter_function(MOD_MAIN_BASE+0x689894,MOD_MAIN_BASE+0x3d4114,77);
@@ -124,7 +124,9 @@ int main(void) {
     assert(constructor_entries[0].request_caller==MOD_MAIN_BASE+0x3d3e44);
     assert(constructor_entries[0].pipeline_caller==MOD_MAIN_BASE+0x2340);
     assert(constructor_entries[0].task_descriptor==88);
-    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,99);
+    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x1000,MOD_MAIN_BASE+0x3d4150,88+0xf0,(uintptr_t)actor,1);
+    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x1000,MOD_MAIN_BASE+0x3d4198,77,1234,0);
+    coop_adapter_task_dispatch(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2340,0,99,0);
     coop_adapter_function(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x2344,77);
     coop_adapter_function(MOD_MAIN_BASE+0x3d40f0,MOD_MAIN_BASE+0x3d3e44,77);
     coop_adapter_function(MOD_MAIN_BASE+0x689894,MOD_MAIN_BASE+0x3d4114,77);
@@ -139,7 +141,9 @@ int main(void) {
     player(-686,144,839); s = tick();
     assert(s.has_local_pos && s.has_peer_pos && s.connected && fabsf(s.peer_dist - 4.5f) < .01f);
     coop_adapter_snapshot(&title);
-    assert(title.native_constructor_trace_count==1 && title.native_resident_match);
+    assert(title.native_constructor_trace_count==1 && title.native_holder_trace_count==1 &&
+           title.native_resident_match);
+    assert(matched_task_descriptor==88 && holder_entries[0].holder==matched_task_descriptor+0xf0);
     coop_adapter_trace_enable(1);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa11af0,99,77);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa0f3f0,99,77);

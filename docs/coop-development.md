@@ -134,6 +134,12 @@ does not export the pointer. Static inspection shows the task processor pops and
 the initializer. The producer, complete request format and ownership rules remain unverified. This trace still
 does not enable native actor creation or establish a safe world update phase.
 
+Another bounded trace matched the factory's holder call to the existing player. The holder is embedded at task
+descriptor `+0xf0`, and the observed virtual target is `main+0xd66bb0` with mode `1`. Static inspection of that
+target shows actor metadata setup and an actor virtual call. The private audit reports the matched call and inline
+holder relationship without exporting guest pointers or function bodies. The copied-save run exited cleanly and
+left the original save unchanged. The resident-list insertion, task producer and destruction request remain open.
+
 ## Contributing and review milestones
 
 The ENet session layer, isolated builder, read-only adapter and synthetic regression tests form one reviewable

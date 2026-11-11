@@ -26,6 +26,9 @@ CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+)
                          r'(?:, pipeline caller (0x[0-9a-fA-F]+))?'
                          r'(?:, task descriptor (0x[0-9a-fA-F]+))?, '
                          r'observed player (same|different);')
+HOLDER = re.compile(r'target (0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
+                    r'0x[0-9a-fA-F]+, x1 player same, x2 (\d+), host thread (\d+)'
+                    r'(?:, inline task holder (yes|no|unknown))?;')
 
 
 def number(value):
@@ -58,6 +61,16 @@ def audit(generated, diagnostic):
                                 pipeline_caller=int(match[6], 16) if match[6] else None,
                                 task_descriptor_observed=bool(match[7] and int(match[7], 16)),
                                 kind='constructor_same_actor' if match[8] == 'same' else 'constructor_other_actor'))
+    for line in report.get('native_holder_observations', []):
+        match = HOLDER.search(line)
+        if match:
+            address = int(match[1], 16)
+            if not text_low <= address < text_high:
+                raise ValueError(f'Observed holder target outside executable main text at {address:#x}')
+            entries.append(dict(address=address, caller=int(match[2], 16),
+                                thread=int(match[4]), generation=None, holder_mode=int(match[3]),
+                                inline_task_holder=match[5],
+                                kind='holder_same_actor'))
     candidates = defaultdict(set)
     for line in report.get('native_method_candidates', []):
         match = CANDIDATE.search(line)
@@ -134,6 +147,7 @@ def audit(generated, diagnostic):
         functions.append(dict(function=label(address), definition_found=location is not None,
                               source=location[0].relative_to(generated).as_posix() if location else None,
                               observations=len(observed), kinds=dict(Counter(e['kind'] for e in observed)),
+                              holder_modes=sorted({e['holder_mode'] for e in observed if 'holder_mode' in e}),
                               candidate_roles=['player_method_candidate'] if address in candidates else [],
                               candidate_generations=sorted(candidates.get(address, ())),
                               generations=sorted({e['generation'] for e in observed if e['generation'] is not None}),
@@ -171,6 +185,8 @@ def audit(generated, diagnostic):
                 player_method_candidates=len(candidates),
                 constructor_same_actor_count=kinds['constructor_same_actor'],
                 constructor_task_descriptor_count=sum(bool(e.get('task_descriptor_observed')) for e in entries),
+                holder_same_actor_count=kinds['holder_same_actor'],
+                holder_inline_task_count=sum(e.get('inline_task_holder') == 'yes' for e in entries),
                 player_epoch_trace_count=sum(e['generation'] is not None for e in entries),
                 native_actor_creation_verified=False, world_mutation_phase_verified=False,
                 functions=functions,

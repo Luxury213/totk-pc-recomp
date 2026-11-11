@@ -67,6 +67,9 @@ void f_1000000200(Cpu *c) {
                 'host thread 7, factory caller 0x1000000110, request caller 0x1000000210, '
                 'pipeline caller 0x1000000310, task descriptor 0x5678, '
                 'observed player same; observation only']
+            candidate_data['native_holder_observations'] = [
+                '[host] coop native holder: target 0x1000000300, caller 0x1000000210, x0 0x4567, '
+                'x1 player same, x2 1, host thread 7, inline task holder yes; observation only']
             trace.write_text(json.dumps(candidate_data))
             candidate_report = native.audit(gen, trace)
             self.assertEqual(candidate_report['player_method_candidates'], 1)
@@ -74,11 +77,14 @@ void f_1000000200(Cpu *c) {
                              [dict(address='main+0x500', generations=[4])])
             self.assertEqual(candidate_report['constructor_same_actor_count'], 1)
             self.assertEqual(candidate_report['constructor_task_descriptor_count'], 1)
+            self.assertEqual(candidate_report['holder_same_actor_count'], 1)
+            self.assertEqual(candidate_report['holder_inline_task_count'], 1)
             self.assertTrue(candidate_report['player_scene_resident_observed'])
             ctor = next(f for f in candidate_report['functions'] if f['function'] == 'main+0x300')
             self.assertEqual(ctor['factory_callers'], [dict(function='main+0x100', observations=1)])
             self.assertEqual(ctor['request_callers'], [dict(function='main+0x200', observations=1)])
             self.assertEqual(ctor['pipeline_callers'], [dict(function='main+0x300', observations=1)])
+            self.assertEqual(ctor['holder_modes'], [1])
             candidate = next(f for f in candidate_report['functions'] if f['function']=='main+0x200')
             self.assertEqual(candidate['observations'], 0)
             self.assertEqual(candidate['candidate_roles'], ['player_method_candidate'])
