@@ -20,6 +20,7 @@ TRACE = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+),.*?ho
                    r'(?:, generation (\d+), kind ([a-z_]+))?;')
 CANDIDATE = re.compile(r'player vtable\+0x200 -> main\+(0x[0-9a-fA-F]+), generation (\d+);')
 VTABLE = re.compile(r'player main\+(0x[0-9a-fA-F]+), generation (\d+);')
+RESIDENT_COMPONENT = re.compile(r'vtable main\+(0x[0-9a-fA-F]+), list count (\d+);')
 CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
                          r'0x[0-9a-fA-F]+, host thread (\d+)(?:, factory caller (0x[0-9a-fA-F]+))?'
                          r'(?:, request caller (0x[0-9a-fA-F]+))?'
@@ -95,6 +96,14 @@ def audit(generated, diagnostic):
             if not text_high <= address < limit or address & 7:
                 raise ValueError(f'Player vtable outside aligned main data at {address:#x}')
             vtables[address].add(int(match[2]))
+    resident_component_vtables = set()
+    for line in report.get('native_resident_component_observations', []):
+        match = RESIDENT_COMPONENT.search(line)
+        if match:
+            address = base + int(match[1], 16)
+            if not text_high <= address < limit or address & 7:
+                raise ValueError(f'Resident component vtable outside aligned main data at {address:#x}')
+            resident_component_vtables.add(address)
     if not entries and not candidates and not vtables:
         raise ValueError('The diagnostic contains no recognizable native observations or candidates')
 
@@ -193,6 +202,7 @@ def audit(generated, diagnostic):
                 trace_count=len(entries), trace_kinds=dict(kinds),
                 player_vtables=[dict(address=label(address), generations=sorted(generations))
                                 for address, generations in sorted(vtables.items())],
+                resident_component_vtables=[label(address) for address in sorted(resident_component_vtables)],
                 player_method_candidates=len(candidates),
                 constructor_same_actor_count=kinds['constructor_same_actor'],
                 constructor_task_descriptor_count=sum(bool(e.get('task_descriptor_observed')) for e in entries),

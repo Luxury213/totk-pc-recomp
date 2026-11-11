@@ -13,6 +13,7 @@ typedef struct {
     uint32_t native_holder_trace_count;
     uint32_t native_initializer_trace_count;
     uint32_t native_resident_match;
+    uint32_t native_resident_component_vtable_count;
     char reason[128];
 } CoopAdapterSnapshot;
 

@@ -33,9 +33,8 @@ static float guest_f32(uint64_t at) {
     return v;
 }
 
-// Finds the named actor in the scene's resident-actors list, as in runtime/frame_rate.c:player_pos.
-// This is also checked independently when tracing; the PlayerMgr pointer alone does not prove scene membership.
-static uint64_t resident_player_proc(void) {
+// Resolves scene component 13, whose resident list is used by runtime/frame_rate.c:player_pos.
+static uint64_t resident_component(void) {
     if (rt_game_version != 143) return 0;
     uint64_t mod_slot = MOD_MAIN_BASE + 0x3add238ull;
     if (!guest_readable(mod_slot, 8)) return 0;
@@ -49,7 +48,13 @@ static uint64_t resident_player_proc(void) {
     uint64_t comps = guest_pointer(scene + 0x58ull);
     if (!guest_readable(comps + 13ull * 8ull, 8)) return 0;
     uint64_t resident = guest_pointer(comps + 13ull * 8ull);
-    if (!guest_readable(resident + 0x20ull, 16)) return 0;
+    return guest_readable(resident + 0x20ull, 16) ? resident : 0;
+}
+
+// Finds the named actor in the resident list. The PlayerMgr pointer alone does not prove scene membership.
+static uint64_t resident_player_proc(void) {
+    uint64_t resident = resident_component();
+    if (!resident) return 0;
     int32_t count = guest_s32(resident + 0x20ull);
     uint64_t links = guest_pointer(resident + 0x28ull);
     if (count <= 0 || count > 64 || !guest_readable(links, (uint64_t)count * 0x70ull)) return 0;
@@ -169,7 +174,7 @@ static struct {
 } constructor_entries[CONSTRUCTOR_TRACE_LIMIT];
 enum { HOLDER_TRACE_LIMIT = 4096 };
 static unsigned holder_claimed, holder_consumed;
-static uint64_t matched_task_actor, matched_task_descriptor;
+static uint64_t matched_task_actor, matched_task_scene, matched_task_descriptor;
 static struct {
     uint64_t address, caller, holder, actor;
     uint32_t mode, host_thread;
@@ -321,10 +326,20 @@ void coop_adapter_observe(const Cpu *cpu) {
     if (actor && (changed || resident_match != observed.native_resident_match))
         rt_log("coop native scene resident: player %s; observation only",
                resident_match ? "matched" : "unmatched");
+    if (actor && resident_match && changed && __atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) {
+        uint64_t resident = resident_component();
+        uint64_t vtable = resident ? guest_pointer(resident) : 0;
+        if (vtable >= MOD_MAIN_BASE && vtable < MOD_MAIN_BASE + 0x3adf000ull && !(vtable & 7ull)) {
+            rt_log("coop native resident component: vtable main+%#llx, list count %d; observation only",
+                   (unsigned long long)(vtable - MOD_MAIN_BASE), guest_s32(resident + 0x20ull));
+            observed.native_resident_component_vtable_count++;
+        }
+    }
     observed.native_resident_match = resident_match;
     observed.actor = actor; observed.scene_address = scene; observed.observations++;
-    if (actor != matched_task_actor) {
+    if (actor != matched_task_actor || scene != matched_task_scene) {
         matched_task_actor = actor;
+        matched_task_scene = scene;
         matched_task_descriptor = 0;
     }
     if (actor) {

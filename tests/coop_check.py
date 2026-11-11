@@ -25,7 +25,7 @@ static float camera[28];
 static uint64_t mgr;
 static unsigned char root[0x38], unit[0x50], actor[0x400];
 static unsigned char vtable[0x220];
-static unsigned char scene_module[0x1f0], scene[0x60], components[14*8];
+static unsigned char scene_module[0x1f0], scene[0x60], alternate_scene[0x60], components[14*8];
 static unsigned char residents[0x30], resident_links[0x70], resident_data[0x48];
 static char actor_name[] = "Player";
 static int fail_reads;
@@ -54,6 +54,7 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
     return in_range(p,n,&mgr,sizeof mgr) || in_range(p,n,root,sizeof root) ||
            in_range(p,n,unit,sizeof unit) || in_range(p,n,actor,sizeof actor) ||
            in_range(p,n,scene_module,sizeof scene_module) || in_range(p,n,scene,sizeof scene) ||
+           in_range(p,n,alternate_scene,sizeof alternate_scene) ||
            in_range(p,n,components,sizeof components) || in_range(p,n,residents,sizeof residents) ||
            in_range(p,n,resident_links,sizeof resident_links) ||
            in_range(p,n,resident_data,sizeof resident_data) ||
@@ -85,6 +86,7 @@ static void player(float x, float y, float z) {
     memcpy(scene + 0x50,&count,4);
     ptr(scene + 0x58,(uintptr_t)components);
     ptr(components + 13*8,(uintptr_t)residents);
+    ptr(residents,MOD_MAIN_BASE + 0x500);
     memcpy(residents + 0x20,&one,4);
     ptr(residents + 0x28,(uintptr_t)resident_links);
     ptr(resident_links + 8,(uintptr_t)resident_data);
@@ -145,7 +147,7 @@ int main(void) {
     coop_adapter_snapshot(&title);
     assert(title.native_constructor_trace_count==1 && title.native_holder_trace_count==1 &&
            title.native_initializer_trace_count==1 &&
-           title.native_resident_match);
+           title.native_resident_match && title.native_resident_component_vtable_count==1);
     assert(matched_task_descriptor==88 && holder_entries[0].holder==matched_task_descriptor+0xf0);
     coop_adapter_trace_enable(1);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa11af0,99,77);
@@ -188,6 +190,10 @@ int main(void) {
     assert(!memcmp(original,actor,sizeof actor));
     c.expires_ns=now; assert(coop_adapter_submit(&c)); coop_adapter_observe(NULL);
     coop_adapter_snapshot(&a); assert(a.commands_stale==1);
+    memcpy(alternate_scene,scene,sizeof scene);
+    ptr(scene_module + 0x1e8,(uintptr_t)alternate_scene);
+    coop_adapter_observe(NULL);
+    assert(matched_task_scene==(uintptr_t)alternate_scene && !matched_task_descriptor);
     mode = "off"; config_version++; assert(!coop_active()); s = tick();
     assert(s.mode == COOP_OFF && !s.has_peer_pos);
     mode = "bot"; config_version++; assert(coop_active());

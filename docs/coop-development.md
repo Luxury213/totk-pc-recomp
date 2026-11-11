@@ -146,6 +146,14 @@ resident list matched the player. The wrapper balances a reference count around 
 target reads scene-related state and performs substantial setup. Its complete side effects, the resident-list
 insertion and the destruction request still require verification before a companion actor can be attempted.
 
+A subsequent read-only diagnostic identified the resident scene component's vtable as `main+0x36d8598` while its
+list held nine records, including the existing player. Static inspection maps virtual slot `+0x30` to
+`main+0x1fc9f08`: it iterates the component's `+0x20` count and `+0x28` array in `0x70`-byte records, releasing
+and clearing each record's `+0x18` reference. The destructor path at `main+0x1fc9e1c` releases the array itself.
+These are component-wide cleanup paths, not a verified per-actor removal request. The insertion operation,
+ownership contract and safe world mutation phase remain unverified. The copied-save diagnostic exited cleanly
+and left the original save byte-identical.
+
 ## Contributing and review milestones
 
 The ENet session layer, isolated builder, read-only adapter and synthetic regression tests form one reviewable
