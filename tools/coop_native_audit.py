@@ -21,6 +21,8 @@ TRACE = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+),.*?ho
 CANDIDATE = re.compile(r'player vtable\+0x200 -> main\+(0x[0-9a-fA-F]+), generation (\d+);')
 VTABLE = re.compile(r'player main\+(0x[0-9a-fA-F]+), generation (\d+);')
 RESIDENT_COMPONENT = re.compile(r'vtable main\+(0x[0-9a-fA-F]+), list count (\d+);')
+RESIDENT_INIT = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), '
+                           r'x0 resident same, host thread (\d+);')
 CONSTRUCTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), x0 '
                          r'0x[0-9a-fA-F]+, host thread (\d+)(?:, factory caller (0x[0-9a-fA-F]+))?'
                          r'(?:, request caller (0x[0-9a-fA-F]+))?'
@@ -83,6 +85,15 @@ def audit(generated, diagnostic):
             entries.append(dict(address=address, caller=int(match[2], 16),
                                 thread=int(match[4]), generation=None, inline_task_context=match[3],
                                 kind='initializer_same_actor'))
+    for line in report.get('native_resident_init_observations', []):
+        match = RESIDENT_INIT.search(line)
+        if match:
+            address = base + int(match[1], 16)
+            if not text_low <= address < text_high:
+                raise ValueError(f'Observed resident initializer outside executable main text at {address:#x}')
+            entries.append(dict(address=address, caller=int(match[2], 16),
+                                thread=int(match[3]), generation=None,
+                                kind='resident_init_same_component'))
     candidates = defaultdict(set)
     for line in report.get('native_method_candidates', []):
         match = CANDIDATE.search(line)
@@ -210,6 +221,7 @@ def audit(generated, diagnostic):
                 holder_inline_task_count=sum(e.get('inline_task_holder') == 'yes' for e in entries),
                 initializer_same_actor_count=kinds['initializer_same_actor'],
                 initializer_inline_task_count=sum(e.get('inline_task_context') == 'yes' for e in entries),
+                resident_init_same_component_count=kinds['resident_init_same_component'],
                 player_epoch_trace_count=sum(e['generation'] is not None for e in entries),
                 native_actor_creation_verified=False, world_mutation_phase_verified=False,
                 functions=functions,

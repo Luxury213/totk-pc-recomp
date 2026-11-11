@@ -187,6 +187,13 @@ static struct {
     uint32_t host_thread;
     unsigned ready;
 } initializer_entries[INITIALIZER_TRACE_LIMIT];
+enum { RESIDENT_INIT_TRACE_LIMIT = 4096 };
+static unsigned resident_init_claimed, resident_init_consumed, resident_init_summary_logged;
+static struct {
+    uint64_t receiver, caller;
+    uint32_t host_thread;
+    unsigned ready;
+} resident_init_entries[RESIDENT_INIT_TRACE_LIMIT];
 
 void coop_adapter_trace_enable(int enable) {
     __atomic_store_n(&trace_enabled, enable, __ATOMIC_RELEASE);
@@ -232,6 +239,16 @@ void coop_adapter_native_dispatch(uint64_t address, uint64_t caller, uint64_t x0
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
+    if (address == MOD_MAIN_BASE + 0xc9a5a4ull) {
+        unsigned slot = __atomic_fetch_add(&resident_init_claimed, 1, __ATOMIC_RELAXED);
+        if (slot < RESIDENT_INIT_TRACE_LIMIT) {
+            resident_init_entries[slot].receiver = argument;
+            resident_init_entries[slot].caller = caller;
+            resident_init_entries[slot].host_thread = plat_thread_id();
+            __atomic_store_n(&resident_init_entries[slot].ready, 1, __ATOMIC_RELEASE);
+        }
+        return;
+    }
     if (address == MOD_MAIN_BASE + 0x3d3dd0ull) {
         pipeline_caller = caller;
         pipeline_descriptor = caller == dispatched_caller ? dispatched_descriptor : 0;
@@ -326,13 +343,28 @@ void coop_adapter_observe(const Cpu *cpu) {
     if (actor && (changed || resident_match != observed.native_resident_match))
         rt_log("coop native scene resident: player %s; observation only",
                resident_match ? "matched" : "unmatched");
-    if (actor && resident_match && changed && __atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) {
+    if (actor && resident_match && __atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) {
         uint64_t resident = resident_component();
         uint64_t vtable = resident ? guest_pointer(resident) : 0;
-        if (vtable >= MOD_MAIN_BASE && vtable < MOD_MAIN_BASE + 0x3adf000ull && !(vtable & 7ull)) {
+        if (changed && vtable >= MOD_MAIN_BASE && vtable < MOD_MAIN_BASE + 0x3adf000ull && !(vtable & 7ull)) {
             rt_log("coop native resident component: vtable main+%#llx, list count %d; observation only",
                    (unsigned long long)(vtable - MOD_MAIN_BASE), guest_s32(resident + 0x20ull));
             observed.native_resident_component_vtable_count++;
+        }
+        if (!resident_init_summary_logged) {
+            rt_log("coop native resident init budget: %u entries before first playable actor, limit %u; observation only",
+                   __atomic_load_n(&resident_init_claimed, __ATOMIC_ACQUIRE), RESIDENT_INIT_TRACE_LIMIT);
+            resident_init_summary_logged = 1;
+        }
+        while (resident_init_consumed < RESIDENT_INIT_TRACE_LIMIT &&
+               __atomic_load_n(&resident_init_entries[resident_init_consumed].ready, __ATOMIC_ACQUIRE)) {
+            unsigned i = resident_init_consumed++;
+            if (resident_init_entries[i].receiver == resident) {
+                rt_log("coop native resident init: entry main+0xc9a5a4, caller %#llx, x0 resident same, host thread %u; observation only",
+                       (unsigned long long)resident_init_entries[i].caller,
+                       resident_init_entries[i].host_thread);
+                observed.native_resident_init_trace_count++;
+            }
         }
     }
     observed.native_resident_match = resident_match;

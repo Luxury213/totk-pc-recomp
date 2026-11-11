@@ -154,6 +154,12 @@ These are component-wide cleanup paths, not a verified per-actor removal request
 ownership contract and safe world mutation phase remain unverified. The copied-save diagnostic exited cleanly
 and left the original save byte-identical.
 
+A bounded function-entry trace then matched `main+0xc9a5a4` to that same resident component during scene loading.
+The private audit maps its observed caller to `main+0xb39cdc`. Static inspection shows that the caller dispatches
+virtual slot `+0x20` on the component; the target prepares its `0x70`-byte record array via `main+0xc9a854`.
+The isolated run saw one matching call, stayed within the trace budget, exited cleanly and left the original save
+unchanged. This identifies list preparation, not the request that creates, registers or removes an individual actor.
+
 ## Contributing and review milestones
 
 The ENet session layer, isolated builder, read-only adapter and synthetic regression tests form one reviewable

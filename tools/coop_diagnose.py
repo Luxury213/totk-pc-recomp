@@ -91,6 +91,8 @@ def main():
     constructor_budgets = [line for line in lines if 'coop native constructor budget:' in line]
     scene_resident_observations = [line for line in lines if 'coop native scene resident:' in line]
     resident_component_observations = [line for line in lines if 'coop native resident component:' in line]
+    resident_init_observations = [line for line in lines if 'coop native resident init:' in line]
+    resident_init_budgets = [line for line in lines if 'coop native resident init budget:' in line]
     kinds = Counter(match[1] for line in traces if (match := re.search(r'kind ([a-z_]+);', line)))
     intact = before == save_hashes(seed / 'save')
     report = dict(executable_sha256=info['executable_sha256'], exit_code=result, timed_out=timed_out,
@@ -103,6 +105,8 @@ def main():
                   native_constructor_budgets=constructor_budgets,
                   native_scene_resident_observations=scene_resident_observations,
                   native_resident_component_observations=resident_component_observations,
+                  native_resident_init_observations=resident_init_observations,
+                  native_resident_init_budgets=resident_init_budgets,
                   native_trace_kinds=dict(kinds),
                   player_epoch_trace_count=sum('generation ' in line for line in traces),
                   playable_actor_observed=any('player observed' in line for line in observations),

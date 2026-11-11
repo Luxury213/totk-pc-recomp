@@ -64,6 +64,9 @@ void f_1000000200(Cpu *c) {
                 '[host] coop native scene resident: player matched; observation only']
             candidate_data['native_resident_component_observations'] = [
                 '[host] coop native resident component: vtable main+0x500, list count 1; observation only']
+            candidate_data['native_resident_init_observations'] = [
+                '[host] coop native resident init: entry main+0x300, caller 0x1000000220, '
+                'x0 resident same, host thread 7; observation only']
             candidate_data['native_constructor_observations'] = [
                 '[host] coop native constructor: entry main+0x300, caller 0x1000000220, x0 0x1234, '
                 'host thread 7, factory caller 0x1000000110, request caller 0x1000000210, '
@@ -88,6 +91,7 @@ void f_1000000200(Cpu *c) {
             self.assertEqual(candidate_report['initializer_inline_task_count'], 1)
             self.assertTrue(candidate_report['player_scene_resident_observed'])
             self.assertEqual(candidate_report['resident_component_vtables'], ['main+0x500'])
+            self.assertEqual(candidate_report['resident_init_same_component_count'], 1)
             ctor = next(f for f in candidate_report['functions'] if f['function'] == 'main+0x300')
             self.assertEqual(ctor['factory_callers'], [dict(function='main+0x100', observations=1)])
             self.assertEqual(ctor['request_callers'], [dict(function='main+0x200', observations=1)])

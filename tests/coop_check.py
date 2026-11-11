@@ -122,6 +122,7 @@ int main(void) {
     coop_adapter_function(MOD_MAIN_BASE+0x3d40f0,MOD_MAIN_BASE+0x3d3e44,77);
     coop_adapter_function(MOD_MAIN_BASE+0x689894,MOD_MAIN_BASE+0x3d4114,77);
     coop_adapter_function(MOD_MAIN_BASE+0x6898dc,MOD_MAIN_BASE+0x6898cc,(uintptr_t)actor);
+    coop_adapter_function(MOD_MAIN_BASE+0xc9a5a4,MOD_MAIN_BASE+0x2468,(uintptr_t)residents);
     assert(constructor_entries[0].factory_caller==MOD_MAIN_BASE+0x3d4114);
     assert(constructor_entries[0].request_caller==MOD_MAIN_BASE+0x3d3e44);
     assert(constructor_entries[0].pipeline_caller==MOD_MAIN_BASE+0x2340);
@@ -147,7 +148,8 @@ int main(void) {
     coop_adapter_snapshot(&title);
     assert(title.native_constructor_trace_count==1 && title.native_holder_trace_count==1 &&
            title.native_initializer_trace_count==1 &&
-           title.native_resident_match && title.native_resident_component_vtable_count==1);
+           title.native_resident_match && title.native_resident_component_vtable_count==1 &&
+           title.native_resident_init_trace_count==1);
     assert(matched_task_descriptor==88 && holder_entries[0].holder==matched_task_descriptor+0xf0);
     coop_adapter_trace_enable(1);
     for(int i=0;i<100;i++) coop_adapter_function(MOD_MAIN_BASE+0xa11af0,99,77);
