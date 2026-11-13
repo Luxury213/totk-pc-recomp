@@ -62,7 +62,7 @@ ACTOR_TEARDOWN = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F
                             r'stage (request|queue|cleanup), observed player same, generation (\d+), '
                             r'reason (\d+), actor state (\d+), removal pending (yes|no), host thread (\d+);')
 PROBE_ACTOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), '
-                         r'probe (\d+), name (Weapon[A-Za-z0-9_]*), request task same, metadata backlink same, '
+                         r'probe (\d+), name (Weapon[A-Za-z0-9_]*|Npc_Road_001), request task same, metadata backlink same, '
                          r'generation (\d+), host thread (\d+)(?:, request (\d+))?;')
 RESOURCE_BIND = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), request (\d+), '
                            r'name ([A-Za-z0-9_]+), task resource same, actor resource same, actor id same, host thread (\d+);')

@@ -167,6 +167,19 @@ called: normal pickup initiates retirement. Use the controlled outdoor scenario,
 
 ## Interpret results
 
+The optional `--native-owned-npc` experiment requests exactly Npc_Road_001 using the same verified creation ABI
+and a separate NPC-only marker. Use `--scenario idle`, at least 15 world seconds and a recorded drop script that
+closes the inventory without attempting to pick up or talk to the NPC. For example:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-owned-npc --input-script "<recorded drop script>" --seconds 20 --without-figure
+```
+
+This is a one-shot humanoid creation diagnostic. It has no remote movement, Link model binding or removal API;
+the NPC retains engine behavior. Fall and retirement requirements remain weapon-only. The first NPC run
+initialized and rendered a real humanoid with the optional figure disabled, while preserving source-save hashes.
+An initialized NPC is not a playable second Link.
+
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,
 owned arguments, fall/rest and retirement separately. Its creation acceptance alone cannot establish the later

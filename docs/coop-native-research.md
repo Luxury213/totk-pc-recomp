@@ -204,8 +204,35 @@ These are parameter references, not observed live bodies or a complete dependenc
 one ActorParam does not prove that inherited code avoids all player or story state. Prioritize observing the
 ordinary Hylian NPC's authentic creation and Npc_Size_M controller lifecycle before trying a menu-display actor
 as a physical companion. Establish its AI ownership, native movement inputs and destruction contract first.
-The sage remains a comparison case with additional battle/story dependencies. No NPC was injected by this audit,
-and the weapon-only probe whitelist remains unchanged. Full parameter findings stay in ignored build reports.
+The sage remains a comparison case with additional battle/story dependencies. That read-only comparison injected
+no actor. A subsequent separately gated experiment extends the creation probe to exactly Npc_Road_001, as below.
+Full parameter findings stay in ignored build reports.
+
+## First native humanoid creation
+
+Mode 3 uses the already verified generic request ABI at the same authentic weapon-drop call boundary, but its
+owned name is exactly Npc_Road_001. It requires its own `isolated-npc-road-001-v1` copied-profile marker; weapon
+markers cannot enable it. The request has independent process-lifetime storage, empty blackboard, no inherited
+actor dependencies, identity rotation/unit scale and the same bounded offset from the legitimate producer.
+It preserves CPU/FP state, requests no watcher and performs no direct physics writes or player cloning.
+
+The first 20-world-second run passed creation acceptance: one injected request and initialization callback with
+matching task, actor name, resource and metadata identity. Seventy-six native receiver observations recorded
+about 1.54 m of gradual descent and later rest. The game exited cleanly, source-save hashes were unchanged and
+the inspected image shows Link beside a rendered native humanoid NPC. The optional Link figure was disabled,
+so this is engine actor/model evidence. Position observations still do not establish verified contact queries
+or a reusable character-controller API.
+
+A second run also passed and applied local walking/camera input after NPC creation. Local-player observations
+recorded about 4.35 m of displacement in that later interval; the NPC retained its separate identity and source
+saves remained unchanged. This checks local control after creation, not remote control of the NPC. Observed NPC
+receiver entries include `main+0x2e27b0`, `main+0x54cb00` and `main+0x245030`; none is yet a verified callable
+movement function or a safe command-consumption phase.
+
+The NPC remains under engine behavior. No remote input, Link appearance binding, host-driven removal, reconnect
+or independent scheduling is implemented. Creation still requires a real weapon drop. Session capabilities
+remain presence-only; neither this result nor the NPC's parameter references complete Phase 2. Next inspect
+the NPC's controller and native movement/update contract, then verify controlled retirement and scene changes.
 
 Likewise, the inspected transform builder at `main+0xa0f3f0` does not
 establish the removed five-argument teleport signature. Keep guessed calls and direct render-time physics writes

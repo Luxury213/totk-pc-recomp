@@ -48,10 +48,11 @@ static const char *owned_name = "Weapon_Sword_101";
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_CLONE ? "isolated-physics-probe-v1\n" : "isolated-physics-owned-v1\n";
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC ? "isolated-npc-road-001-v1\n" :
+                         mode == COOP_NATIVE_PROBE_CLONE ? "isolated-physics-probe-v1\n" : "isolated-physics-owned-v1\n";
     char content[64] = {0};
     if (rt_game_version != 143 || !timed_run || !profile ||
-        (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED)) goto denied;
+        (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED && mode != COOP_NATIVE_PROBE_NPC)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -59,9 +60,10 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     size_t n = fread(content, 1, sizeof content, f);
     fclose(f);
     if (n != strlen(marker) || memcmp(content, marker, n)) goto denied;
+    owned_name = mode == COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101";
     __atomic_store_n(&armed, (unsigned)mode, __ATOMIC_RELEASE);
     rt_log("coop native spawn probe: armed for one authentic weapon drop in the isolated timed profile, arguments %s",
-           mode == COOP_NATIVE_PROBE_OWNED ? "owned" : "borrowed");
+           mode == COOP_NATIVE_PROBE_CLONE ? "borrowed" : "owned");
     return;
 denied:
     rt_log("coop native spawn probe: refused; needs game 1.4.3, a timed run and the diagnostic profile marker");
@@ -98,7 +100,7 @@ void coop_native_probe_request(Cpu *c) {
     if (memcmp(hash, expected, sizeof hash)) return;
     unsigned mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE);
     float origin[3];
-    if (mode == COOP_NATIVE_PROBE_OWNED) {
+    if (mode != COOP_NATIVE_PROBE_CLONE) {
         if (!read_guest(c->x[2], origin, sizeof origin)) return;
         for (unsigned i = 0; i < 3; i++)
             if (!isfinite(origin[i]) || fabsf(origin[i]) > 100000) return;
@@ -113,7 +115,7 @@ void coop_native_probe_request(Cpu *c) {
     }
     inside = 1;
     uint64_t name_ref = saved.x[1], create_arg = saved.x[2];
-    if (mode == COOP_NATIVE_PROBE_OWNED) {
+    if (mode != COOP_NATIVE_PROBE_CLONE) {
         memset(&owned_arg, 0, sizeof owned_arg);
         memset(&owned_bb, 0, sizeof owned_bb);
         owned_arg.position[0] = origin[0] + 2;
@@ -140,6 +142,6 @@ void coop_native_probe_request(Cpu *c) {
     *c = saved;
     if (fesetenv(&fp)) rt_fatal("coop native spawn probe: cannot restore host floating-point environment");
     inside = 0;
-    rt_log("coop native spawn probe: queued %s, name Weapon_Sword_101, original CPU restored; actor initialization and physics require separate evidence",
-           queued == 1 ? "yes" : "no");
+    rt_log("coop native spawn probe: queued %s, name %s, original CPU restored; actor initialization and physics require separate evidence",
+           queued == 1 ? "yes" : "no", owned_name);
 }

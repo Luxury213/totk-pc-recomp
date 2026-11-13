@@ -4,6 +4,7 @@
 // MIT, Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
 #include "coop_adapter.h"
 #include "coop.h"
+#include "cfg.h"
 #include "host.h"
 #include "layout.h"
 #include "platform/platform.h"
@@ -442,7 +443,7 @@ void coop_adapter_trace_enable(int enable) {
     else __atomic_fetch_and(&g_fnprof, ~2, __ATOMIC_RELAXED);
 }
 
-// Observe Player requests and a separate bounded sample of Weapon requests after world startup.
+// Observe Player requests and bounded Weapon samples; the isolated NPC mode admits only its injected identity.
 // These observations do not establish an external creation ABI.
 void coop_adapter_actor_request(const Cpu *cpu) {
     if (!cpu || rt_game_version != 143 || !__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
@@ -453,7 +454,9 @@ void coop_adapter_actor_request(const Cpu *cpu) {
     uint64_t name_at = guest_pointer(cpu->x[1]);
     char prefix[6];
     if (!name_at || !plat_mem_read(name_at, prefix, sizeof prefix)) return;
-    int probe = !memcmp(prefix, "Weapon", sizeof prefix);
+    int npc = !memcmp(prefix, "Npc_Ro", sizeof prefix) && cpu->x[30] == RT_RET_HOST &&
+              cfg_int("TOTK_COOP_NATIVE_PROBE") == 3;
+    int probe = !memcmp(prefix, "Weapon", sizeof prefix) || npc;
     if (memcmp(prefix, "Player", sizeof prefix) && !probe) return;
     if (probe && (frame_step_world_us() < 6000000 ||
                   __atomic_load_n(&probe_requests, __ATOMIC_RELAXED) >= PROBE_LIMIT)) return;
@@ -468,6 +471,7 @@ void coop_adapter_actor_request(const Cpu *cpu) {
         name[i] = (char)ch;
     }
     if (!complete) return;
+    if (npc && strcmp(name, "Npc_Road_001")) return;
     if (probe && __atomic_fetch_add(&probe_requests, 1, __ATOMIC_RELAXED) >= PROBE_LIMIT) return;
     unsigned slot = __atomic_fetch_add(&actor_request_claimed, 1, __ATOMIC_RELAXED);
     if (slot >= ACTOR_REQUEST_TRACE_LIMIT) return;
@@ -640,7 +644,7 @@ static void teardown_observe_player(uint64_t actor, uint32_t generation) {
 }
 
 // The native initialization-result callback receives the factory's exact actor and descriptor context.
-// Bind a weapon probe only when both match the same captured request and its live metadata backlink.
+// Bind only a captured diagnostic identity with the same request and live metadata backlink.
 static void probe_initialized(uint64_t address, uint64_t caller, uint64_t actor, uint64_t context, uint64_t result) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) || result != 1 || !pipeline_actor ||
         actor != pipeline_actor || context < 0x18ull || context - 0x18ull != pipeline_descriptor) return;
@@ -649,7 +653,9 @@ static void probe_initialized(uint64_t address, uint64_t caller, uint64_t actor,
         if (e >= ACTOR_REQUEST_TRACE_LIMIT || !__atomic_load_n(&enqueue_entries[e].ready, __ATOMIC_ACQUIRE) ||
             enqueue_entries[e].descriptor != pipeline_descriptor) return;
         unsigned request = enqueue_entries[e].request_index;
-        if (memcmp(actor_request_entries[request].name, "Weapon", 6) || !guest_readable(actor, 0x1b0)) return;
+        const char *requested_name = actor_request_entries[request].name;
+        int npc = actor_request_entries[request].caller == RT_RET_HOST && !strcmp(requested_name, "Npc_Road_001");
+        if ((memcmp(requested_name, "Weapon", 6) && !npc) || !guest_readable(actor, 0x1b0)) return;
         uint64_t metadata = guest_pointer(actor + 0x1a8ull);
         if (!guest_readable(metadata, 0x50) || guest_pointer(metadata + 0x40ull) != actor) return;
         int32_t id = guest_s32(metadata + 0x48ull);

@@ -46,7 +46,8 @@ unsigned cfg_version(void) { return config_version; }
 const char *cfg_value(const char *key) {
     return !strcmp(key, "TOTK_COOP_MODE") ? mode : "127.0.0.1";
 }
-int cfg_int(const char *key) { (void)key; return 7777; }
+static int native_probe_mode;
+int cfg_int(const char *key) { return !strcmp(key,"TOTK_COOP_NATIVE_PROBE") ? native_probe_mode : 7777; }
 int cfg_bool(const char *key) { return !strcmp(key, "TOTK_COOP_TRACE_GUEST"); }
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
 void plat_mutex_unlock(PlatMutex *m) { (void)m; }
@@ -603,6 +604,20 @@ int main(void) {
                                 0,(uintptr_t)probe_descriptor,0);
     coop_adapter_function(MOD_MAIN_BASE+0x3d3dd0,MOD_MAIN_BASE+0x108cad0,0);
     assert(pipeline_request_index==ACTOR_REQUEST_TRACE_LIMIT);
+    world_us = 8000000;
+    unsigned before_npc = actor_request_claimed;
+    strcpy(probe_name,"Npc_Road_001");
+    probe_request.x[30]=RT_RET_HOST;
+    coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc);
+    native_probe_mode=3;
+    probe_request.x[30]=MOD_MAIN_BASE+0x20a57d8;
+    coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc);
+    probe_request.x[30]=RT_RET_HOST;
+    strcpy(probe_name,"Npc_Road_999");
+    coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc);
+    strcpy(probe_name,"Npc_Road_001");
+    coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc+1);
+    native_probe_mode=0;
     world_us = -1;
     pipeline_actor = pipeline_descriptor = 0;
     mode = "off"; config_version++; assert(!coop_active()); s = tick();

@@ -1,7 +1,7 @@
 """Observe the native co-op integration gate in one background game instance on an isolated save copy.
 
-Read-only by default. --native-clone-weapon or --native-owned-weapon enables one bounded native creation experiment
-on the copied profile.
+Read-only by default. --native-clone-weapon, --native-owned-weapon or --native-owned-npc enables one bounded native
+creation experiment on the copied profile.
 No teleport, host physics writes or original-profile changes are performed.
 """
 import argparse
@@ -238,12 +238,12 @@ def spawn_fall_summary(samples, origin):
                 acceptance_passed=descent_at is not None and settled)
 
 
-def native_spawn_summary(lines):
+def native_spawn_summary(lines, actor_name='Weapon_Sword_101'):
     number = r'(-?\d+(?:\.\d+)?)'
     requests = [int(m[1]) for line in lines if (m := re.search(
-        r'coop native spawn request: request (\d+), name Weapon_Sword_101, watcher absent;', line))]
+        r'coop native spawn request: request (\d+), name ' + re.escape(actor_name) + r', watcher absent;', line))]
     initialized = [dict(probe=int(m[3]), request=int(m[7])) for line in lines
-                   if (m := PROBE_ACTOR.search(line)) and m[4] == 'Weapon_Sword_101' and m[7] and int(m[7]) in requests]
+                   if (m := PROBE_ACTOR.search(line)) and m[4] == actor_name and m[7] and int(m[7]) in requests]
     samples = []
     for line in lines:
         m = re.search(r'coop native spawn motion: probe (\d+), request (\d+), world us (\d+), '
@@ -252,7 +252,7 @@ def native_spawn_summary(lines):
             pos = [float(m[i]) for i in (4, 5, 6)]
             if all(map(math.isfinite, pos)):
                 samples.append(dict(probe=int(m[1]), request=int(m[2]), world_us=int(m[3]), pos=pos))
-    lifecycle = probe_summary(lines, 'Weapon_Sword_101', True, True)
+    lifecycle = probe_summary(lines, actor_name, True, True)
     retired = [p for p in lifecycle['probes'] if p['acceptance_passed'] and
                dict(probe=p['probe'], request=p['request']) in initialized]
     owned = [dict(pos=[float(m[i]) for i in (1, 2, 3)]) for line in lines if (m := re.search(
@@ -260,14 +260,14 @@ def native_spawn_summary(lines):
         ', empty blackboard, actor dependencies absent;', line))]
     owned = [o for o in owned if all(map(math.isfinite, o['pos']))]
     fall = spawn_fall_summary(samples, owned[0]['pos']) if len(owned) == 1 else spawn_fall_summary([], [0, 0, 0])
+    queued = sum(f'coop native spawn probe: queued yes, name {actor_name},' in line for line in lines) == 1
     # A changed transform alone does not establish verified gravity or ground contact.
-    return dict(queued=sum('coop native spawn probe: queued yes,' in line for line in lines) == 1,
-                requests=requests, initialized=initialized, samples=samples,
+    return dict(queued=queued,
+                actor_name=actor_name, requests=requests, initialized=initialized, samples=samples,
                 retirement_observed=bool(retired),
                 owned_argument_observed=len(owned) == 1, owned_origins=owned,
                 fall=fall,
-                acceptance_passed=len(requests) == 1 and len(initialized) == 1 and
-                    sum('coop native spawn probe: queued yes,' in line for line in lines) == 1,
+                acceptance_passed=len(requests) == 1 and len(initialized) == 1 and queued,
                 physics_verified=False, native_companion_verified=False)
 
 
@@ -315,6 +315,8 @@ def main():
                     help='create one extra native Weapon_Sword_101 at a verified drop call; copied test profile only')
     spawn.add_argument('--native-owned-weapon', action='store_true',
                        help='create one elevated native weapon with independent arguments and no actor dependencies')
+    spawn.add_argument('--native-owned-npc', action='store_true',
+                       help='try one Npc_Road_001 request with owned arguments; isolated creation diagnostic only')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
@@ -336,9 +338,12 @@ def main():
         ap.error('--require-allocator requires --scenario object')
     if args.require_resource and args.scenario != 'object':
         ap.error('--require-resource requires --scenario object')
-    spawning = args.native_clone_weapon or args.native_owned_weapon
-    if spawning and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
+    spawning = args.native_clone_weapon or args.native_owned_weapon or args.native_owned_npc
+    if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
+    if args.native_owned_npc and (args.scenario != 'idle' or not args.input_script or args.seconds < 15 or
+                                  args.require_spawn_retirement or args.require_spawn_fall):
+        ap.error('native NPC creation requires --scenario idle, recorded drop input and at least 15 seconds; no pickup/fall acceptance')
     if args.require_spawn_retirement and not spawning:
         ap.error('--require-spawn-retirement requires a native weapon experiment')
     if args.require_spawn_fall and not args.native_owned_weapon:
@@ -378,13 +383,14 @@ def main():
     if before != save_hashes(profile / 'save') or before != save_hashes(seed / 'save'):
         raise SystemExit(f'The source save changed during copying; diagnostic not launched. Copy retained at {folder}')
     if spawning:
-        marker = 'isolated-physics-owned-v1\n' if args.native_owned_weapon else 'isolated-physics-probe-v1\n'
+        marker = ('isolated-npc-road-001-v1\n' if args.native_owned_npc else
+                  'isolated-physics-owned-v1\n' if args.native_owned_weapon else 'isolated-physics-probe-v1\n')
         (profile / 'coop-native-probe.txt').write_bytes(marker.encode('ascii'))
     script = args.input_script.resolve() if args.input_script else folder / 'input.txt'
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='3' if args.native_owned_npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -454,7 +460,7 @@ def main():
                   vulkan_validation_enabled=any('vk: validation layer enabled (VK_LAYER_KHRONOS_validation)' in line
                                                 for line in lines),
                   object_lifecycle=probe_summary(lines, args.probe_name, args.require_allocator, args.require_resource),
-                  native_spawn_experiment=native_spawn_summary(lines),
+                  native_spawn_experiment=native_spawn_summary(lines, 'Npc_Road_001' if args.native_owned_npc else 'Weapon_Sword_101'),
                   frame_series=[str(p) for p in sorted((folder / 'frames').glob('f*.png'))],
                   observations=observations, native_function_observations=traces,
                   native_method_candidates=candidates, native_vtable_observations=vtables,
@@ -493,7 +499,7 @@ def main():
                   native_gameplay_enabled=False, log=str(log))
     report['acceptance_checks'] = diagnostic_acceptance(
         report, scenario=args.scenario, require_animation=args.require_animation, require_figure=args.require_figure,
-        spawning=spawning, owned=args.native_owned_weapon, require_spawn_retirement=args.require_spawn_retirement,
+        spawning=spawning, owned=args.native_owned_weapon or args.native_owned_npc, require_spawn_retirement=args.require_spawn_retirement,
         require_spawn_fall=args.require_spawn_fall)
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

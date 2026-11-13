@@ -50,13 +50,13 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     for (int i=0;i<n;i++) args[i]=va_arg(ap,uint64_t);
     va_end(ap);
     for (int i=0;i<n;i++) {
-        if (armed == COOP_NATIVE_PROBE_OWNED && (i==1 || i==2)) continue;
+        if (armed >= COOP_NATIVE_PROBE_OWNED && (i==1 || i==2)) continue;
         assert(args[i] == (i == 3 ? 0 : original.x[i]));
     }
-    if (armed == COOP_NATIVE_PROBE_OWNED) {
+    if (armed >= COOP_NATIVE_PROBE_OWNED) {
         assert(args[1]==(uintptr_t)&owned_name && args[1]!=original.x[1]);
         assert(args[2]==(uintptr_t)&owned_arg && args[2]!=original.x[2]);
-        assert(!strcmp(owned_name,"Weapon_Sword_101") && !strcmp(owned_arg.name,""));
+        assert(!strcmp(owned_name,armed == COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101") && !strcmp(owned_arg.name,""));
         assert(owned_arg.position[0]==12 && owned_arg.position[1]==22 && owned_arg.position[2]==30);
         assert(owned_arg.rotation[0]==1 && owned_arg.rotation[4]==1 && owned_arg.rotation[8]==1);
         assert(owned_arg.scale[0]==1 && owned_arg.scale[1]==1 && owned_arg.scale[2]==1);
@@ -140,6 +140,16 @@ int main(int argc, char **argv) {
            !memcmp(&retained_bb,&owned_bb,sizeof owned_bb));
     memset(arg,0,sizeof arg); // request data remains alive after the producer's storage is gone
     assert(owned_arg.position[0]==12 && owned_arg.blackboard==&owned_bb && owned_bb.params==owned_bb.buffer);
+    armed=0;
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC); assert(!armed); // weapon markers cannot arm NPC creation
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-road-001-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_OWNED); assert(!armed); // NPC marker cannot arm weapon mode
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC); assert(armed==COOP_NATIVE_PROBE_NPC);
+    reset(&c); memcpy(arg,pos,sizeof pos);
+    coop_native_probe_request(&c);
+    assert(calls==1 && attempted && !memcmp(&c,&original,sizeof c) && !strcmp(owned_name,"Npc_Road_001"));
+    assert(fegetround()==FE_UPWARD && owned_arg.blackboard==&owned_bb && !owned_arg.creator);
+    coop_native_probe_request(&c); assert(calls==1);
     puts("native creation: guards, borrowed/owned request isolation and CPU/FP restoration passed");
     return 0;
 }

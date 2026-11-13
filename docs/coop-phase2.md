@@ -16,6 +16,7 @@ engine evidence and [the campaign design](coop.md) for the agreed final behavior
 | Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
 | Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
 | Phase 2: native experiment | One independent weapon request falls, rests and is collected; strict checks passed with/without the visual figure | Still one-shot and triggered by an authentic weapon drop; not companion spawning |
+| Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Native movement/controller access, removal and reusable session ownership are still unverified |
 | Phase 2: remote native character | Disabled; native commands are rejected and capabilities remain presence-only | Actor/controller selection, native movement, safe update phase and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 
@@ -49,7 +50,8 @@ until the complete gate below passes.
 1. Inspect a suitable non-Player actor/controller and its native body. The existing Player's resident record and
    manager link are scene-owned; copying them or allocating another PlayerLink is not a safe shortcut. The
    ordinary Hylian NPC packs reference Npc_Size_M character controllers/bodies without direct Player/camera
-   components in their own ActorParam; observe their actual lifecycle next. The inventory-display PouchPlayer
+   components in their own ActorParam. The first Npc_Road_001 creation experiment passed; inspect its native
+   controller and movement contract next. The inventory-display PouchPlayer
    remains a weaker research candidate, not a verified world actor. Parameter references alone are not live-body proof.
 2. Verify creation/storage ownership beyond the one-shot experiment: asynchronous completion, rejection,
    cancellation and safe storage reuse. Retain scoped request, actor, metadata ID and world-generation identities.

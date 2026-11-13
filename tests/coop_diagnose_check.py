@@ -97,6 +97,17 @@ class DiagnosticChecks(unittest.TestCase):
         for invalid in ('nan', '.', '--1', '1.2.3'):
             self.assertFalse(diagnose.native_spawn_summary([owned.replace('pos 1 ', f'pos {invalid} ')])['owned_argument_observed'])
 
+    def test_npc_creation_evidence_cannot_be_borrowed_from_a_weapon(self):
+        actor = object_events(0, 'Npc_Road_001', 10)[0]
+        queued = 'coop native spawn probe: queued yes, name Npc_Road_001, original CPU restored;'
+        request = 'coop native spawn request: request 10, name Npc_Road_001, watcher absent;'
+        lines = [queued, request, actor]
+        self.assertTrue(diagnose.native_spawn_summary(lines, 'Npc_Road_001')['acceptance_passed'])
+        self.assertFalse(diagnose.native_spawn_summary(lines)['acceptance_passed'])
+        self.assertFalse(diagnose.native_spawn_summary(
+            [queued.replace('Npc_Road_001', 'Weapon_Sword_101'), request, actor],
+            'Npc_Road_001')['acceptance_passed'])
+
     def test_native_spawn_requires_the_injected_request_not_an_ordinary_drop(self):
         actor=object_events(0, 'Weapon_Sword_101', 10)[0]
         queued='coop native spawn probe: queued yes, name Weapon_Sword_101, original CPU restored;'
