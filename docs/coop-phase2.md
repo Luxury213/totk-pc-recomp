@@ -25,6 +25,15 @@ and stable shared world identities. Raw guest addresses must never become networ
 
 ## Next implementation milestone
 
+Upstream compatibility review (2026-11-13): [v0.4.0](https://github.com/valentderah/totk-pc-recomp/releases/tag/v0.4.0)
+was published on November 10 at `7a37fc3c346cd6f2b3c80637effb27b880ce817b`. This branch still declares
+port version 0.3.11; the cooperative game target remains TotK 1.4.3. The release changes renderer replay,
+memory/resolution handling, CPU/runtime behavior and diagnostics. Several touched files also contain our
+figure hooks, including vk_exec_draw.c, vk_exec.c/.h, vk_device.c, nvn_api_obj.c, main.c and menu.cpp.
+Before integrating the new base, review those changes in isolation, preserve the recorder/state/lifetime fixes,
+and repeat CPU, co-op and copied-save visual/native acceptance. This is an integration follow-up, not a completed
+upgrade or a reason to replace the installed/cooperative executable with an installer during development.
+
 Deliver a real companion actor that appears, moves independently and disappears through verified engine
 operations, while the local player's camera and input continue working. Keep the native capability bits disabled
 until the complete gate below passes.
