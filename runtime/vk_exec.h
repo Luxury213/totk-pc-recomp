@@ -122,6 +122,18 @@ void vk_exec_pass_end(VkExec *ex);
 // Full memory barrier (all commands, all memory); ends the open pass first. Copies and dispatches order themselves with
 // it. Skipped when nothing was recorded since the last one.
 void vk_exec_barrier(VkExec *ex);
+
+// Diagnostic figure replay; independent of native game actors and physics.
+void vk_figure_arm(const VkExec *ex, const float camera[84], const float viewport[6]);
+void vk_figure_draw(VkExec *ex);
+void vk_figure_before_dispatch(VkExec *ex);
+void vk_figure_shadow_arm(const VkExec *ex, const float camera[84]);
+void vk_figure_before_pass(VkExec *ex);
+int vk_figure_wants_tiles(void);
+void vk_figure_tiles(uint64_t address, uint64_t size, const float constants[4]);
+uint8_t *vk_exec_scratch(VkExec *ex, uint64_t size, VkBuffer *buffer, VkDeviceSize *offset);
+VkImageView vk_exec_attach_view(VkExec *ex, const VkExecTarget *target);
+void vk_exec_state_lost(VkExec *ex);
 // vk_texture.c (TOTK_TEX_ALIAS): commands that must run at the replay's current position. vk_exec_inline_begin returns
 // the command buffer being recorded after a full barrier (an open pass is ended; *reopen says so), or VK_NULL_HANDLE
 // when this thread is not recording a replay. vk_exec_inline_end begins the pass again when it was open.

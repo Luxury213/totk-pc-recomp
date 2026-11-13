@@ -50,6 +50,10 @@ typedef struct {
     float peer_yaw;         // partner facing angle in degrees (0 = +Z, 90 = +X)
     float peer_speed;       // partner horizontal movement speed in m/s (drives 3D walk animation)
     float peer_anim_phase;  // continuous walk-cycle phase in radians
+    uint32_t peer_visual_flags; // optional COOP_SAMPLE_ROTATION/ANIMATION presence
+    float peer_rotation[4]; // captured unit quaternion, separate from the yaw fallback
+    char peer_animation[COOP_ANIMATION_MAX];
+    float peer_animation_frame;
     int peer_action;        // COOP_ACT_*
     float peer_dist;        // 3D Euclidean distance to partner in meters
     int peer_on_screen;     // 1 when projected in front of the camera, 0 when clamped to screen edge

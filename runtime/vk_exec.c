@@ -583,9 +583,12 @@ static void barrier_to(VkExec *ex, const VkImage *want, const VkImageAspectFlags
 
 void vk_exec_barrier(VkExec *ex) { barrier_to(ex, NULL, NULL, 0); }
 
+VkImageView vk_exec_attach_view(VkExec *ex, const VkExecTarget *target) { return view_of(ex, target); }
+
 void vk_exec_pass_begin(VkExec *ex) {
     if (ex->in_pass) return;
     resolve_rt(ex);
+    vk_figure_before_pass(ex);
     vk_contact_pass_begin(ex);
     vk_dlaa_pass(ex);   // DLAA runs before the bloom chain's first pass (vk_dlaa.c)
     // Learned targets (VkTexImage.fb_learned) are attached in the feedback layout

@@ -1,6 +1,7 @@
 // Two actual ENet workers with production platform threads/locks, without loading the game or renderer.
 #include "coop_net.h"
 #include "platform/platform.h"
+#include <enet/enet.h>
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,7 +9,11 @@
 
 static void publish(CoopNet *h,CoopNet *c) {
     CoopSample a={.generation=1,.flags=COOP_SAMPLE_PLAYER,.pos={10,20,30},.time_ns=plat_now_ns()};
-    coop_net_publish(h,&a); a.pos[0]=40; coop_net_publish(c,&a);
+    a.flags |= COOP_SAMPLE_ROTATION | COOP_SAMPLE_ANIMATION;
+    a.rotation[3]=1; strcpy(a.animation,"Nml_Wait"); a.animation_frame=7.5f;
+    coop_net_publish(h,&a);
+    a.pos[0]=40; a.rotation[3]=0; a.rotation[0]=1;
+    strcpy(a.animation,"Sword_Synthetic"); a.animation_frame=17.25f; coop_net_publish(c,&a);
 }
 static void connected(CoopNet *h,CoopNet *c) {
     uint64_t until=plat_now_ns()+7000000000ull;
@@ -17,6 +22,9 @@ static void connected(CoopNet *h,CoopNet *c) {
         publish(h,c); coop_net_snapshot(h,&a); coop_net_snapshot(c,&b);
         if(a.negotiated && b.negotiated && a.has_remote && b.has_remote) {
             assert(a.session==b.session && a.remote.pos[0]==40 && b.remote.pos[0]==10);
+            assert(!strcmp(a.remote.animation,"Sword_Synthetic") && a.remote.animation_frame==17.25f);
+            assert(!strcmp(b.remote.animation,"Nml_Wait") && b.remote.animation_frame==7.5f);
+            assert(a.remote.rotation[0]==1 && b.remote.rotation[3]==1);
             assert(a.state==COOP_SESSION_LOADING && b.state==COOP_SESSION_LOADING);
             return;
         }
@@ -69,6 +77,22 @@ int main(int argc,char **argv) {
     do { coop_net_snapshot(h,&view); if(view.state==COOP_SESSION_INCOMPATIBLE) break; plat_sleep_ms(10); }while(plat_now_ns()<until);
     assert(view.state==COOP_SESSION_INCOMPATIBLE && !view.has_remote);
     coop_net_destroy(c); coop_net_destroy(h);
-    puts("co-op ENet: two workers, independent movement, 50 reliable notices, stale observations, disconnect/reconnect, new epochs and incompatible content passed");
+    // A previous protocol must fail visibly at connection, before any application state is accepted.
+    h=coop_net_create(); assert(h); coop_net_configure(h,&a); plat_sleep_ms(100);
+    ENetHost *legacy=enet_host_create(NULL,1,2,0,0); assert(legacy);
+    ENetAddress address={.port=port}; assert(enet_address_set_host_ip(&address,"127.0.0.1")==0);
+    assert(enet_host_connect(legacy,&address,2,COOP_PROTOCOL-1));
+    until=plat_now_ns()+5000000000ull;
+    do {
+        ENetEvent event;
+        while(enet_host_service(legacy,&event,0)>0)
+            if(event.type==ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(event.packet);
+        enet_host_flush(legacy); coop_net_snapshot(h,&view);
+        if(view.state==COOP_SESSION_INCOMPATIBLE) break;
+        plat_sleep_ms(10);
+    }while(plat_now_ns()<until);
+    assert(view.state==COOP_SESSION_INCOMPATIBLE && view.rejected && !view.has_remote);
+    assert(strstr(view.error,"protocol")); enet_host_destroy(legacy); coop_net_destroy(h);
+    puts("co-op ENet: independent movement/rotation/animation, 50 reliable notices, stale observations, reconnect and incompatible content passed");
     return 0;
 }

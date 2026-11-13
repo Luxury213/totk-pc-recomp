@@ -39,9 +39,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/coop_network_check.py --cc $compiler
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/coop_figure_check.py --cc $compiler --deps (Join-Path $ucrt 'include')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/coop_native_audit_check.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/coop_native_probe_check.py --cc $compiler
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/coop_diagnose_check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/settings_doc_check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/build_shaders.py --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_content.py
           exit $LASTEXITCODE

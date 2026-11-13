@@ -64,6 +64,7 @@ Many rows below are developer tools that only act together with another setting 
 
 | Setting | What it does | Effect of changing it | Safety |
 | --- | --- | --- | --- |
+| `coop_native_probe` (default `0`) | `1` borrows the authentic weapon drop's argument; `2` constructs a separate elevated weapon request with an empty blackboard and no actor dependencies. Both require `coop_trace_guest=1`, a timed 1.4.3 run and the matching isolated-profile marker from `tools/coop_diagnose.py`. | Changes the copied test world; preserves the original producer's CPU and watcher. No companion or remote gameplay API is enabled. | Save risk |
 | `background_window` | `1` keeps the window behind the user's windows, never fullscreen at start, and F11 keeps its place; SDL windows ignore it. | The window does not come to the front or flash, so it is easy to miss; meant for unattended runs. | Caution |
 | `gpu` | `vulkan` or `null`: the graphics back end; `null` has no GPU, completes every submit at once and returns zeros for texture reads. | `null` shows no picture; any other value stops the start with an error. | Caution |
 | `input` | `none` reports no input from the keyboard, mouse or controllers. | The game gets no controller input and the menu cursor stops following the mouse; `input_script` still applies. | Caution |

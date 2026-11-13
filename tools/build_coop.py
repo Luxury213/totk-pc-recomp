@@ -45,10 +45,18 @@ def package(game, out):
         shutil.copy2(source, folder / name)
     (folder / 'licenses').mkdir(exist_ok=True)
     shutil.copy2(ROOT / 'runtime/third_party/enet/LICENSE', folder / 'licenses/ENet-LICENSE.txt')
+    shutil.copy2(ROOT / 'runtime/third_party/licenses/totk-recomp.txt', folder / 'licenses/totk-recomp-LICENSE.txt')
+    figure = out / 'assets/link-figure.bin'
+    if figure.is_file():
+        manifest = json.loads(figure.with_suffix('.json').read_text(encoding='utf-8'))
+        if manifest.get('format') != 'LNKF' or manifest.get('version') != 4 or digest(figure) != manifest.get('sha256'):
+            raise SystemExit('The prepared co-op figure does not match its manifest; prepare it again')
     # Deliberately use fresh host/client profiles. An advanced save belongs only to a separate test profile.
     for role in ('host', 'client', 'bot'):
         profile = out / 'profiles' / role
         profile.mkdir(parents=True, exist_ok=True)
+        if figure.is_file():
+            shutil.copy2(figure, profile / 'link-figure.bin')
         lines = ['@echo off', 'chcp 65001 >nul', f'@rem {GENERATED_MARKER}', 'setlocal',
                  f'set "TOTK_COOP_MODE={role}"', 'set "TOTK_COOP_PORT=7777"']
         if role == 'client':
@@ -57,7 +65,7 @@ def package(game, out):
                   f'"{folder / "totk-coop.exe"}" --exefs "{game / "exefs"}" --romfs "{game / "romfs"}" '
                   f'--profile "{profile}"', 'if errorlevel 1 pause', 'endlocal']
         (out / f'start-{role}.bat').write_text('\r\n'.join(lines) + '\r\n', encoding='utf-8')
-    record = dict(marker=GENERATED_MARKER, game_version='1.4.3', protocol=2, native_gameplay_enabled=False,
+    record = dict(marker=GENERATED_MARKER, game_version='1.4.3', protocol=3, native_gameplay_enabled=False,
                   executable_sha256=digest(folder / 'totk-coop.exe'),
                   exefs=str(game / 'exefs'), romfs=str(game / 'romfs'),
                   profiles=str(out / 'profiles'), status='Presence and native integration diagnostics only')
@@ -65,7 +73,9 @@ def package(game, out):
     (out / 'README.txt').write_text(
         'Experimental co-op diagnostics, not a playable cooperative campaign.\n'
         'Use start-host.bat / start-client.bat on the private VPN, or start-bot.bat for the visual test.\n'
-        'The remote silhouette is an overlay. Native actors, world pause and progression remain disabled.\n'
+        'A prepared Link model is a visual diagnostic; missing assets use an overlay silhouette.\n'
+        'Session-controlled native companions, world pause and progression remain disabled.\n'
+        'Separate copied-profile weapon probes are documented in docs/coop-development.md.\n'
         'Profiles are isolated here. Existing co-op binaries elsewhere have not been replaced.\n'
         'Set TOTK_COOP_TRACE_GUEST=1 before launching to collect bounded native function observations.\n',
         encoding='utf-8')

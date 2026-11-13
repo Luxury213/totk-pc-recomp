@@ -28,7 +28,9 @@
 
 #include "cfg.h"
 #include "coop_adapter.h"
+#include "coop_native_probe.h"
 #include "host.h"
+#include "layout.h"
 #include "platform/platform.h"
 #include "sha256.h"
 
@@ -157,9 +159,22 @@ const RtConfig *rt_config(void) { return &cfg; }
 
 // ---- runtime services the generated code calls (cpu.h)
 volatile int g_fnprof = 0;   // resolution.c switches it on until the game sets its render size (res_fn_hit)
-void fnprof_hit(uint64_t addr, uint64_t lr, uint64_t x0) {
-    if (__atomic_load_n(&g_fnprof, __ATOMIC_RELAXED) & 1) res_fn_hit(addr, x0);
-    coop_adapter_function(addr, lr, x0);
+void fnprof_hit(uint64_t addr, Cpu *c) {
+    if (__atomic_load_n(&g_fnprof, __ATOMIC_RELAXED) & 1) res_fn_hit(addr, c->x[0]);
+    coop_adapter_function(addr, c->x[30], c->x[0]);
+    // arnaldolima1/totk-recomp runtime/actor_spawn.c spawn identifies this 1.4.3 candidate entry.
+    if (addr == MOD_MAIN_BASE + 0x599670ull) {
+        // The nested probe must finish before the original request gets its trace association.
+        coop_native_probe_request(c);
+        coop_adapter_actor_request(c);
+    }
+    if (addr == MOD_MAIN_BASE + 0x59a138ull) coop_adapter_request_context(c);
+    if (addr == MOD_MAIN_BASE + 0x59a380ull) coop_adapter_request_enqueue(c);
+    if (addr == MOD_MAIN_BASE + 0x14f334ull) coop_adapter_actor_bind(c);
+    if (addr == MOD_MAIN_BASE + 0x1b0614ull) coop_adapter_player_reference_source(c);
+    if (addr == MOD_MAIN_BASE + 0x9925dcull) coop_adapter_dispose_begin(c);
+    if (addr == MOD_MAIN_BASE + 0x63baa8ull || addr == MOD_MAIN_BASE + 0x3d45e0ull ||
+        addr == MOD_MAIN_BASE + 0xa4a194ull) coop_adapter_actor_teardown(addr, c);
 }
 
 void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) {
@@ -556,6 +571,8 @@ int main(int argc, char **argv) {
     log_open(!mode);
     if (!mode) {
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
+        coop_native_probe_init(cfg.profile, cfg.seconds > 0,
+                               cfg_bool("TOTK_COOP_TRACE_GUEST") ? cfg_int("TOTK_COOP_NATIVE_PROBE") : 0);
         discord_init();   // the Rich Presence thread (discord_rpc.c); it reads totk.ini itself and idles while off
         rt_boot();
         return 0;

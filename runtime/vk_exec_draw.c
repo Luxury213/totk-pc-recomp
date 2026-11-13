@@ -197,6 +197,13 @@ static void cb_done(void *arg) {   // completion thread
     free(r->written), free(r->pools), free(r->chunks), free(r);
 }
 
+// Commands recorded outside the replay (vk_figure.c) bound their own pipeline, descriptors, vertex buffers and dynamic
+// state: the next draw records all of its own again.
+void vk_exec_state_lost(VkExec *ex) {
+    ex->dirty = VK_EXEC_DIRTY_ALL;
+    memset(&B, 0, sizeof B);
+}
+
 void vk_exec_draw_new_cb(void) { memset(&B, 0, sizeof B); }
 
 void vk_exec_draw_shaders(const GfxShader **vs, const GfxShader **fs) {
@@ -268,6 +275,10 @@ static uint8_t *scratch(VkExec *ex, uint64_t size, VkBuffer *buf, VkDeviceSize *
     uint8_t *p = c->map + c->used;
     c->used += size;
     return p;
+}
+
+uint8_t *vk_exec_scratch(VkExec *ex, uint64_t size, VkBuffer *buffer, VkDeviceSize *offset) {
+    return scratch(ex, size, buffer, offset);
 }
 
 static void note_written(VkExec *ex, uint64_t addr, uint64_t size) {
@@ -2088,6 +2099,74 @@ static int pipe_memo_on(void) {
 }
 
 // Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped.
+// Figure camera/tile readers adapted from arnaldolima1/totk-recomp runtime/vk_exec_draw.c
+// cam_take/shadow_take/tiles_note @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c (MIT).
+// Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
+static uint64_t cam_frame = UINT64_MAX;
+static uint32_t cam_pass, shadow_pass;
+static void cam_take(VkExec *ex) {
+    if (!coop_active()) return;
+    if (ex->pass_serial == cam_pass) return;   // the first draw of each pass only
+    cam_pass = ex->pass_serial;
+    uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+    if (frame == cam_frame) return;            // one camera a frame: the G-buffer pass comes first
+    const VkExecTarget *d = &ex->depth, *c = &ex->color[0];
+    if (!d->image || !c->image || d->samples != 1 || d->is3d || d->blocks ||
+        (d->format != VK_FORMAT_D32_SFLOAT && d->format != VK_FORMAT_D32_SFLOAT_S8_UINT) ||
+        c->width != d->width || c->height != d->height || c->width < 640)
+        return;
+    int nc = 0;
+    for (uint32_t i = 0; i < ex->pass_ncolor && i < 8; i++) nc += ex->color[i].image != VK_NULL_HANDLE;
+    const p_bind_buf *u = &ex->ubo[NVN_STAGE_VS][1];
+    if (nc < 3 || !u->addr || u->size != 2368) return;
+    float cam[84];
+    VkMemSpan sp;
+    if (!upd_read(ex, u->addr, cam, sizeof cam)) {   // the bytes this draw sees: pending inline updates, else memory
+        if (!vk_mem_resolve(u->addr, sizeof cam, &sp)) return;
+        memcpy(cam, (const void *)(uintptr_t)u->addr, sizeof cam);
+    }
+    if (!(cam[56] > 0 && cam[57] > cam[56] && cam[62] > 0 && cam[70] > 0)) return;   // near, far, aspect, field of view
+    cam_frame = frame;
+    vk_figure_arm(ex, cam, ex->has_vp ? ex->vp[0] : NULL);
+}
+static void shadow_take(VkExec *ex) {
+    if (ex->pass_serial == shadow_pass) return;
+    shadow_pass = ex->pass_serial;
+    const VkExecTarget *d = &ex->depth;
+    if (!d->image || d->format != VK_FORMAT_D16_UNORM || d->base_layer != 0 || d->width < 512 || d->width != d->height)
+        return;
+    for (uint32_t i = 0; i < ex->pass_ncolor && i < 8; i++)
+        if (ex->color[i].image) return;
+    const p_bind_buf *u = &ex->ubo[NVN_STAGE_VS][1];
+    if (!u->addr || u->size != 2368) return;
+    float cam[84];
+    if (!upd_read(ex, u->addr, cam, sizeof cam)) {
+        VkMemSpan sp;
+        if (!vk_mem_resolve(u->addr, sizeof cam, &sp)) return;
+        memcpy(cam, (const void *)(uintptr_t)u->addr, sizeof cam);
+    }
+    vk_figure_shadow_arm(ex, cam);
+}
+static void tiles_note(VkExec *ex, const VkPipeInfo *info) {
+    for (uint32_t i = 0; i < info->n_bindings; i++) {
+        const VkPipeBinding *bd = &info->bindings[i];
+        const GfxShaderRes *r = bd->res;
+        if (!r || bd->kind != GFX_RES_SSBO || bd->stage != GFX_STAGE_FS || !(r->flags & 1) || r->cbuf_slot != 0) continue;
+        int off = (int)r->handle * 4 - 0x510;   // the fragment stage's slot table in c0: 16 bytes a slot
+        if (off < 0 || off >= 16 * 16 || off % 16) continue;
+        const p_bind_buf *s = &ex->ssbo[NVN_STAGE_FS][off / 16], *u = &ex->ubo[NVN_STAGE_FS][1];   // the shader's c4: user blocks start at c3
+        if (!s->addr || !u->addr || u->size < 147 * 16) return;
+        float c4[4];
+        if (!upd_read(ex, u->addr + 146 * 16, c4, sizeof c4)) {
+            VkMemSpan sp;
+            if (!vk_mem_resolve(u->addr + 146 * 16, sizeof c4, &sp)) return;
+            memcpy(c4, (const void *)(uintptr_t)(u->addr + 146 * 16), sizeof c4);
+        }
+        vk_figure_tiles(s->addr, s->size, c4);
+        return;
+    }
+}
+
 static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (ex->render_disabled) return 0;
     cb_res(ex);
@@ -2205,6 +2284,9 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
         B.st = s, B.st_valid = 1;
         if (ex->mark && vk_exec_frame.draws == ex->mark_draws0) ex->mark->first[0] = vs, ex->mark->first[1] = fs;
     }
+    cam_take(ex);
+    shadow_take(ex);
+    if (vk_figure_wants_tiles()) tiles_note(ex, info);
     vk_dlaa_draw(ex);
     if (ex->ubo[0][1].size == 0x940 && ex->ubo[0][1].addr && ex->depth.image && ex->depth.width >= 640 &&
         ex->depth.format == VK_FORMAT_D32_SFLOAT)
@@ -3100,6 +3182,7 @@ static void op_draw_idx_ind(VkExec *ex, const p_draw_idx_ind *d) {
 // ---- dispatch and uniform buffer updates
 
 static void op_dispatch(VkExec *ex, const p_dispatch *d) {
+    vk_figure_before_dispatch(ex);
     if (d->x <= 0 || d->y <= 0 || d->z <= 0) return;
     if (!ex->prog) return warn_once(W_PROGRAM, "a dispatch without a bound program is skipped");
     vk_contact_flush(ex);
@@ -3127,6 +3210,7 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
 // DispatchComputeIndirect: vkCmdDispatchIndirect from the pool buffer. The shader reads the group counts from c0 0x200,
 // so they are copied there on the GPU, into a c0 range no other dispatch uses, before the dispatch.
 static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
+    vk_figure_before_dispatch(ex);
     if (!ex->prog) return warn_once(W_PROGRAM, "a dispatch without a bound program is skipped");
     VkMemSpan ip;
     if (!vk_mem_resolve(d->ind, sizeof(VkDispatchIndirectCommand), &ip) || ip.offset % 4)

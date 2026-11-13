@@ -53,6 +53,7 @@ static struct {
     float peer_yaw;
     float peer_speed;
     float peer_anim_phase;
+    CoopSample peer_visual;
     int peer_action;
     uint64_t last_rx_ns;
     uint32_t ping_ms;
@@ -345,6 +346,7 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
             coop_interp_read(&C.interpolation, now, &visual);
             memcpy(C.peer_pos, visual.pos, sizeof C.peer_pos);
             C.peer_yaw = visual.yaw; C.peer_action = (int)visual.action;
+            C.peer_visual = visual;
             C.peer_speed = hypotf(visual.velocity[0], visual.velocity[2]);
             C.last_rx_ns = now;
         } else {
@@ -391,6 +393,12 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
         out->peer_yaw = C.peer_yaw;
         out->peer_speed = C.peer_speed;
         out->peer_anim_phase = C.peer_anim_phase;
+        if (C.mode != COOP_BOT) {
+            out->peer_visual_flags = C.peer_visual.flags & (COOP_SAMPLE_ROTATION | COOP_SAMPLE_ANIMATION);
+            memcpy(out->peer_rotation, C.peer_visual.rotation, sizeof out->peer_rotation);
+            memcpy(out->peer_animation, C.peer_visual.animation, sizeof out->peer_animation);
+            out->peer_animation_frame = C.peer_visual.animation_frame;
+        }
         out->peer_action = C.peer_action;
         float dx = C.peer_pos[0] - C.local_pos[0];
         float dy = C.peer_pos[1] - C.local_pos[1];

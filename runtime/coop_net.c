@@ -96,7 +96,12 @@ static void worker(void *arg) {
             }
         }
         // Stop advertising a player if its observer stopped running during a load or a stalled presentation.
-        if (!local.time_ns || now - local.time_ns > 1000000000ull) local.flags = 0;
+        if (!local.time_ns || now - local.time_ns > 1000000000ull) {
+            local.flags = 0;
+            memset(local.rotation, 0, sizeof local.rotation);
+            memset(local.animation, 0, sizeof local.animation);
+            local.animation_frame = 0;
+        }
         coop_session_sample(&session, &local);
         if (host) {
             ENetEvent event;
@@ -104,6 +109,13 @@ static void worker(void *arg) {
             unsigned budget = 64;
             while (budget-- && (serviced = enet_host_service(host, &event, 0)) > 0) {
                 if (event.type == ENET_EVENT_TYPE_CONNECT) {
+                    if (config.mode == 1 && event.data != COOP_PROTOCOL) {
+                        enet_peer_disconnect_now(event.peer, 2);
+                        peer = NULL; coop_session_disconnected(&session);
+                        session.state = COOP_SESSION_INCOMPATIBLE; view.rejected++;
+                        snprintf(view.error, sizeof view.error, "Incompatible co-op protocol; rebuild both players");
+                        continue;
+                    }
                     plat_mutex_lock(&n->lock); n->notice_head = n->notice_count = 0; plat_mutex_unlock(&n->lock);
                     view.error[0] = 0;
                     peer = event.peer; began = now; last_rx = now;
@@ -146,7 +158,7 @@ static void worker(void *arg) {
                     peer = NULL; coop_session_disconnected(&session);
                     if (event.data == 2) {
                         session.state = COOP_SESSION_INCOMPATIBLE;
-                        snprintf(view.error, sizeof view.error, "Peer rejected incompatible game or content");
+                        snprintf(view.error, sizeof view.error, "Peer rejected incompatible protocol, game or content");
                     }
                     plat_mutex_lock(&n->lock); n->notice_head = n->notice_count = 0; plat_mutex_unlock(&n->lock);
                 }

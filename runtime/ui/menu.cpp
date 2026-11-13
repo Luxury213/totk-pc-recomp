@@ -39,6 +39,7 @@ extern "C" {
 #include "cheats.h"
 #include "cfg.h"
 #include "coop.h"
+#include "figure.h"
 #include "fs.h"
 #include "input.h"
 #include "input_map.h"
@@ -1745,7 +1746,7 @@ static void coop_draw(const MenuTarget *t, float scale) {
 
         if (g_coop.peer_on_screen) {
             if (g_coop.peer_dist < 150.0f) {
-                coop_draw_3d_avatar(dl, w, h, scale);
+                if (!gfx_figures_wanted()) coop_draw_3d_avatar(dl, w, h, scale);
             } else {
                 // Distant beacon pillar when partner is > 150 m away across Hyrule
                 dl->AddLine(ImVec2(sx, sy + r), ImVec2(fx, fy), IM_COL32(55, 230, 165, 135), 2.2f * scale);
@@ -1781,7 +1782,8 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     amiibo_tick();
     int coop_on = coop_active();
     if (coop_on) coop_tick(t->width, t->height, &g_coop);
-    else g_coop.mode = COOP_OFF;
+    else g_coop = {};
+    coop_figure_publish(&g_coop);
     bool open = g_open.load(std::memory_order_relaxed);
     if (!open) {
         if (g_save_pending) g_save_pending = opt_save_tick(1);   // closed: the last change goes to totk.ini now
