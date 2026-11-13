@@ -161,16 +161,21 @@ void coop_guest_observe(const Cpu *cpu) {
     plat_mutex_unlock(&C_lock);
 }
 
-// Called from vk_exec_draw.c when bank c4 (0x940 camera block) is bound on a scene depth draw.
+// Guest-snapshot entry for callers without replay-local uniform updates.
 void coop_capture_camera(uint64_t cam_addr) {
     if (!__atomic_load_n(&C_active_flag, __ATOMIC_RELAXED) || !cam_addr) return;
+    const float *f = (const float *)vk_usnap_bytes(cam_addr, 112);
+    coop_capture_camera_values(f);
+}
+
+void coop_capture_camera_values(const float f[28]) {
+    if (!__atomic_load_n(&C_active_flag, __ATOMIC_RELAXED) || !f) return;
     uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
     plat_mutex_lock(&C_lock);
     int captured = frame == C.cam_frame && C.has_camera;
     plat_mutex_unlock(&C_lock);
     if (captured) return;
-    const float *f = (const float *)vk_usnap_bytes(cam_addr, 112);   // rows 0-2 (view) + rows 3-6 (view-projection)
-    if (!f) return;
+    // Rows 0-2 are view, rows 3-6 view-projection. The replay may have updated them after its guest snapshot.
     for (int i = 0; i < 28; i++) if (!isfinite(f[i])) return;
     // Camera forward vector (-row 2 of R)
     float fx = -f[8], fy = -f[9], fz = -f[10];

@@ -45,6 +45,14 @@ class DiagnosticChecks(unittest.TestCase):
             return diagnose.diagnostic_acceptance(report, scenario='object', spawning=True, owned=True,
                                                    require_spawn_retirement=True, require_spawn_fall=True)
         self.assertTrue(all(evaluate().values()))
+        # A successful game run silently falling back without the requested layer is not validation evidence.
+        report['vulkan_validation_requested'] = True
+        self.assertFalse(evaluate()['validation'])
+        report['vulkan_validation_enabled'] = True
+        self.assertTrue(evaluate()['validation'])
+        report['vulkan_validation_errors'] = 1
+        self.assertFalse(evaluate()['validation'])
+        report['vulkan_validation_errors'] = 0
         for gate in ('acceptance_passed', 'owned_argument_observed', 'retirement_observed'):
             report['native_spawn_experiment'][gate]=False
             self.assertFalse(all(evaluate().values()))

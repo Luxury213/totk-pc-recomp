@@ -195,6 +195,17 @@ int main(void) {
     camera[0] = camera[5] = camera[10] = 1;
     camera[12] = camera[17] = camera[22] = camera[27] = 1;
     coop_capture_camera(1);
+    float replay_camera[28]; memcpy(replay_camera,camera,sizeof replay_camera);
+    replay_camera[12]=2;
+    gfx_counters.frames++;
+    coop_capture_camera_values(replay_camera);
+    assert(C.vp[0]==2 && camera[12]==1); // consume replay-local values without changing the guest snapshot
+    replay_camera[12]=NAN;
+    gfx_counters.frames++;
+    coop_capture_camera_values(replay_camera);
+    assert(C.vp[0]==2); // reject incomplete replay state without losing the last valid camera
+    coop_capture_camera(1);
+    assert(C.vp[0]==1);
     coop_adapter_trace_enable(1);
     Cpu request_cpu = {0};
     request_name_ref = (uintptr_t)actor_name;

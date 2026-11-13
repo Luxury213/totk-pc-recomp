@@ -18,6 +18,7 @@ import subprocess
 import time
 import uuid
 from coop_native_audit import PROBE_ACTOR, PROBE_TEARDOWN, PROBE_ALLOCATOR, RESOURCE_BIND, RESOURCE_CLEANUP
+from build_coop import install_figure
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_EVENTS = ((2000, 'LSTICK -32767 0 2000', 'LSTICK -32767 0'),
@@ -274,6 +275,9 @@ def diagnostic_acceptance(report, *, scenario, require_animation=False, require_
                           spawning=False, owned=False, require_spawn_retirement=False, require_spawn_fall=False):
     spawn = report['native_spawn_experiment']
     return dict(game_exited=report['exit_code'] == 0 and not report['timed_out'],
+                validation=(not report.get('vulkan_validation_requested', False) or
+                            (report.get('vulkan_validation_enabled', False) and
+                             not report.get('vulkan_validation_errors', 0))),
                 source_save_unchanged=bool(report['source_save_unchanged']),
                 local_player_observed=bool(report['playable_actor_observed']),
                 controls=scenario != 'controls' or (report['local_controls']['scripted_events_applied'] and
@@ -366,7 +370,7 @@ def main():
         manifest = json.loads(figure.with_suffix('.json').read_text(encoding='utf-8'))
         if hashlib.file_digest(figure.open('rb'), 'sha256').hexdigest() != manifest.get('sha256'):
             raise SystemExit('Prepared figure differs from its manifest; diagnostic not launched')
-        shutil.copy2(figure, profile / 'link-figure.bin')
+        install_figure(figure, profile / 'link-figure.bin')
     before = save_hashes(seed / 'save')
     shutil.copytree(seed / 'save', profile / 'save')
     if (seed / 'account.uid').is_file():
@@ -446,6 +450,9 @@ def main():
                   figure_model_loaded=any('link figure:' in line and 'vertices,' in line for line in lines),
                   figure_submission_observed=any('figure: submitted ' in line and 'no native actor' in line for line in lines),
                   vulkan_validation_errors=sum('vk validation error:' in line for line in lines),
+                  vulkan_validation_requested=env.get('TOTK_VK_VALIDATION', '').lower() in ('1', 'true', 'yes', 'on'),
+                  vulkan_validation_enabled=any('vk: validation layer enabled (VK_LAYER_KHRONOS_validation)' in line
+                                                for line in lines),
                   object_lifecycle=probe_summary(lines, args.probe_name, args.require_allocator, args.require_resource),
                   native_spawn_experiment=native_spawn_summary(lines),
                   frame_series=[str(p) for p in sorted((folder / 'frames').glob('f*.png'))],

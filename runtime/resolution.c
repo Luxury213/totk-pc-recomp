@@ -14,10 +14,11 @@
 // 64-bit word, +40 the renderer (1.2.1) or display configuration (1.4.3) the patched code stores there.
 // +56 the camera's aspect ratio as a float when the output is not 16:9 (set aspect), +60 the field-of-view factor
 // (set fov, res_fov_live).
-// 1.4.3 scales the scene it reads by output width / 1920 (a 2560x1440 output renders its 1600x900 scene at 2128x1200;
-// MacNativeGames measured the same), so its page holds the wanted size divided by that factor and the game's 5/6 needs
-// no scene patch. 1.2.1 renders the size it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and
-// the scene set is on whenever the output differs from 1920x1080.
+// 1.4.3 scales the scene it reads by canvas width / the console mode's base width, 1920 docked and 1280 handheld (a
+// 2560x1440 output renders its 1600x900 scene at 2128x1200 docked; MacNativeGames measured the same), so its page holds
+// the wanted size divided by that factor (scene_scale) and the game's 5/6 needs no scene patch. 1.2.1 renders the size
+// it reads (1600x900 on a 2560x1440 output): its page holds the wanted size, and the scene set is on whenever the
+// output differs from 1920x1080.
 //
 // Heap: agl's DynamicTextureAllocator is one fixed heap, "DynamicTextureAllocatorMem" in
 // System/HeapSize/Product.Nin_NX_NVN.HeapDef.byml.zs (113664 KiB, carved from "Graphics", 201728 KiB). At 2560x1440
@@ -39,6 +40,8 @@
 
 #include "cfg.h"
 #include "host.h"
+#include "mods.h"
+#include "ov.h"
 #include "platform/platform.h"
 
 #define BASE_W 1920
@@ -46,7 +49,10 @@
 #define SCENE_W 1600
 #define SCENE_H 900
 #define DTA_KIB 113664u      // DynamicTextureAllocatorMem, shipped
-#define SCENE_MAX 4096       // per side, as MacNativeGames' TOTK_RENDER_RES
+#define TEX_HEAP_KIB 506880u // TextureHeap, shipped (1.2.1 and 1.4.3): what a mod's own HeapDef is measured against
+#define SCENE_MAX 8192       // per side
+#define SCENE_KEEP 4096      // per side: the heap bound shrinks no scene below this (scene_for)
+#define DTA_MAX_KIB 2031616u // DynamicTextureAllocatorMem grown at most to 1984 MiB, under 2 GiB (decide)
 #define SHADOW_BASE 960      // the sun shadow map's base size (its cascades: a D16 array of 4 layers)
 
 static struct {
@@ -89,12 +95,25 @@ static int dlss_dll(void) {
 #endif
 }
 
-// The scene size for a share k of the output, within SCENE_MAX per side.
-static void scene_for(double k, unsigned *w, unsigned *h) {
+static uint64_t shadow_kib(void);
+
+// The scene size for a share k of the output, within SCENE_MAX a side and within what a texture heap of DTA_MAX_KIB
+// holds next to the output and the shadow map (res_heap_extra_kib's growth). 1.2.1 already misplaced textures in a
+// pool past 2 GiB, where a signed 32-bit offset turns negative (recomp/patches-v121.txt, set pooloff); larger heaps
+// have not been run. The heap bound never takes the scene below 4096 a side, the size earlier builds gave: an output
+// near 8K grows the heap past 2 GiB for its own targets, and its scene stays what it was. Needs R.shadow. 1 when the
+// scene was made smaller than k asks.
+static int scene_for(double k, unsigned *w, unsigned *h) {
     double sw = R.ow * k, sh = R.oh * k;
     double fit = fmin(1.0, fmin(SCENE_MAX / sw, SCENE_MAX / sh));
+    double keep = fmin(1.0, fmin(SCENE_KEEP / sw, SCENE_KEEP / sh));
+    double room = (double)(DTA_MAX_KIB - shadow_kib()) / DTA_KIB - 1.0 -
+                  fmax(0.0, (double)R.ow * R.oh / (BASE_W * BASE_H) - 1.0);
+    double most = (1.0 + fmax(0.0, room)) * SCENE_W * SCENE_H;   // scene pixels that fit
+    if (sw * sh * fit * fit > most) fit = fmax(keep, sqrt(most / (sw * sh)));
     *w = (unsigned)(sw * fit + 0.5);
     *h = (unsigned)(sh * fit + 0.5);
+    return fit < 1.0;
 }
 
 // The scene's share of the output for a TOTK_DLSS mode; 0 for dlaa (the scene keeps base_k), while DLSS/DLAA is off
@@ -120,6 +139,25 @@ static double dlss_share(const char *m) {
     return 0;
 }
 
+// A game resolution that is not 16:9 needs the HUD's layout for its shape (romfs-patches-<w>x<h>, romfs.c
+// overlay_init), which the installer makes but a developer build only has after tools/make_romfs_patches.py --aspect.
+// Without it the camera would widen while the 16:9 HUD stretched across the picture, so the game draws the largest
+// 16:9 size that fits inside the asked one and the camera aspect patch stays off (res_init); gfx_present.c shows the
+// picture with bars (present setting aspect). Not when TOTK_ROMFS_PATCHES names the overlay itself or the game version
+// has no camera aspect patch. TOTK_OUTPUT_RES is restart-only (cfg.c, RESTART), so this one decision holds all run.
+static void shape_fallback(void) {
+    const char *own = cfg_get("TOTK_ROMFS_PATCHES");
+    unsigned out[2] = {R.ow, R.oh};
+    if (own || !res_wants_wide_overlay(out) || romfs_shaped_ready(R.ow, R.oh)) return;
+    unsigned h = R.oh, w = R.ow;
+    if ((uint64_t)w * 9 <= (uint64_t)h * 16) h = (unsigned)((uint64_t)w * 9 / 16) & ~1u;
+    w = (unsigned)((uint64_t)h * 16 / 9) & ~1u;
+    rt_log("resolution: no romfs-patches-%ux%u for the HUD at this shape; the game draws %ux%u (16:9) and the present "
+           "adds bars. Make the layout with: tools/make_romfs_patches.py --version <v121|v143> --aspect %ux%u --out "
+           "build/<version>/romfs-patches-%ux%u", R.ow, R.oh, w, h, R.ow, R.oh, R.ow, R.oh);
+    R.ow = w, R.oh = h;
+}
+
 static void decide(void) {
     if (R.decided) return;
     R.decided = 1;
@@ -131,6 +169,7 @@ static void decide(void) {
     if (sscanf(o, "%ux%u%c", &w, &h, &tail) == 2 && w >= 1280 && h >= 720 && w <= 7680 && h <= 4320) {
         R.ow = w & ~1u;
         R.oh = h & ~1u;
+        shape_fallback();
     } else {
         rt_log("resolution: TOTK_OUTPUT_RES=%s is not <width>x<height> in 1280x720..7680x4320; 1920x1080", o);
     }
@@ -146,6 +185,12 @@ static void decide(void) {
             rt_log("resolution: TOTK_RENDER_SCALE=%s is not game or a percentage 25..400; game", s);
         }
     }
+    const char *sr = cfg_value("TOTK_SHADOW_RES");
+    if (strcmp(sr, "game")) {
+        unsigned n = (unsigned)atoi(sr);
+        if (n >= 256 && n <= 4096 && !(n & 7)) R.shadow = n;
+        else rt_log("resolution: TOTK_SHADOW_RES=%s is not game or a size 256..4096 (a multiple of 8); game", sr);
+    }
     // A DLSS mode other than dlaa sets the scene size instead. On 1.4.3 with DLSS able to run (DLAA on, the DLL there)
     // the mode can change while the game runs (res_dlss_mode): the scene patch is then always on and the heap is sized
     // for the largest scene the modes ask for. Everyone else keeps the game's own scene size and its dynamic resolution
@@ -156,16 +201,14 @@ static void decide(void) {
     R.dlss_k = dlss_share(m);
     if (R.dlss_k) rt_log("resolution: DLSS %s: the scene at %.0f %% of the output (render_scale ignored)", m, R.dlss_k * 100);
     double sk = R.dlss_k ? R.dlss_k : k;
-    if (R.live || R.dlss_k || R.ow * sk > SCENE_MAX || R.oh * sk > SCENE_MAX) R.scene_set = 1;
-    scene_for(sk, &R.sw, &R.sh);
+    if (R.live || R.dlss_k) R.scene_set = 1;
+    if (scene_for(sk, &R.sw, &R.sh)) {
+        R.scene_set = 1;
+        rt_log("resolution: a %.0fx%.0f scene is larger than the port allows (8192 a side, a texture heap under 2 GiB "
+               "past 4096 a side); %ux%u", R.ow * sk, R.oh * sk, R.sw, R.sh);
+    }
     if (R.live) scene_for(fmax(k, 2.0 / 3.0), &R.hw, &R.hh);
     else R.hw = R.sw, R.hh = R.sh;
-    const char *sr = cfg_value("TOTK_SHADOW_RES");
-    if (strcmp(sr, "game")) {
-        unsigned n = (unsigned)atoi(sr);
-        if (n >= 256 && n <= 4096 && !(n & 7)) R.shadow = n;
-        else rt_log("resolution: TOTK_SHADOW_RES=%s is not game or a size 256..4096 (a multiple of 8); game", sr);
-    }
 }
 
 // Texture heap for a sun shadow map above the base size: the four layers of 2 bytes, three maps in flight (the engine
@@ -187,7 +230,45 @@ uint64_t res_heap_extra_kib(void) {
     return kib + ((shadow_kib() + 1023) & ~1023ull);   // whole MiB
 }
 
+// 1.4.3's factor between the scene size it reads from the page and the one it renders. The game's scene setter
+// (main+0x585e48 and the code before it) multiplies the page's size by the canvas width (display configuration +0x10)
+// over the current console mode's base width (+0xf4 of the mode's entry, mode 1 handheld: main+0x2dac1c stores
+// GetOperationMode != 1 at +0x546). The base is 1280 handheld and 1920 docked. The canvas is the output whenever the
+// scene patch is on: docked the game's own canvas is 1920, handheld res_init switches the output patch on (a 1280 base
+// with the game's 1280x720 handheld canvas would render R.ow / 1280 times the scene). 1.2.1 renders the size it reads.
+static double scene_scale(void) {
+    if (!RT_V143) return 1.0;
+    return (double)R.ow / (ov_handheld() ? 1280 : BASE_W);
+}
+
 uint64_t res_heap_extra_bytes(void) { return ((res_heap_extra_kib() << 10) + 0x1fffff) & ~0x1fffffull; }
+
+// TOTK_TEX_HEAP_EXTRA_MB (0 to 4096): more room in "TextureHeap" and its parent "ゲームグラフィックス", the heap the
+// world's textures stream into. HD texture packs made for emulators with 8 GB of DRAM grow it by about 3.3 GiB in their
+// own HeapDef; without the room the game runs out and starts its panic Blood Moon over and over. The pool and the heap
+// cap grow by the same amount (memory.c mem_init).
+static uint64_t mod_tex_heap_kib(void);
+
+static uint64_t cfg_tex_heap_kib(void) {
+    const char *v = cfg_get("TOTK_TEX_HEAP_EXTRA_MB");
+    if (!v || !*v) return 0;
+    char *end;
+    long mb = strtol(v, &end, 10);
+    if (end == v || *end || mb < 0 || mb > 4096) {
+        static int logged;
+        if (!logged++) rt_log("resolution: TOTK_TEX_HEAP_EXTRA_MB=%s is not 0..4096; 0", v);
+        return 0;
+    }
+    return (uint64_t)mb << 10;
+}
+
+// The larger of TOTK_TEX_HEAP_EXTRA_MB and what an enabled mod's own HeapDef adds to the texture heap (mod_tex_heap_kib).
+static uint64_t tex_heap_extra_kib(void) {
+    uint64_t c = cfg_tex_heap_kib(), m = mod_tex_heap_kib();
+    return c > m ? c : m;
+}
+
+uint64_t res_tex_heap_extra_bytes(void) { return ((tex_heap_extra_kib() << 10) + 0x1fffff) & ~0x1fffffull; }
 
 // ---- the HeapDef table. BYML version 2..7, little endian ("YB"): a hash node is {u8 0xC1, u24 count} and count
 // entries {u24 key index, u8 type, u32 value}; an int (type 0xD1) is stored in the entry, so a size changes in place.
@@ -226,28 +307,103 @@ static size_t heap_size_field(const Byml *b, uint32_t heaps, const char *heap) {
     return at && u32_at(b, at, &node) ? field(b, node, "Size", 0xd1) : 0;
 }
 
-int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n) {
-    uint64_t extra = res_heap_extra_kib();
-    *out = NULL;
-    if (!extra) return 0;
+// A HeapDef in b's place (zstd frame in[0..n) with its content size, no dictionary): b.p malloc'd and *heaps its
+// "Heaps" node; 0 when it is not one (b.p freed). why: what the log line says the caller keeps then.
+static int heapdef_open(const void *in, size_t n, Byml *b, uint32_t *heaps, const char *why) {
+    b->p = NULL;
     if (ZSTD_getDictID_fromFrame(in, n)) {
-        rt_log("resolution: the HeapDef table needs a zstd dictionary; the game keeps its own resolution");
+        rt_log("resolution: the HeapDef table needs a zstd dictionary; %s", why);
         return 0;
     }
     unsigned long long raw = ZSTD_getFrameContentSize(in, n);
     if (raw == ZSTD_CONTENTSIZE_UNKNOWN || raw == ZSTD_CONTENTSIZE_ERROR || raw > (64u << 20)) {
-        rt_log("resolution: the HeapDef table is not a zstd frame with a size; the game keeps its own resolution");
+        rt_log("resolution: the HeapDef table is not a zstd frame with a size; %s", why);
         return 0;
     }
-    Byml b = {malloc((size_t)raw), (size_t)raw, 0};
-    if (!b.p) return 0;
-    size_t got = ZSTD_decompress(b.p, b.n, in, n);
-    uint32_t root, heaps = 0;
+    *b = (Byml){malloc((size_t)raw), (size_t)raw, 0};
+    if (!b->p) return 0;
+    size_t got = ZSTD_decompress(b->p, b->n, in, n);
+    uint32_t root;
     uint16_t ver = 0;
-    if (!ZSTD_isError(got) && got == b.n && b.n >= 16) memcpy(&ver, b.p + 2, 2);
-    size_t heaps_at = 0, dta_at = 0, gfx_at = 0;
-    if (ver >= 2 && ver <= 7 && !memcmp(b.p, "YB", 2) && u32_at(&b, 4, &b.keys) && u32_at(&b, 12, &root) &&
-        (heaps_at = field(&b, root, "Heaps", 0xc1)) && u32_at(&b, heaps_at, &heaps)) {
+    if (!ZSTD_isError(got) && got == b->n && b->n >= 16) memcpy(&ver, b->p + 2, 2);
+    size_t heaps_at = 0;
+    if (ver >= 2 && ver <= 7 && !memcmp(b->p, "YB", 2) && u32_at(b, 4, &b->keys) && u32_at(b, 12, &root) &&
+        (heaps_at = field(b, root, "Heaps", 0xc1)) && u32_at(b, heaps_at, heaps))
+        return 1;
+    free(b->p);
+    b->p = NULL;
+    return 0;
+}
+
+// HD texture packs made for the emulators ship their own HeapDef with "TextureHeap" and its parent grown (HDPacks.com's
+// 4K pack for TotK: by 3,419,000 KiB, 3.3 GiB, for the emulators' 8 GB memory option). Served as it is, the game asks
+// for that room and the application pool has none: it crashed at start (issue #673). So before mem_init sizes the pool,
+// every switched-on mod's HeapDef is read (mods.c mods_peek_romfs: mods_scan needs paths main sets later) and the
+// largest TextureHeap growth over the shipped size counts as TOTK_TEX_HEAP_EXTRA_MB (the larger of the two, at most
+// 4 GiB). romfs.c heapdef_overlay then serves another table grown by that amount in the pack's place: the table of the
+// highest switched-on mod below it whose texture heap is not grown, else the game's own, so the other heaps keep the
+// sizes the content that runs needs.
+#define HEAPDEF_REL "System/HeapSize/Product.Nin_NX_NVN.HeapDef.byml.zs"
+static struct { int done; uint64_t kib; } MT;
+
+// "TextureHeap" of the HeapDef table in[0..n) in KiB; 0 when the table cannot be read or has no such size (the failure
+// is logged with why).
+static int32_t heapdef_tex_kib(const void *in, size_t n, const char *why) {
+    Byml b;
+    uint32_t heaps;
+    size_t th_at = 0;
+    int32_t th = 0;
+    if (!heapdef_open(in, n, &b, &heaps, why)) return 0;
+    if ((th_at = heap_size_field(&b, heaps, "TextureHeap"))) memcpy(&th, b.p + th_at, 4);
+    else rt_log("resolution: the HeapDef table has no TextureHeap size; %s", why);
+    free(b.p);
+    return th;
+}
+
+static void mod_heapdef(const char *name, const char *romfs, void *ctx) {
+    (void)ctx;
+    char path[2300], why[400];
+    if (snprintf(path, sizeof path, "%s/%s", romfs, HEAPDEF_REL) >= (int)sizeof path) return;
+    uint64_t n = 0;
+    uint8_t *in = plat_file_read(path, &n);
+    if (!in) return;
+    snprintf(why, sizeof why, "mod %s: its texture heap growth is left out", name);
+    int32_t th = heapdef_tex_kib(in, (size_t)n, why);
+    free(in);
+    if (!th) return;
+    int64_t grow = (int64_t)th - (int64_t)TEX_HEAP_KIB;
+    if (grow > (int64_t)(4096u << 10)) grow = 4096u << 10;
+    if (grow > 0 && (uint64_t)grow > MT.kib) MT.kib = (uint64_t)grow;
+    rt_log("resolution: mod %s ships a HeapDef with TextureHeap %d KiB (the game's %u KiB)%s", name, th, TEX_HEAP_KIB,
+           grow > 0 ? ": the port grows the texture heap and the pool by the difference" : "");
+}
+
+static uint64_t mod_tex_heap_kib(void) {
+    if (!MT.done) MT.done = 1, mods_peek_romfs(mod_heapdef, NULL);
+    return MT.kib;
+}
+
+// Only such a table is swapped for the game's own (romfs.c heapdef_overlay): a mod table that changes other heaps
+// keeps them. A table it cannot read stays the base (logged).
+int res_heapdef_tex_grown(const void *in, size_t n) {
+    return heapdef_tex_kib(in, n, "the mod's table stays the base") > (int32_t)TEX_HEAP_KIB;
+}
+
+// A table that can stand in for an HD pack's (romfs.c heapdef_overlay): readable, with TextureHeap at most the shipped
+// size. A content mod's table (The Second Quest grows RSDB and UI for its own files) is one.
+int res_heapdef_plain(const void *in, size_t n) {
+    int32_t th = heapdef_tex_kib(in, n, "it does not stand in for the texture pack's table");
+    return th > 0 && th <= (int32_t)TEX_HEAP_KIB;
+}
+
+int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n) {
+    uint64_t extra = res_heap_extra_kib(), tex = tex_heap_extra_kib();
+    *out = NULL;
+    if (!extra && !tex) return 0;
+    Byml b;
+    uint32_t heaps = 0;
+    size_t dta_at = 0, gfx_at = 0;
+    if (heapdef_open(in, n, &b, &heaps, "the game keeps its own resolution")) {
         dta_at = heap_size_field(&b, heaps, "DynamicTextureAllocatorMem");
         gfx_at = heap_size_field(&b, heaps, "Graphics");
     }
@@ -263,6 +419,26 @@ int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n) {
     int32_t dta2 = dta + (int32_t)extra, gfx2 = gfx + (int32_t)extra;
     memcpy(b.p + dta_at, &dta2, 4);
     memcpy(b.p + gfx_at, &gfx2, 4);
+    int32_t th = 0, th2 = 0, gg = 0, gg2 = 0;
+    if (tex) {   // TOTK_TEX_HEAP_EXTRA_MB: the world texture heap and its parent grow by the same amount
+        static const char parent[] = "\xe3\x82\xb2\xe3\x83\xbc\xe3\x83\xa0\xe3\x82\xb0\xe3\x83\xa9\xe3\x83\x95"
+                                     "\xe3\x82\xa3\xe3\x83\x83\xe3\x82\xaf\xe3\x82\xb9";   // ゲームグラフィックス
+        size_t th_at = heap_size_field(&b, heaps, "TextureHeap"), gg_at = heap_size_field(&b, heaps, parent);
+        if (th_at && gg_at) {
+            memcpy(&th, b.p + th_at, 4);
+            memcpy(&gg, b.p + gg_at, 4);
+            th2 = th + (int32_t)tex, gg2 = gg + (int32_t)tex;
+            memcpy(b.p + th_at, &th2, 4);
+            memcpy(b.p + gg_at, &gg2, 4);
+        } else {
+            rt_log("resolution: the HeapDef table has no TextureHeap sizes; TOTK_TEX_HEAP_EXTRA_MB left out");
+            tex = 0;
+            if (!extra) {
+                free(b.p);
+                return 0;
+            }
+        }
+    }
     size_t cap = ZSTD_compressBound(b.n);
     void *z = malloc(cap);
     size_t zn = z ? ZSTD_compress(z, cap, b.p, b.n, 9) : 0;
@@ -273,7 +449,12 @@ int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n) {
     }
     *out = z;
     *out_n = zn;
-    rt_log("resolution: HeapDef DynamicTextureAllocatorMem %d -> %d KiB, Graphics %d -> %d KiB", dta, dta2, gfx, gfx2);
+    if (extra)
+        rt_log("resolution: HeapDef DynamicTextureAllocatorMem %d -> %d KiB, Graphics %d -> %d KiB", dta, dta2, gfx,
+               gfx2);
+    if (tex)
+        rt_log("resolution: HeapDef TextureHeap %d -> %d KiB and its parent %d -> %d KiB (TOTK_TEX_HEAP_EXTRA_MB or a "
+               "mod's HeapDef)", th, th2, gg, gg2);
     return 1;
 }
 
@@ -336,15 +517,20 @@ void res_init(void) {
         return;
     }
     uint8_t *page = rt_patch_page();
-    double k = RT_V143 ? (double)R.ow / BASE_W : 1.0;   // 1.4.3's own scaling of the scene with the output width
+    double k = scene_scale();
     int scene_on = R.scene_set || (!RT_V143 && (R.ow != BASE_W || R.oh != BASE_H));
+    // Handheld, 1.4.3 draws a 1280x720 canvas unless the output patch is on, whatever the output setting (measured: a
+    // 1920x1080 output with the patch off composed the frame at 1280x720 and only the swapchain was 1920x1080). With
+    // the scene patch on the output patch is switched on too, so the canvas is the output size that scene_scale and
+    // the heap size (res_heap_extra_kib) assume.
+    int output_on = R.ow != BASE_W || R.oh != BASE_H || (RT_V143 && scene_on && ov_handheld());
     float sc[2] = {(float)(R.sw / k), (float)(R.sh / k)};
     uint64_t out = pack(R.ow, R.oh), none = 0;
     memcpy(page + 16, sc, sizeof sc);
     memcpy(page + 32, &out, 8);
     memcpy(page + 40, &none, 8);
     memcpy(page + 48, &out, 8);
-    rt_patch_switch(output, R.ow != BASE_W || R.oh != BASE_H);
+    rt_patch_switch(output, output_on);
     rt_patch_switch(scene, scene_on);
     R.on = 1;
     if (R.live) __atomic_fetch_or(&g_fnprof, 1, __ATOMIC_RELAXED);   // bit 0: resolution discovery
@@ -413,6 +599,29 @@ void res_fov_live(void) {
     rt_log("resolution: field of view %d%% of the game's", pct);
 }
 
+// TOTK_DYNAMIC_RES = 0 holds the game's dynamic resolution at 100 % (recomp/patches-v121.txt and patches-v143.txt,
+// set fixres), so the scene renders at the size render_scale chose. The game picks its tier (100, 90 or 80 %) mostly
+// from a fixed cost model made for the Switch: one term grows with the object counts, one with (scene width / 1600)
+// squared. The GPU time it also measures (two NVN report timestamps, a frame apart) only lowers that prediction when the
+// GPU is slower than the model says, which a PC GPU never is, so the model alone decides. Measured on 1.2.1: a
+// 2867-wide scene stays at 100 %, one wider than about 2970 does not, and a 4267-wide one (5120x1440 at render_scale
+// 83) fits no tier and falls back to 80 % every frame, whatever the GPU's load. 1 (the default) leaves the game's own
+// stepping and the set off. Runs on a settings change (gfx_present.c window_settings_live), like res_fov_live.
+void res_dynres_live(void) {
+    static int set = -2, shown = -1;
+    if (set == -2) set = rt_patch_set("fixres");
+    int dyn = cfg_bool("TOTK_DYNAMIC_RES");
+    if (dyn == shown) return;
+    shown = dyn;
+    if (set < 0) {
+        if (!dyn) rt_log("resolution: this game version has no fixed-resolution patch; the game keeps its dynamic resolution");
+        return;
+    }
+    rt_patch_switch(set, !dyn);
+    rt_log("resolution: dynamic resolution %s",
+           dyn ? "on: the game's own 100, 90 or 80 %" : "off: the scene stays at 100 %");
+}
+
 void res_wanted(unsigned out[2]) {
     decide();
     out[0] = R.ow, out[1] = R.oh;
@@ -465,7 +674,7 @@ int res_dlss_mode(const char *m) {
     unsigned w, h;
     scene_for(k ? k : R.base_k, &w, &h);
     if (w == R.sw && h == R.sh) return 0;
-    double s = RT_V143 ? (double)R.ow / BASE_W : 1.0;
+    double s = scene_scale();
     float sc[2] = {(float)(w / s), (float)(h / s)};
     memcpy((uint8_t *)rt_patch_page() + 16, sc, sizeof sc);
     R.sw = w, R.sh = h;

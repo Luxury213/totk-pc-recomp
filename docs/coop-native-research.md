@@ -127,6 +127,38 @@ in the local ignored diagnostic folders.
 
 ## Open limits and next research
 
+The isolated 0.4.0 integration repeated the instruction, SIMD, atomic and full-function differential checks on
+both x86-64-v3 and x86-64-v2 harnesses. Each variant passed 179,961 instruction cases, 159,976 SIMD cases,
+12,672 atomic cases and 5,470 full-function cases; SIMD validity agreed on 1,048,640 encodings. Flag checks
+passed at O0/O1. Exclusive-monitor contention passed, while the existing 32/64/128-bit ABA failures persisted.
+Source checks also passed for the co-op observer, network impairments, figure, native probe, audit, diagnostic
+acceptance, settings, ExeFS patches and shader freshness. These checks do not establish in-game compatibility.
+
+The candidate passed selftest/config, kernel, NVN textures, shader translation/cache, replay, mods, graphics ABI
+and play-time probes. Replay also passed with four recording workers, state checks and artificial chunk skew.
+The shader census was regenerated locally, allowing the previously unavailable shader/draw probe portions to run.
+The additional validated memory probe passed 42 GPU checks with zero validation errors after correcting its
+fixtures: initialized textures retain pool flags, and a finalized slot follows only a compatible texel format.
+The fixture now checks compatible reuse and rejection of an unrelated format; production texture rules were
+unchanged. This isolated device result does not establish full-game validation or shutdown correctness.
+
+Copied-save 0.4.0 scene checks passed local walking/camera input/basic animation and the owned weapon's
+creation, gradual descent/rest and same-actor retirement with the figure. Ordinary replay sampled 108 native
+positions with 1.52 m descent; four workers with artificial skew sampled 111 with 1.56 m descent and no replay
+state disagreements. Both covered 30 world seconds, exited cleanly and preserved source-save hashes. Inspected
+images show the local player and black-haired visual figure. They remain separate from the physical weapon.
+
+The confirmed loaded-layer full-game run entered the scene and submitted the figure but timed out at the
+120-second ceiling, with zero logged Vulkan errors. It failed acceptance. An earlier clean run requested the
+layer but silently fell back without it; that run is ordinary-rendering evidence only. Diagnostics now require
+an explicit layer-enabled marker when validation is requested. Device, memory and replay probes passed with
+the layer confirmed loaded. The device probe also now frees upload pools before destroying VMA.
+
+Two auxiliary suites fail on this Windows setup using files byte-identical to the 0.4.0 tag: the prompt test's
+synthetic layout lacks `N_BtnB_00`, and the worktree test loses temporary markers when raw Git removes a worktree
+containing directory junctions. They are recorded failures. The integration worktree has independent build
+directories and no shared build junction; never use raw worktree deletion as a cleanup shortcut for linked data.
+
 The 1.4.3 consolidation checks on 2026-11-13 passed the co-op observer, network impairment, figure, native probe,
 audit and diagnostic fixtures (22 acceptance cases), settings, shader freshness and content checks. The packaged
 executable passed selftest/config probes. The CPU entry-hook change was also checked against Unicorn:
@@ -156,7 +188,26 @@ CPU issue requiring a separate fix, not a passing check. Differential CPU result
 
 PouchPlayer's parameter composition references the Player model without direct PlayerRef/PlayerCameraTargetRef
 components, but its pause-menu physics, AI, animation and render dependencies remain unverified. It has not been
-created as a separate world companion. Likewise, the inspected transform builder at `main+0xa0f3f0` does not
+created as a separate world companion.
+
+A read-only 1.4.3 pack comparison during the 0.4.0 integration gives a more specific next investigation:
+
+| Actor pack | Direct Player/camera references in its own ActorParam | Character-body references found in inspected parameters |
+| --- | --- | --- |
+| Player | Both | Player character controller and several Player matter-body configurations |
+| PouchPlayer | Neither | None in the inspected Physics/ControllerSet parameters |
+| Npc_Road_001 | Neither | Npc_Size_M character controller and matter body |
+| Npc_BaseCamp001 | Neither | Npc_Size_M character controller and matter body |
+| Npc_Tulin_Sage | Neither | Rito young-character controller/body, including battle variants |
+
+These are parameter references, not observed live bodies or a complete dependency analysis. Their absence from
+one ActorParam does not prove that inherited code avoids all player or story state. Prioritize observing the
+ordinary Hylian NPC's authentic creation and Npc_Size_M controller lifecycle before trying a menu-display actor
+as a physical companion. Establish its AI ownership, native movement inputs and destruction contract first.
+The sage remains a comparison case with additional battle/story dependencies. No NPC was injected by this audit,
+and the weapon-only probe whitelist remains unchanged. Full parameter findings stay in ignored build reports.
+
+Likewise, the inspected transform builder at `main+0xa0f3f0` does not
 establish the removed five-argument teleport signature. Keep guessed calls and direct render-time physics writes
 prohibited. Next verify a suitable companion actor/controller, reusable ownership and native movement/update
 operations before associating the Link figure with a native body.

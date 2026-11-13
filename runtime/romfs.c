@@ -533,6 +533,22 @@ static void added_init(void) {
     rt_log("RomFS overlay: %zu files added to the RomFS", nadded);
 }
 
+// RomFS file `rel` as the image holds it, whatever overlays replace it. malloc'd; NULL when it is missing, unreadable
+// or 16 MiB or more (logged with `keeps`, what the game does without it).
+static void *read_original(const char *rel, size_t *n, const char *keeps) {
+    uint64_t i = lower(rel);
+    if (i >= file_count || strcmp(entry_name(entry(i)), rel)) return NULL;
+    uint64_t size = entry(i).size;
+    void *in = size && size < (16u << 20) ? malloc((size_t)size) : NULL;
+    if (!in || read_at(image, in, (uint32_t)size, entry(i).offset) != (int64_t)size) {
+        free(in);
+        rt_log("RomFS: cannot read %s; %s", rel, keeps);
+        return NULL;
+    }
+    *n = (size_t)size;
+    return in;
+}
+
 // RomFS file `rel` as the game would read it: from an overlay that replaces it (*base), else from the image. malloc'd;
 // NULL when it is missing, unreadable or 16 MiB or more (logged with `keeps`, what the game does without it).
 static void *read_served(const char *rel, Overlay **base, size_t *n, const char *keeps) {
@@ -829,17 +845,55 @@ static void restbl_overlay(void) {
                members, packs, (now_s() - t0) * 1000);
 }
 
-// The HeapDef table a bigger game resolution needs (resolution.c): its texture heap and that heap's parent grow. The
-// base is an overlay that replaces the table (a mod's heap sizes stay), else the RomFS original; the grown table is
-// written to <profile>/resolution/ and served in the base's place.
+// The HeapDef table a bigger game resolution or TOTK_TEX_HEAP_EXTRA_MB needs (resolution.c): its texture heaps and
+// their parents grow. The base is an overlay that replaces the table (a mod's heap sizes stay), else the RomFS
+// original; the grown table is written to <profile>/resolution/ and served in the base's place. A served mod table
+// whose own TextureHeap is grown (an HD texture pack's, resolution.c res_heapdef_tex_grown) is not the base: its
+// growth is already in the amount (resolution.c mod_tex_heap_kib). In its place the table of the highest switched-on
+// mod below it that changes other heaps only grows by the amount (plain_mod_heapdef: with the pack above The Second
+// Quest, the default order for HDPacks.com's "4kTextures", the game's own sizes for RSDB and UI were too small for
+// that mod's files and the game crashed loading a save), else the RomFS original; either is served in the pack's
+// place. A mod table that changes other heaps only and is served itself stays the base.
 #define HEAPDEF "System/HeapSize/Product.Nin_NX_NVN.HeapDef.byml.zs"
+
+// The HeapDef table of the highest switched-on mod that changes other heaps only (malloc'd, *n, *who its name); NULL
+// when no mod has one. Mods above the served table ship none, so the first found is the highest below it.
+static void *plain_mod_heapdef(size_t *n, const char **who) {
+    for (int i = 0; i < mods_count(); i++) {
+        const ModInfo *m = mods_at(i);
+        char path[2300];
+        if (!m->enabled || !m->romfs[0] ||
+            snprintf(path, sizeof path, "%s/%s", m->romfs, HEAPDEF) >= (int)sizeof path)
+            continue;
+        uint64_t fn = 0;
+        uint8_t *f = plat_file_read(path, &fn);
+        if (!f) continue;
+        if (fn < (16u << 20) && res_heapdef_plain(f, (size_t)fn)) {
+            *n = (size_t)fn;
+            *who = m->name;
+            return f;
+        }
+        free(f);
+    }
+    return NULL;
+}
 static void heapdef_overlay(void) {
-    if (!res_heap_extra_kib()) return;
+    if (!res_heap_extra_kib() && !res_tex_heap_extra_bytes()) return;
     static const char keeps[] = "the game keeps its own resolution";
     Overlay *base;
     size_t n;
     void *in = read_served(HEAPDEF, &base, &n, keeps), *out = NULL;
     size_t out_n = 0;
+    if (in && base && base->mod && res_heapdef_tex_grown(in, n)) {
+        free(in);
+        const char *who = NULL;
+        if ((in = plain_mod_heapdef(&n, &who)))
+            rt_log("RomFS: %s: the HeapDef of %s with the texture heap growth in place of the mod's table",
+                   mods_at(base->mod - 1)->name, who);
+        else if ((in = read_original(HEAPDEF, &n, keeps)))
+            rt_log("RomFS: %s: the game's own HeapDef with the mod's texture heap growth in place of the mod's table",
+                   mods_at(base->mod - 1)->name);
+    }
     int ok = in && res_heapdef_build(in, n, &out, &out_n);
     free(in);
     if (ok && serve_generated(HEAPDEF, base, out, out_n, "resolution", "grown heaps", keeps)) res_heapdef_served();
@@ -865,12 +919,11 @@ static void camera_overlay(void) {
 // The button prompts' folders (input_prompts_folder) and whether each had a manifest next to romfs-index.bin at start;
 // the one the settings asked for at start, the one overlay_init loaded (NULL: the game's own prompts) and why the first
 // did not load (ROMFS_PROMPTS_*). The menu compares them with the settings in effect (ui/menu.cpp prompts_note).
-// romfs-patches-pc keeps that name, but at a game resolution of another shape than 16:9 its files come from pc_dir,
-// romfs-patches-pc-<w>x<h> (overlay_init).
-static struct { const char *name; int ready; } prompts_folders[3];
+// Each folder keeps its name, but at a game resolution of another shape than 16:9 its files come from dir,
+// <name>-<w>x<h> (overlay_init), and ready is that one's.
+static struct { const char *name; int ready; char dir[64]; } prompts_folders[3];
 static const char *prompts_wanted, *prompts_loaded;
 static int prompts_off;
-static char pc_dir[64];
 
 const char *romfs_prompts(void) { return prompts_loaded; }
 
@@ -910,15 +963,15 @@ static void overlay_init(void) {
     // the UI laid out for that shape (make_romfs_patches.py --aspect), when the game version has the camera aspect patch
     // the layout goes with (res_wants_wide_overlay).
     // With prompts = xbox, the Xbox prompts' folder for the pad layout in its place (input_prompts_folder): the same
-    // patches with Xbox button icons (make_romfs_patches.py --prompts). The game reads the archives once at boot, so
-    // the prompts stay until restart even though the layout itself changes live. Each folder replaces romfs-patches as
-    // a whole and the setup builds no folder of another shape with Xbox prompts, so a game resolution that is not 16:9
-    // keeps the Switch prompts. So does a RomFS mod (the TOTK_ROMFS_MODS manifest or a player mod) that replaces one of
-    // the prompts' fonts: romfs-patches loads in their place, so the mod's file is not served beside prompts files made
-    // for the game's own. A mod's resource size table is no clash: restbl_overlay merges it with the prompts' one.
-    // prompts = pc takes romfs-patches-pc whatever the pad layout, and at a game resolution of another shape
-    // romfs-patches-pc-<w>x<h> (make_romfs_patches.py --prompts pc --aspect): it carries that shape's UI layout too, so
-    // it replaces romfs-patches-<w>x<h> as romfs-patches-pc replaces romfs-patches.
+    // patches with Xbox button icons (make_romfs_patches.py --prompts); prompts = pc takes romfs-patches-pc whatever
+    // the pad layout. The game reads the archives once at boot, so the prompts stay until restart even though the
+    // layout itself changes live. Each folder replaces romfs-patches as a whole. At a game resolution of another shape
+    // the prompts come from <folder>-<w>x<h> (make_romfs_patches.py --prompts <style> --aspect): it carries that
+    // shape's UI layout too, so it replaces romfs-patches-<w>x<h> as the folder replaces romfs-patches. Without it the
+    // Switch prompts stay with the shape's layout. So they do when a RomFS mod (the TOTK_ROMFS_MODS manifest or a
+    // player mod) replaces one of the prompts' fonts: romfs-patches loads in their place, so the mod's file is not
+    // served beside prompts files made for the game's own. A mod's resource size table is no clash: restbl_overlay
+    // merges it with the prompts' one.
     char def[2100], path[2100];
     const char *patches = cfg_get("TOTK_ROMFS_PATCHES"), *mods = cfg_get("TOTK_ROMFS_MODS");
     int wide = 0;
@@ -937,45 +990,47 @@ static void overlay_init(void) {
     static const char *const layouts[2] = {"nintendo", "xbox"};   // one of each Xbox folder, then the PC one
     for (int i = 0; i < 3; i++) {
         const char *name = i < 2 ? input_prompts_folder(PROMPTS_XBOX, layouts[i]) : input_prompts_folder(PROMPTS_PC, 0);
-        const char *dir = name;
-        if (i == 2) {
-            if (wide) snprintf(pc_dir, sizeof pc_dir, "%s-%ux%u", name, out[0], out[1]);
-            else snprintf(pc_dir, sizeof pc_dir, "%s", name);
-            dir = pc_dir;
-        }
+        char *dir = prompts_folders[i].dir;
+        if (wide) snprintf(dir, sizeof prompts_folders[i].dir, "%s-%ux%u", name, out[0], out[1]);
+        else snprintf(dir, sizeof prompts_folders[i].dir, "%s", name);
         prompts_folders[i].name = name;
         prompts_folders[i].ready =
             snprintf(path, sizeof path, "%s/%s/manifest.tsv", index_dir, dir) < (int)sizeof path && plat_file_exists(path);
     }
     const char *layout = cfg_value("TOTK_PAD_LAYOUT");
-    int pick = input_prompts_pick(cfg_get("TOTK_PROMPTS"), layout), shaped = wide && pick == PROMPTS_PC;
+    int pick = input_prompts_pick(cfg_get("TOTK_PROMPTS"), layout);
     const char *style = pick == PROMPTS_PC ? "keyboard and mouse" : "Xbox";
     prompts_wanted = input_prompts_folder(pick, layout);
+    const char *wanted_dir = prompts_wanted;   // the folder its files come from
+    for (int i = 0; i < 3; i++)
+        if (prompts_wanted && !strcmp(prompts_folders[i].name, prompts_wanted)) wanted_dir = prompts_folders[i].dir;
     prompts_off = !prompts_wanted                         ? ROMFS_PROMPTS_OK
-                  : wide && !shaped                       ? ROMFS_PROMPTS_SHAPE
                   : patches && !wide                      ? ROMFS_PROMPTS_PATCHES
-                  : !romfs_prompts_ready(prompts_wanted)  ? (shaped ? ROMFS_PROMPTS_SHAPE : ROMFS_PROMPTS_MISSING)
+                  : !romfs_prompts_ready(prompts_wanted)  ? (wide ? ROMFS_PROMPTS_SHAPE : ROMFS_PROMPTS_MISSING)
                                                           : ROMFS_PROMPTS_OK;
     restbl_find();
     size_t first = noverlay;
     if (prompts_wanted && prompts_off == ROMFS_PROMPTS_OK) {
         // fits: its manifest path did
-        snprintf(path, sizeof path, "%s/%s", index_dir, shaped ? pc_dir : prompts_wanted);
+        snprintf(path, sizeof path, "%s/%s", index_dir, wanted_dir);
         if (overlay_load(path, 1, 0)) {
             prompts_loaded = prompts_wanted;
             rt_log("RomFS overlay: %s button prompts (%s)", style, path);
-            if (shaped) patches = NULL;   // in place of romfs-patches-<w>x<h>, whose UI layout it carries
+            if (wide) patches = NULL;   // in place of romfs-patches-<w>x<h>, whose UI layout it carries
         } else {
             prompts_off = ROMFS_PROMPTS_FAILED;
             rt_log("RomFS overlay: %s failed its check (run the setup again); romfs-patches loads instead", path);
         }
     } else if (prompts_wanted) {
-        rt_log("RomFS overlay: prompts = %s, but %s; Switch prompts stay", pick == PROMPTS_PC ? "pc" : "xbox",
-               prompts_off == ROMFS_PROMPTS_SHAPE     ? (shaped ? "the game resolution has no romfs-patches-pc-<w>x<h> "
-                                                                  "(tools/make_romfs_patches.py --prompts pc --aspect)"
-                                                             : "the game resolution takes its own UI layout")
-               : prompts_off == ROMFS_PROMPTS_PATCHES ? "TOTK_ROMFS_PATCHES is set"
-                                                      : "their folder has no manifest.tsv (run the setup again)");
+        char why[256];
+        if (prompts_off == ROMFS_PROMPTS_SHAPE)
+            snprintf(why, sizeof why, "the game resolution has no %s (tools/make_romfs_patches.py --prompts %s "
+                     "--aspect %ux%u)", wanted_dir, prompts_wanted + strlen("romfs-patches-"), out[0], out[1]);
+        else
+            snprintf(why, sizeof why, "%s", prompts_off == ROMFS_PROMPTS_PATCHES
+                                                ? "TOTK_ROMFS_PATCHES is set"
+                                                : "their folder has no manifest.tsv (run the setup again)");
+        rt_log("RomFS overlay: prompts = %s, but %s; Switch prompts stay", pick == PROMPTS_PC ? "pc" : "xbox", why);
     }
     size_t prompts_end = noverlay;
     char plain[2100];   // romfs-patches, when it has a manifest
@@ -994,7 +1049,7 @@ static void overlay_init(void) {
         overlay_drop(first, prompts_end);
         prompts_loaded = NULL;
         prompts_off = ROMFS_PROMPTS_MODS;
-        if (shaped) overlay_load(def, 0, 0);
+        if (wide) overlay_load(def, 0, 0);
         else if (plain_ok) overlay_load(plain, 0, 0);
     }
     restbl_collect();
@@ -1025,6 +1080,26 @@ static void index_path(char *out, size_t cap) {
     need(k + 16 < cap, "executable path");
     strcpy(out + k, "romfs-index.bin");
 }
+
+// 1 when <prefix>-<w>x<h> has a manifest next to romfs-index.bin. Works before fs_init: index_dir is not set that early
+// (cfg_init, res_init and resolution.c decide run first), so the index path is worked out again here.
+static int shaped_folder_ready(const char *prefix, unsigned w, unsigned h) {
+    char dir[2100], path[2200];
+    index_path(dir, sizeof dir);
+    char *sep = plat_last_sep(dir);
+    if (sep) *sep = 0;
+    else strcpy(dir, ".");
+    return snprintf(path, sizeof path, "%s/%s-%ux%u/manifest.tsv", dir, prefix, w, h) < (int)sizeof path &&
+           plat_file_exists(path);
+}
+
+// 1 when the game resolution w x h has the UI layout of its shape: romfs-patches-<w>x<h>, the folder overlay_init
+// looks for.
+int romfs_shaped_ready(unsigned w, unsigned h) { return shaped_folder_ready("romfs-patches", w, h); }
+
+// 1 when it has a prompts' folder (input_prompts_folder) with that layout too: <folder>-<w>x<h>, which overlay_init
+// loads in its place with those prompts.
+int romfs_shaped_prompts_ready(const char *folder, unsigned w, unsigned h) { return shaped_folder_ready(folder, w, h); }
 
 static void load_index(void) {
     char path[2100];

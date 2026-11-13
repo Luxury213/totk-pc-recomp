@@ -355,7 +355,7 @@ static int test_import(pool_t *pool) {
     GCHECK(n == 4 && pages[0] == a + 0x30000 && pages[3] == a + 0x33000, "CPU writes to 4 pages: %llu reported",
            (unsigned long long)n);
     vk_mem_resolve(a + 0x30000, 0x4000, &sp);
-    vk_mem_shadow_sync();
+    vk_mem_shadow_sync(0);
     copy_wait(sp.buffer, sp.offset, sb, 0, 0x4000);
     vmaInvalidateAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
     GCHECK(!memcmp(s, m + 0x30000, 0x4000), "GPU read of CPU-written heap differs");
@@ -457,6 +457,7 @@ static tex_t make_tex(pool_t *pool, uint64_t off, int format, uint32_t w, uint32
     t.d.target = 1, t.d.format = format, t.d.width = w, t.d.height = h, t.d.depth = 1, t.d.levels = levels;
     nvn_tex_layout(&t.d, &t.L);
     t.pool = pool, t.off = (int64_t)off, t.mem = pool->mem + off, t.serial = serial;
+    t.pool_flags = (uint16_t)pool->flags;   // nvnTextureInitialize snapshots these for tex_mirrored, including in a probe
     return t;
 }
 
@@ -529,14 +530,21 @@ static int test_textures(pool_t *tpool, pool_t *phys) {
     vk_write_texels(&g, NULL, &all, gl[0], 256, 256 * 64);
     if (read_back(&g, 0, gl, 0, "physical-pool RGBA8 WriteTexels")) return 1;
 
-    // a slot of a finalized texture follows the live texture at the same storage (MNG hle_nvn.c)
+    // A finalized slot follows compatible live storage, never another texture's format at the same address.
     vk_texture_register(5, &b, NULL);
     vk_texture_release(&b);
-    tex_t b2 = make_tex(tpool, 0x40000, 0x25, 16, 12, 1, 4);
+    tex_t b2 = make_tex(tpool, 0x40000, 0x42, 16, 12, 1, 4);
     const VkTexImage *live = vk_texture_get(&b2);
     VkImage live_img = live ? live->image : VK_NULL_HANDLE;
     const VkTexImage *slot = vk_texture_by_id(5, NULL, NULL);
     GCHECK(live && slot && slot->image == live_img, "slot 5 does not follow the live texture at its storage");
+    vk_texture_release(&b2);
+    tex_t other = make_tex(tpool, 0x40000, 0x25, 16, 12, 1, 5);
+    const VkTexImage *incompatible = vk_texture_get(&other);
+    GCHECK(incompatible, "incompatible texture at finalized slot storage");
+    VkImage incompatible_img = incompatible->image;
+    slot = vk_texture_by_id(5, NULL, NULL);
+    GCHECK(!slot || slot->image != incompatible_img, "slot 5 followed an incompatible texel format");
     samp_par sp;
     memset(&sp, 0, sizeof sp);
     sp.minf = NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR, sp.magf = NVN_MAG_FILTER_LINEAR, sp.ws = sp.wt = sp.wr = NVN_WRAP_MODE_REPEAT;
@@ -544,8 +552,8 @@ static int test_textures(pool_t *tpool, pool_t *phys) {
     vk_sampler_register(0, &sp);
     VkSampler s0 = vk_sampler_by_id(0), s1 = vk_sampler_for(&sp);
     GCHECK(s0 && s0 == s1 && !vk_sampler_by_id(1), "sampler slots");
-    g_gpu_checks += 7;
-    vk_texture_release(&t), vk_texture_release(&b2), vk_texture_release(&g);
+    g_gpu_checks += 8;
+    vk_texture_release(&t), vk_texture_release(&b2), vk_texture_release(&other), vk_texture_release(&g);
     for (int i = 0; i < 4; i++) free(lin[i]), free(bl[i]);
     free(gl[0]);
     uint64_t images, ups, reups;

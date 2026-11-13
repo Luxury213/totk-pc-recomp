@@ -71,8 +71,10 @@ struct Cpu;
 // Read-only guest observation before the presentation call releases its virtual core.
 void coop_guest_observe(const struct Cpu *cpu);
 
-// Called from vk_exec_draw.c when a scene draw binds the 0x940 camera uniform block at bank c4.
+// Capture a camera block from the guest snapshot when no replay-local update applies.
 void coop_capture_camera(uint64_t cam_addr);
+// Camera values after replay-local uniform updates have been applied; copied before returning.
+void coop_capture_camera_values(const float camera[28]);
 
 // Called once per presented frame from menu_overlay_frame: ticks the UDP socket / bot and fills *out for the UI.
 void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out);

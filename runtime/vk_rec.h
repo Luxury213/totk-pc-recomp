@@ -1,11 +1,14 @@
-// The recorder thread (vk_rec.c): the Vulkan calls the replay makes into its command buffer are made by a thread of
-// their own. vk_sync.c brackets each part of a submission with rec_begin (after vkBeginCommandBuffer) and rec_end
-// (before vkEndCommandBuffer). In between, every vkCmd* on that command buffer copies its arguments into a packet of a
-// ring, in call order, and the recorder makes the real call in that order; calls into any other command buffer (uploads,
-// the window, probes) are made at once. A call the ring has no packet for (a structure with a pNext chain) waits for
-// the recorder to empty the ring and is then made at once on the calling thread. rec_end returns once the recorder made
-// every call. vk_sync.c ends a part through rec_end_cb: the recorder makes the last calls into a part it recorded,
-// vkEndCommandBuffer included; submitting and the command pool stay on the submitting thread.
+// The recorder thread (vk_rec.c): the Vulkan calls the replay makes into its command buffers are made by a thread of
+// their own. vk_sync.c begins each part of a submission (and the mirror prologue) with rec_begin, ends it with
+// rec_end_cb and submits it with rec_submit. In between, every vkCmd* on that command buffer copies its arguments
+// into a packet of a ring, in call order, and the recorder makes the real call in that order; calls into any other
+// command buffer (uploads, the window, probes) are made at once. A call the ring has no packet for (a structure with a
+// pNext chain) waits for the recorder to empty the ring and is then made at once on the calling thread. With
+// TOTK_REC_END=1 (default) the recorder also begins, ends and submits the parts it records, so a part's command buffer
+// never changes threads. rec_submit queues the submission and returns at once (TOTK_REC_ASYNC=1, default; 0: once the
+// recorder submitted it); every other user of the queue waits in vk_queue_lock until the recorder submitted what was
+// queued before (rec_queue_wait), so queue order stays the order of the calls. The submitting thread allocates from
+// the part pool only while the recorder is idle (vk_sync.c claim_slot).
 //
 // Every vkCmd* the runtime calls through vk.h goes through the rc_* wrappers below (the macros at the end); the
 // extension commands called through function pointers have rec_* wrappers of their own. TOTK_VK_RECORDER=0 makes every
@@ -15,12 +18,22 @@
 // MIT, Copyright (c) 2026 Peiikai): the driver's work behind the commands depends on nothing the replay decides next.
 #pragma once
 
-void rec_begin(VkCommandBuffer cb, uint64_t fence);   // the submitting thread, sub_lock held; fence: the part's value
+// The submitting thread, sub_lock held: vkBeginCommandBuffer (one submission) on cb and the breadcrumb crumb (0: none,
+// vk_crumbs.c) with number n, made by the recorder when it records the part, else at once; fence: the part's value.
+void rec_begin(VkCommandBuffer cb, uint64_t fence, int crumb, uint64_t n);
 void rec_end(void);                   // waits for the recorder; no-op when rec_begin did not start it
-// The end of part cb: the breadcrumb crumb (0: none, vk_crumbs.c), then vkEndCommandBuffer, both made by the recorder
-// when it records cb, and the wait for it (1); otherwise rec_end and the breadcrumb, and the caller ends cb (0).
+// The end of part cb: the breadcrumb crumb, then vkEndCommandBuffer, both queued for the recorder when it records cb
+// (1: rec_submit hands the part over); otherwise rec_end and the breadcrumb, and the caller ends cb (0).
 int rec_end_cb(VkCommandBuffer cb, int crumb, uint64_t n);
+// vkQueueSubmit2 of si (at most two command buffers, one signal, no wait, no fence) under vk_queue_lock: by the
+// recorder after a part it ended, else at once. Queued for the recorder, it returns the first failure of an earlier
+// submission the recorder made (VK_SUCCESS if none), since this one's result is not known yet.
+VkResult rec_submit(const VkSubmitInfo2 *si);
 void rec_drain(void);                 // waits until the recorder made every call queued so far
+// vk_queue_lock, before it takes the lock (not on the recorder, not when the thread holds the lock already): waits
+// until the recorder submitted every submission queued so far.
+void rec_queue_wait(void);
+int rec_owns(VkCommandBuffer cb);     // the recorder makes cb's calls: a direct call into cb follows rec_drain
 void rec_stats_log(void);             // TOTK_TRACE=perf: packets, bytes, drains and waits since the last call
 // TOTK_REC_CHECK=1 (debug, recorder on): vk_memory.c reports each object it defers (destroy 0, stamped tl) or destroys
 // (destroy 1) with the value the GPU reached (gpu); a packet of the part being recorded that still names it is logged

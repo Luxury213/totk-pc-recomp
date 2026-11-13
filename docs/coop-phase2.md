@@ -26,13 +26,21 @@ and stable shared world identities. Raw guest addresses must never become networ
 ## Next implementation milestone
 
 Upstream compatibility review (2026-11-13): [v0.4.0](https://github.com/valentderah/totk-pc-recomp/releases/tag/v0.4.0)
-was published on November 10 at `7a37fc3c346cd6f2b3c80637effb27b880ce817b`. This branch still declares
-port version 0.3.11; the cooperative game target remains TotK 1.4.3. The release changes renderer replay,
+was published on November 10 at `7a37fc3c346cd6f2b3c80637effb27b880ce817b`. The preserved cooperative baseline
+uses port version 0.3.11; an isolated integration candidate targets 0.4.0. Both target TotK 1.4.3. The release changes renderer replay,
 memory/resolution handling, CPU/runtime behavior and diagnostics. Several touched files also contain our
 figure hooks, including vk_exec_draw.c, vk_exec.c/.h, vk_device.c, nvn_api_obj.c, main.c and menu.cpp.
-Before integrating the new base, review those changes in isolation, preserve the recorder/state/lifetime fixes,
-and repeat CPU, co-op and copied-save visual/native acceptance. This is an integration follow-up, not a completed
-upgrade or a reason to replace the installed/cooperative executable with an installer during development.
+The candidate preserves the figure recorder hooks and invalidates the new per-context draw caches after figure
+passes. Camera capture uses replay-local uniform values. While co-op is enabled, replay chunks record in order
+through the existing hold scheduler because figure/camera/shadow/tile state is shared. Mode is sampled once per
+submission, so enabling co-op cannot expose that state to already-parallel chunks. Ordinary non-co-op recording
+keeps upstream behavior. This is a correctness constraint, not a co-op parallel-rendering speedup.
+
+The candidate passed CPU differential checks on both variants, runtime probes, fresh shader preparation,
+local controls/animation and copied-save native weapon/figure tests, including four replay workers. Full-game
+validation with the layer confirmed loaded still timed out after entering the scene, with no logged Vulkan
+errors. Keep this integration experimental and preserve the old build; that timeout is not an acceptance pass.
+No full performance comparison or two-PC gameplay acceptance is claimed. A source merge does not complete Phase 2.
 
 Deliver a real companion actor that appears, moves independently and disappears through verified engine
 operations, while the local player's camera and input continue working. Keep the native capability bits disabled
@@ -40,7 +48,9 @@ until the complete gate below passes.
 
 1. Inspect a suitable non-Player actor/controller and its native body. The existing Player's resident record and
    manager link are scene-owned; copying them or allocating another PlayerLink is not a safe shortcut. The
-   inventory-display PouchPlayer remains only a research candidate, not a verified world actor.
+   ordinary Hylian NPC packs reference Npc_Size_M character controllers/bodies without direct Player/camera
+   components in their own ActorParam; observe their actual lifecycle next. The inventory-display PouchPlayer
+   remains a weaker research candidate, not a verified world actor. Parameter references alone are not live-body proof.
 2. Verify creation/storage ownership beyond the one-shot experiment: asynchronous completion, rejection,
    cancellation and safe storage reuse. Retain scoped request, actor, metadata ID and world-generation identities.
 3. Locate a verified native movement/controller update phase. Keep network work on its worker, consume bounded

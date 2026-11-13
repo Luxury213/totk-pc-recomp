@@ -68,7 +68,9 @@ Fetch pinned references using `tools/fetch_refs.sh`, then use a .NET SDK and Pyt
 
 Pillow is needed for texture resizing. McSharp builds an ignored copy of the pinned source, leaving `refs/`
 read-only. Conversion outputs are restricted to `build/` or `generated/`. The default figure is
-`build/coop-v143/assets/link-figure.bin`, with a SHA-256 manifest; packaging copies it into role profiles.
+`build/coop-v143/assets/link-figure.bin`, with a SHA-256 manifest. Packaging and diagnostics install the immutable
+model using a hardlink on the same volume, with a copy fallback. Preparation replaces the source atomically;
+existing profiles retain their previous model snapshot. Writable saves are always independent copies.
 Rebuild normally before packaging if runtime/shader source changed.
 
 The figure uses basic idle/walk/run clips, or a received captured clip/frame when available. The black hair tint
@@ -76,6 +78,23 @@ changes only the figure's hair material. Missing local/peer publication clears t
 expires after 500 ms. Every draw command must pass through the asynchronous Vulkan recorder. The figure uses
 recorded viewport/scissor/vertex-buffer operations, invalidates replay state after its passes and releases GPU
 resources before VMA. It remains separate from the native weapon experiment.
+
+For the 0.4.0 integration, co-op replay chunks record in order because the figure's camera, shadows and tile
+state are shared. A submission snapshots whether co-op is enabled before workers run. The normal non-co-op
+renderer retains upstream parallel recording. Test both ordinary replay and multiple workers before accepting
+this integration; no parallel co-op performance improvement is claimed.
+
+## Keep development storage bounded
+
+Reuse the installed ExeFS and indexed RomFS through explicit paths instead of extracting them for each build.
+Keep the working baseline and one integration candidate. In the current constrained workspace, stop before
+starting another large job if less than 25 GiB is free. Incremental builds reuse generated inputs and objects.
+
+Maintain a local cleanup inventory of superseded installer tests, build objects, shader caches, copied test
+profiles and diagnostic captures. At the end of development, retain source and the chosen runnable build, then
+review and remove expendable artifacts. Folder totals can count hardlinked assets more than once: deleting
+one name may recover no blocks until the last link is removed. Never include original game inputs, keys or
+original saves in cleanup, and never share writable save files through hardlinks.
 
 ## Run an isolated diagnostic
 
@@ -153,16 +172,24 @@ true as not applicable; they are not evidence those scenarios ran. `native_spawn
 owned arguments, fall/rest and retirement separately. Its creation acceptance alone cannot establish the later
 requirements. General companion/gameplay capability fields stay false even after a weapon experiment passes.
 
+When requesting Vulkan validation, also check `vulkan_validation_requested` and
+`vulkan_validation_enabled`. The diagnostic requires an explicit layer-enabled log message; a missing layer
+cannot pass its validation gate. With the MSYS2 layer installed but not registered system-wide, set
+`VK_LAYER_PATH=C:/msys64/ucrt64/bin` and put that directory on PATH before setting `TOTK_VK_VALIDATION=1`.
+The runtime logs `validation layer enabled (VK_LAYER_KHRONOS_validation)` only after successful instance creation.
+
 The final normal-rendering owned experiment passed with the figure enabled: 30 world seconds, clean game and
 diagnostic exit, source save unchanged, 114 receiver samples, 1.53-metre descent and same-actor retirement/resource/
 allocator correlation. A separate figure-free strict run passed with 1.59-metre descent. These are bounded local
 weapon tests, not a 30-minute Internet session or a playable second Link. Further evidence and failed experiments
 are preserved in [the research notes](coop-native-research.md).
 
-Full-game shutdown under the optional Vulkan validation layer still times out, including a baseline without the
+On the preserved 0.3.11 build, full-game shutdown under the optional Vulkan validation layer timed out, including a run without the
 figure. Zero logged validation errors does not make those timeouts passes. An isolated validated device probe
 passed. The draw portion of the replay probe requires the private shader census, such as
-`build/v143/shaders/jobs.json`; it was unavailable in this workspace. Normal rendering/shutdown passed.
+`build/v143/shaders/jobs.json`; it was unavailable during that baseline test. The 0.4.0 candidate has a fresh
+census and passed the shader and full replay probes, including four workers. Its isolated memory probe also
+passed with validation after correcting outdated texture fixtures. These do not replace the full-game tests.
 
 ## Source checks
 

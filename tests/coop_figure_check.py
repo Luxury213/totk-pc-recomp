@@ -90,6 +90,8 @@ def main():
     args = ap.parse_args()
     sys.path.insert(0, str(ROOT / 'tools'))
     from prepare_coop_figure import private_output
+    from build_coop import install_figure
+    from unittest.mock import patch
     assert private_output(ROOT / 'build/tests/figure.bin').is_relative_to(ROOT / 'build')
     for path in (ROOT / 'runtime/figure.bin', ROOT / 'build', ROOT / 'build/../figure.bin'):
         try:
@@ -109,6 +111,30 @@ def main():
     env = dict(os.environ, PATH=str(Path(compiler).parent)+os.pathsep+os.environ.get('PATH',''))
     with tempfile.TemporaryDirectory(prefix='coop-figure-', dir=output) as folder:
         work = Path(folder)
+        source = work / 'assets/link-figure.bin'
+        target = work / 'profile/link-figure.bin'
+        source.parent.mkdir()
+        source.write_bytes(b'authored immutable fixture')
+        install_figure(source, target)
+        install_figure(source, target)  # idempotent even when both names already share storage
+        assert target.read_bytes() == source.read_bytes()
+        replacement = source.with_suffix('.new')
+        replacement.write_bytes(b'new authored fixture')
+        shared = os.path.samefile(source, target)
+        replacement.replace(source)
+        if shared:
+            assert target.read_bytes() == b'authored immutable fixture'  # old snapshot remains intact
+        with patch('build_coop.os.link', side_effect=OSError('unsupported filesystem')):
+            install_figure(source, target)
+        assert target.read_bytes() == b'new authored fixture'
+        assert source.read_bytes() == b'new authored fixture' and not os.path.samefile(source, target)
+        assert not list(target.parent.glob('.*.tmp'))
+        try:
+            install_figure(source, work / 'save.dat')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('accepted a writable non-figure destination')
         (work / 'check.c').write_text(HARNESS, encoding='utf-8')
         (work / 'triangle.bin').write_bytes(fixture())
         subprocess.run([compiler, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror',

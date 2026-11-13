@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -21,6 +22,29 @@ from check_content import GENERATED_MARKER
 def digest(path):
     with path.open('rb') as f:
         return hashlib.file_digest(f, 'sha256').hexdigest()
+
+
+def install_figure(source, target):
+    """Install a validated immutable figure without duplicating it on the same volume.
+
+    Only figure assets use this path, never writable saves. Atomic replacement preserves existing hardlink
+    snapshots when preparation installs a new source. Filesystems without hardlinks use an ordinary copy.
+    """
+    source, target = Path(source), Path(target)
+    if source.name != 'link-figure.bin' or target.name != 'link-figure.bin':
+        raise ValueError('only immutable link-figure.bin assets may be shared')
+    if target.exists() and os.path.samefile(source, target):
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f'.{target.name}.{uuid.uuid4().hex}.tmp')
+    try:
+        try:
+            os.link(source, temporary)
+        except OSError:
+            shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def run(command, log, env):
@@ -56,7 +80,7 @@ def package(game, out):
         profile = out / 'profiles' / role
         profile.mkdir(parents=True, exist_ok=True)
         if figure.is_file():
-            shutil.copy2(figure, profile / 'link-figure.bin')
+            install_figure(figure, profile / 'link-figure.bin')
         lines = ['@echo off', 'chcp 65001 >nul', f'@rem {GENERATED_MARKER}', 'setlocal',
                  f'set "TOTK_COOP_MODE={role}"', 'set "TOTK_COOP_PORT=7777"']
         if role == 'client':
