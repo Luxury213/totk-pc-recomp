@@ -13,10 +13,11 @@ Early development. The game is playable on Windows and Linux; visual bugs and cr
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The experimental co-op prototype provides ENet sessions,
-presence overlays and native integration diagnostics; a playable shared campaign is still pending.
-See [development status and contribution checks](docs/coop-development.md). The synthetic tests require no game
-files, keys, save data or GPU; a Windows CI workflow is included.
+The experimental co-op prototype provides ENet presence sessions, an optional animated Link figure and isolated
+native weapon experiments. The figure has no native body or controller; a playable second Link and shared
+campaign are still pending. See the [public development plan](docs/coop-phase2.md),
+[build and test guide](docs/coop-development.md) and [native research notes](docs/coop-native-research.md).
+Synthetic co-op tests require no game files, keys, save data or GPU; a Windows CI workflow is included.
 
 ## Features
 

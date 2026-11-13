@@ -1,206 +1,193 @@
-# Co-op development status
+# Co-op development guide
 
-The target is a two-player private-VPN cooperative campaign on TotK 1.4.3. The host owns the world and story,
-each player has their own inventory/health, ordinary pickups have one winner, and either player's death reloads
-the common checkpoint. The final campaign must work from the prologue. Players initially stay in the same area.
+This is an experimental TotK 1.4.3 prototype on Windows. It provides ENet presence sessions, an optional
+animated Link figure and isolated native weapon experiments. It does not provide a playable second Link
+or a cooperative campaign. Native session capabilities remain presence-only.
 
-## What this build implements
+Start with [the public development plan](coop-phase2.md) for current status and the next milestone.
+[coop.md](coop.md) defines the intended campaign. [Native research notes](coop-native-research.md) preserve
+verified engine paths and their limitations. This guide covers building and reproducing checks.
+The public plan is authoritative for resuming development; private notes under ignored `build/` are supplementary.
 
-- ENet 1.3.18 at commit `2662c0de09e36f2a2030ccc2c528a3e4c9e8138a`, with original source/headers and MIT licence.
-  Transport runs on its own worker with no render/UI tick dependency. Windows and llvm-mingw build paths link Winsock.
-- Protocol v2 explicitly serializes little-endian integers and finite floats. It rejects malformed lengths,
-  unsupported protocol versions and invalid state. Reliable ordered negotiation/notifications use channel 0;
-  sequenced movement uses channel 1 at 30 Hz. This replaces the incompatible native-struct v1 protocol.
-- Negotiation checks game version and the combined identity of main/sdk/subsdk0. Each connection has a fresh random
-  session nonce and a challenge; profiles retain a random player identity. Old sessions, sender generations,
-  sequences and duplicate notification IDs cannot update the current presence state.
-- Native gameplay readiness requires both peers' verified actor/world-control capabilities and matching stable scene
-  identities. The current adapter advertises presence only. A loaded player observation does not enable gameplay.
-- Presentation interpolates a bounded history with a 100 ms delay, takes speed from transmitted velocity and holds
-  the last pose when the buffer runs out. It never sends the smoothed pose into physics.
-- `runtime/coop_adapter.c` samples the real actor before `nvnQueuePresentTexture` releases its virtual core.
-  It records observed lifecycle generations and invalidates stale presence; it does not claim this is the world
-  update's safe mutation phase. The render/UI path no longer reads actor memory.
-- A bounded queue admits at most 256 diagnostic native requests. Observation rejects expired/stale requests and
-  reports the remaining requests as unverified. It never invokes guessed guest functions or writes actor/physics memory.
-- Opt-in `coop_trace_guest` captures up to 64 entries of the inspected transform-related functions and the observed
-  actor virtual method, with caller/argument and physical host-thread metadata (not a guest scheduling guarantee).
-  Captures begin only after a playable actor has been observed: 32 slots are reserved for that player's own method
-  and 16 each for the two physics candidates, so title traffic and common body updates cannot exhaust every slot.
-  Resolution discovery and co-op tracing use separate profiler
-  bits, so disabling tracing preserves the resolution observer.
-- A separate opt-in, bounded constructor trace starts before player observation. It retains at most 16,384
-  `GameActor` constructor entries and reports only entries whose object pointer matches the observed local player.
-  The diagnostic also records the entry count at first playable observation. It does not call the constructor.
+## Implemented behavior
 
-The remote silhouette and local bot are diagnostic overlays. Native remote actors, shared pause, combat, inventory,
-quest events, checkpoints and cinematic control are **not implemented or enabled**. Losing a peer disconnects its
-presence; pausing a real shared simulation remains gated on verified world control.
+| Layer | Implemented | Limit |
+| --- | --- | --- |
+| Build | Separate runtime/executable folders, verified 1.4.3 modules, explicit paths, isolated profiles | Each participant builds locally from their own content |
+| Session | ENet 1.3.18 worker, direct VPN IPv4, reliable labels and 30 Hz presence | Labels are not gameplay transactions; Internet acceptance is pending |
+| Protocol | Version 3, explicit serialization, game/content checks, session/player identities, freshness and deduplication | Older peers must rebuild; no gameplay-command decoder |
+| Pose | Position, velocity, yaw, optional unit quaternion and FSKA animation name/frame | No final blended bone palette or native animation controller |
+| Presentation | Interpolated animated Link, black hair, scene depth, lighting and shadows; silhouette fallback | No native body, collision, input, inventory or combat |
+| Native diagnostics | Scoped request/task/actor/resource/reference/retirement observations | Observation does not establish an unrestricted calling contract |
+| Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
 
-Notifications use reliable transport but remain labels, not authoritative gameplay events. Only the latest received
-label is presented by the UI, with the total received count. The networking code has no gameplay-command decoder.
-This prevents a network message from being treated as authorization to mutate the guest.
+State packets are 152 bytes. Rotation and animation fields have explicit presence flags; malformed/nonfinite
+values and noncanonical strings are rejected. Stale observations clear optional pose data. Quaternion blending
+uses the shortest path; clip changes and loop restarts hold the earlier frame until the next sample. Equipment,
+blended poses and character audio are deferred.
+
+UI/rendering consume snapshots. Guest observations run before the blocking scope in
+`runtime/nvn_api_obj.c` `nvnQueuePresentTexture`; this is not a verified mutation phase. The ordinary native
+command queue rejects commands, and teleport remains disabled. Raw scene pointers and the current player-origin
+heuristic are not stable world identities. A negotiated connection cannot enable native readiness by itself.
 
 ## Build and launch
 
-Use Python 3.12 in `.venv` and MSYS2 UCRT64 Clang/Ninja. Python 3.14 is reserved for extraction/shader tooling.
+Use the toolchain in [building.md](building.md): Python 3.12 in `.venv`, MSYS2 UCRT64 Clang/Ninja, and your
+own indexed 1.4.3 ExeFS/RomFS installation. Python 3.14 in `.venv-py314` supplies zstd for asset preparation.
 
 ```powershell
-.venv/Scripts/python.exe tools/build_coop.py --game-dir "<installed game directory>" --jobs 6
+.venv/Scripts/python.exe tools/build_coop.py --game-dir "<installed game directory>" --jobs 4
 ```
 
-The builder verifies all 1.4.3 ExeFS hashes, generates C below `build/coop-v143/generated`, builds the runtime archive
-and executable in separate folders, and runs `--selftest` and `--probe-cfg`. It always supplies explicit game/version
-paths. Outputs must remain below the repository's `build/`; no output may overlap the input installation.
+The builder verifies module hashes and writes below `build/coop-v143/`. Generated C, runtime and executable
+outputs stay separate. An input/generator fingerprint avoids unnecessary regeneration; Ninja tracks source/header
+changes. The builder runs `--selftest` and `--probe-cfg`, then packages `game/totk-coop.exe` and its manifest.
+The input installation must not overlap the output directory.
 
-The first build needs time to lift and compile the full guest. An input/generator fingerprint lets subsequent runs
-reuse generation; Ninja handles C/header changes. Logs remain in `build/coop-v143/`. `--package-only` probes and
-packages an already built executable; it does not incorporate newer source edits.
+Packaging creates `start-host.bat`, `start-client.bat` and `start-bot.bat` with separate profiles. Client asks for
+the host's VPN IPv4 address; UDP port 7777 is the default. Host/client profiles start fresh. Do not replace an
+original executable or use an original campaign as a cooperative profile. Connection/presence is available;
+shared pause, progression and native companion control remain disabled.
 
-Successful packaging writes `game/totk-coop.exe`, build metadata and `start-host.bat`, `start-client.bat`,
-`start-bot.bat`. Each launcher passes a dedicated profile. Client prompts for the host's VPN IPv4 address; both sides
-use UDP port 7777. The default host/client profiles are fresh, independent campaign sandboxes. Old co-op executables
-elsewhere are not replaced. Every participant must build locally from their own game content; this folder contains
-game-derived code and must not be published or distributed to another player.
+`--package-only` probes/packages an existing build; it does not incorporate newer C or shader edits. Never
+publish or send the build folder to another participant: the executable contains game-derived code.
 
-For an advanced-save native diagnostic, stop any existing game instance first, then run:
+## Prepare the optional Link figure
+
+The conversion, pose and rendering code is adapted from the pinned MIT reference recorded in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). It reads the user's own assets; no model is distributed.
+
+Fetch pinned references using `tools/fetch_refs.sh`, then use a .NET SDK and Python 3.14:
+
+```powershell
+.venv/Scripts/python.exe tools/build_mcsharp.py --dotnet "<SDK dotnet.exe>"
+.venv-py314/Scripts/python.exe tools/prepare_coop_figure.py --romfs "<indexed RomFS directory>" --mcsharp "build/tools/mcsharp/c837ee41217fd5b330ea31cc21448cf4985320f8/bin/mcsharp-cli.exe"
+.venv/Scripts/python.exe tools/build_coop.py --game-dir "<installed game directory>" --package-only
+```
+
+Pillow is needed for texture resizing. McSharp builds an ignored copy of the pinned source, leaving `refs/`
+read-only. Conversion outputs are restricted to `build/` or `generated/`. The default figure is
+`build/coop-v143/assets/link-figure.bin`, with a SHA-256 manifest; packaging copies it into role profiles.
+Rebuild normally before packaging if runtime/shader source changed.
+
+The figure uses basic idle/walk/run clips, or a received captured clip/frame when available. The black hair tint
+changes only the figure's hair material. Missing local/peer publication clears the figure; stale publication
+expires after 500 ms. Every draw command must pass through the asynchronous Vulkan recorder. The figure uses
+recorded viewport/scissor/vertex-buffer operations, invalidates replay state after its passes and releases GPU
+resources before VMA. It remains separate from the native weapon experiment.
+
+## Run an isolated diagnostic
+
+Stop existing game instances and use an offline test profile containing a `save` directory:
 
 ```powershell
 .venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --seconds 5
 ```
 
-This creates and verifies a separate save copy under `build/coop-v143/diagnostics`, runs one background instance with
-recorded title-screen input and bounded native tracing, and records a JSON report, log and screenshot. It compares
-source-save hashes afterward. On timeout it stops only its own child. It never launches a second full game beside
-an existing instance, stops an existing game, or changes the source profile. A native trace is evidence for further
-investigation, not proof of a safe spawn/warp ABI or scheduling phase.
+The runner verifies the packaged executable hash, copies/verifies the save and account identity into a new
+`build/coop-v143/diagnostics/run-*/profile`, then starts one background instance. It refuses to run beside an
+existing game. Source saves are hashed before/after; on timeout only its own child is stopped. Logs, reports,
+screenshots and optional frame series remain ignored. Never copy an actively written save.
 
-## Validation
+Choose a scenario and requirements:
+
+| Option | Required evidence |
+| --- | --- |
+| `--scenario controls` | Timed walking, camera input and two attack inputs; horizontal displacement during walking, not loading settlement |
+| `--require-animation` | Correlated local rotation and advancing native animation frames |
+| `--require-figure` | Model loaded and submitted, without logged Vulkan validation errors; inspect images separately |
+| `--without-figure` | Omit the optional asset for a rendering baseline; incompatible with `--require-figure` |
+| `--scenario reload --input-script "<script>"` | Old player cleanup, later generation and at least two matched constructions |
+| `--scenario object --input-script "<script>"` | One weapon's initialization, removal request, queue and cleanup in order |
+| `--probe-name "<Weapon_ name>"` | Require that exact name while retaining distinct identities for same-named actors |
+| `--require-allocator --require-resource` | The same retired probe's allocator handoff and resource correlation through cleanup |
+| `--shots 2` | Frame series at two-world-second intervals, at most 64 images |
+
+Controls default to 15 world seconds, idle to 5, object to 24 and reload to 45. Menu navigation is profile-specific;
+object/reload scenarios require an explicit normal-input script. A changed generation, a menu press or return
+from title alone does not prove actor recreation. See [controls.md](controls.md) for `input_script` syntax.
+
+For a local visual/control check:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --scenario controls --require-animation --require-figure --shots 2
+```
+
+The bot follows a synthetic trajectory and estimates height from the local player. It has no terrain collision.
+A successful local-reader check, pose packet or submitted draw does not prove a playable remote character.
+
+## Explicit native weapon experiments
+
+Ordinary diagnostics explicitly disable native creation, including an inherited environment setting. The options
+below write distinct opt-in markers into the verified copy, require a timed 1.4.3 run and leave session capabilities
+disabled. Both use the authentic `Weapon_Sword_101` drop request as their scheduling trigger after six world seconds.
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --scenario object --input-script "<drop and collect script>" --probe-name Weapon_Sword_101 --native-clone-weapon --require-spawn-retirement
+```
+
+`--native-clone-weapon` borrows the original synchronous argument, with a null watcher. Instead, use
+`--native-owned-weapon` for process-lifetime argument/name/empty-blackboard storage with zero inherited actor
+dependencies, identity rotation and unit scale. The owned origin is two metres higher and two metres along world X.
+These modes are mutually exclusive and each attempts only one request per process. They do not provide arbitrary
+spawning, destination validation, production cancellation or reusable request storage.
+
+A strict owned-argument run is:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --scenario object --input-script "<owned drop and collect script>" --probe-name Weapon_Sword_101 --native-owned-weapon --require-spawn-fall --require-spawn-retirement --without-figure --seconds 30
+```
+
+The script must allow space to collect the injected weapon; picking up the original first can fill the inventory.
+`--require-spawn-retirement` requires the injected actor's own resource/allocator-correlated retirement, not the
+original weapon's. `--require-spawn-fall` requires owned mode, a matching initial origin, several gradual downward
+steps and later positional rest. Teleports, mixed identities and missing rest cannot satisfy it. Observed descent
+and rest do not establish humanoid collision behavior or a general movement API. No host destruction function is
+called: normal pickup initiates retirement. Use the controlled outdoor scenario, not arbitrary destinations.
+
+## Interpret results
+
+Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
+true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,
+owned arguments, fall/rest and retirement separately. Its creation acceptance alone cannot establish the later
+requirements. General companion/gameplay capability fields stay false even after a weapon experiment passes.
+
+The final normal-rendering owned experiment passed with the figure enabled: 30 world seconds, clean game and
+diagnostic exit, source save unchanged, 114 receiver samples, 1.53-metre descent and same-actor retirement/resource/
+allocator correlation. A separate figure-free strict run passed with 1.59-metre descent. These are bounded local
+weapon tests, not a 30-minute Internet session or a playable second Link. Further evidence and failed experiments
+are preserved in [the research notes](coop-native-research.md).
+
+Full-game shutdown under the optional Vulkan validation layer still times out, including a baseline without the
+figure. Zero logged validation errors does not make those timeouts passes. An isolated validated device probe
+passed. The draw portion of the replay probe requires the private shader census, such as
+`build/v143/shaders/jobs.json`; it was unavailable in this workspace. Normal rendering/shutdown passed.
+
+## Source checks
+
+Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or GPU:
 
 ```powershell
 .venv/Scripts/python.exe tests/coop_check.py --cc C:/msys64/ucrt64/bin/clang.exe --deps C:/msys64/ucrt64/include
-.venv/Scripts/python.exe tests/coop_network_check.py
+.venv/Scripts/python.exe tests/coop_network_check.py --cc C:/msys64/ucrt64/bin/clang.exe
+.venv/Scripts/python.exe tests/coop_figure_check.py
 .venv/Scripts/python.exe tests/coop_native_audit_check.py
+.venv/Scripts/python.exe tests/coop_native_probe_check.py
+.venv/Scripts/python.exe tests/coop_diagnose_check.py
 .venv/Scripts/python.exe tests/settings_doc_check.py
+.venv/Scripts/python.exe tools/build_shaders.py --check
 .venv/Scripts/python.exe tools/check_content.py
-.venv/Scripts/python.exe tools/check_content.py --staged
 git diff --check
 ```
 
-The adapter harness checks camera/title exclusion, observation loss, actor replacement, bot follow/stay,
-trace/profiler isolation, disabled teleport and queue capacity/stale/unverified rejection, while asserting that the
-synthetic actor bytes remain unchanged. Protocol checks cover canonical serialization, malformed packets,
-compatibility, old sessions/generations, duplicates and native-readiness gating; interpolation checks include angle
-wrap and generation reset.
+The network suite uses two real workers, 50 reliable labels, stale observation handling, incompatibility and
+reconnect checks. A local UDP proxy repeats it at nominal 100/200 ms RTT with 5% configured random loss, jitter,
+duplication and reordering. Aggregate results stay in `build/tests/coop-network-results.json`; this is not Internet
+acceptance. Native/figure tests use authored fixtures, and diagnostic tests reject false-positive acceptance.
+The Windows co-op workflow runs synthetic checks; hosted CI evidence requires a push/PR.
 
-The network harness uses two real ENet workers and production Windows platform threads, locks and file operations.
-It checks independent positions, 50 reliable notifications, stale-observer invalidation, disconnect/reconnect with
-a new session, incompatible content and corrupt persistent identities. It repeats through a UDP proxy at 100/200 ms
-nominal RTT, 5% configured random loss, jitter, duplication and reordering. The test's seed and aggregate impairment
-counts are saved in `build/tests/coop-network-results.json`; these are local simulations, not Internet validation.
-
-These checks pass. The isolated 1.4.3 executable also passes `--selftest` (zero failures), `--probe-cfg` and a
-selftest without the compiler directory on PATH. The single-instance diagnostic loaded the copied save, observed
-the real player, captured 32 physics observations after player detection and a rendered frame, and exited successfully
-after five world-clock seconds. It also identified a player vtable method candidate, with no observed invocation
-during that idle interval. These are separate findings; the candidate is not a verified movement API.
-Both the source test save and the 66 fingerprinted original executable/save files remained
-byte-identical. Results are recorded in `build/coop-v143/validation.json` and the referenced diagnostic report.
-
-The first diagnostic attempt timed out on title-screen navigation. The runner now forces background focus handling
-and repeats confirmation instead of relying on four fixed button events; the corrected run succeeds. This checks
-observation and isolation, not actor creation or a playable multiplayer campaign. No lifter algorithm or generated
-C was edited by hand in this work.
-
-The next isolated 1.4.3 diagnostic confirmed the local player's vtable and found a `GameActor` constructor entry
-whose object pointer exactly matched the observed player. Its caller resolves to an allocator wrapper, and a
-separate static path registers that wrapper as the `GameActor` factory. There were 779 constructor entries before
-the first playable observation; the former 64-entry capture filled before reaching the player. The revised audit
-reports the matched invocation and its caller without exporting generated bodies. The copied save exited cleanly,
-and the source save remained byte-identical. This verifies construction of the existing player object; scene
-registration requests, input/camera ownership, destruction requests and a safe world mutation phase remain unknown.
-
-A further read-only trace followed the matched constructor through its allocator wrapper, factory dispatcher and
-guarded initialization routine to a caller in the engine's task-processing path. The player's pointer also matched
-the independent scene resident-actors list during gameplay. Constructor and presentation observations occurred on
-different physical host threads. The audit records the caller chain and the scene-list match without exporting game
-code. These observations establish how the existing player is constructed and where it resides; they do not establish
-the request ABI, scene ownership, a safe call site, or how to create and remove a second actor.
-
-A targeted indirect-dispatch observer now captures the task descriptor passed to the guarded initializer. One
-copied-save 1.4.3 run linked a nonzero descriptor to the existing player's constructor and resident-scene match;
-the original save remained byte-identical. The private audit reports the descriptor observation as a count and
-does not export the pointer. Static inspection shows the task processor pops and orders descriptors, then calls
-the initializer. The producer, complete request format and ownership rules remain unverified. This trace still
-does not enable native actor creation or establish a safe world update phase.
-
-Another bounded trace matched the factory's holder call to the existing player. The holder is embedded at task
-descriptor `+0xf0`, and the observed virtual target is `main+0xd66bb0` with mode `1`. Static inspection of that
-target shows actor metadata setup and an actor virtual call. The private audit reports the matched call and inline
-holder relationship without exporting guest pointers or function bodies. The copied-save run exited cleanly and
-left the original save unchanged. The resident-list insertion, task producer and destruction request remain open.
-
-The next scoped trace confirmed the existing player's first initializer dispatch at `main+0x20d530`, followed by
-two calls to a short virtual routine. Each call used the task descriptor's `+0x18` context, and the independent
-resident list matched the player. The wrapper balances a reference count around initialization, while the first
-target reads scene-related state and performs substantial setup. Its complete side effects, the resident-list
-insertion and the destruction request still require verification before a companion actor can be attempted.
-
-A subsequent read-only diagnostic identified the resident scene component's vtable as `main+0x36d8598` while its
-list held nine records, including the existing player. Static inspection maps virtual slot `+0x30` to
-`main+0x1fc9f08`: it iterates the component's `+0x20` count and `+0x28` array in `0x70`-byte records, releasing
-and clearing each record's `+0x18` reference. The destructor path at `main+0x1fc9e1c` releases the array itself.
-These are component-wide cleanup paths, not a verified per-actor removal request. The insertion operation,
-ownership contract and safe world mutation phase remain unverified. The copied-save diagnostic exited cleanly
-and left the original save byte-identical.
-
-A bounded function-entry trace then matched `main+0xc9a5a4` to that same resident component during scene loading.
-The private audit maps its observed caller to `main+0xb39cdc`. Static inspection shows that the caller dispatches
-virtual slot `+0x20` on the component; the target prepares its `0x70`-byte record array via `main+0xc9a854`.
-The isolated run saw one matching call, stayed within the trace budget, exited cleanly and left the original save
-unchanged. This identifies list preparation, not the request that creates, registers or removes an individual actor.
-
-## Contributing and review milestones
-
-The ENet session layer, isolated builder, read-only adapter and synthetic regression tests form one reviewable
-experimental contribution. They do not need to wait for a complete multiplayer campaign. Keep the mode disabled
-by default and describe the contribution as session infrastructure and diagnostics, not playable co-op.
-
-`.github/workflows/coop-tests.yml` runs the synthetic observer, protocol, real ENet workers, network impairment,
-native-audit mapping and content/documentation checks on Windows with MSYS2 UCRT64. It uses no game or save files,
-keys, renderer or GPU. The workflow has been added; hosted CI results require a push/PR. Local execution of the
-same checks is the pre-commit evidence, not a substitute for a future hosted run.
-
-For private engine investigation, map a new diagnostic's scoped observations back to the generated functions:
-
-```powershell
-.venv/Scripts/python.exe tools/coop_native_audit.py --diagnostic "<diagnostic report.json>"
-```
-
-The audit stays under `build/`, includes the generated-content marker and emits function offsets, caller groups and
-direct callee names, never source bodies. It resolves LR to the call instruction and excludes non-executable module
-data. It distinguishes a vtable method candidate from an observed invocation. Legacy observations without a player
-epoch remain labelled unscoped. Its synthetic test uses invented C and trace fixtures. Keep the private diagnostic
-artifacts, generated C, binaries and save copies out of the source commit; describe findings using function names,
-offsets and aggregate test results. Follow CONTRIBUTING.md for normal bug reports.
-
-The next separate playable milestone is a native remote actor that can spawn, move and despawn through verified
-engine operations while preserving local input/camera ownership. That contribution needs real-game lifecycle
-and reconnect tests in addition to the synthetic suite. Shared combat and story should follow that milestone.
-
-## Remaining gate and development order
-
-The first playable milestone still requires a native remote actor with independent camera/input ownership and a
-verified world update phase. Trace the engine's actor factory, scheduling, destruction and transform/controller
-requests; establish their actual ABI and lifetime/locking contract. Do not replace this investigation with a second
-`PlayerLink` allocation, direct position stores or calls from the presentation observer.
-
-Before enabling native capability bits, demonstrate spawn/move/despawn and load/unload/reconnect stress tests with
-the remote actor, preserving the local player and camera. Scene identity and world readiness must come from verified
-engine state rather than raw pointers or the current origin-position heuristic.
-
-Only after that gate: host-owned enemies and unique pickups; per-player inventory plus common checkpoints; coordinated
-travel/physics ownership; then the complete prologue and story/cinematic acceptance suite. The host will advance story
-text and skips, while transitions wait for both players. Persistent events need semantic validation, revisions and
-transactional recovery; notification delivery is not a substitute. Real Internet acceptance requires the friend's PC
-and a 30-minute session with reconnect/save/reload checks.
+Changes to CPU headers or the lifter require the differential checks in [building.md](building.md). Keep native
+reports, generated C, executables, copied saves, extracted models and game-derived shaders out of public source.
+Our own runtime GLSL and its matching C headers are maintained through `tools/build_shaders.py`. Before committing
+an explicit source selection, run `tools/check_content.py --staged`; never bypass the repository hook.

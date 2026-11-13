@@ -2,6 +2,8 @@
 
 The first target is a two-player private-VPN campaign on Windows with TotK 1.4.3. See
 [coop-development.md](coop-development.md) for implemented behavior, build commands and validation.
+The current status, next implementation steps and acceptance gates are in the
+[public development plan](coop-phase2.md); verified engine paths are in [native research notes](coop-native-research.md).
 This document describes the intended campaign; it does not claim those features already work.
 
 ## Campaign contract
@@ -13,7 +15,8 @@ belongs to the group. Either player's death restores the common checkpoint for b
 The final acceptance run starts a new campaign from the prologue. Development may use copied advanced saves.
 Initially both players remain in the same region and coordinate travel. Simulation-pausing menus pause both peers;
 story transitions wait for both players to be ready. Replicating a button press does not synchronize a cinematic.
-Both characters initially look like Link. Public servers, split screen, customization and PvP are outside this target.
+Both characters use Link's body; the companion has black hair to distinguish it from the local player.
+Public servers, split screen, a full character customization system and PvP are outside this target.
 
 ## Responsibilities and authority
 
@@ -96,6 +99,6 @@ network connection alone does not complete the campaign.
 ## Public source boundary
 
 Publish handwritten implementation, synthetic tests, dependency attribution and documentation. Every player builds
-locally from their own game content. Extracted/generated game code, executables, shaders, copied saves and private
+locally from their own game content. Extracted/generated game code, executables, game-derived shaders, copied saves and private
 diagnostic artifacts stay under ignored `build/` or `generated/`. Follow AGENTS.md and CONTRIBUTING.md, and run
 `tools/check_content.py --staged` before a source commit.
