@@ -1,7 +1,7 @@
 # Co-op status and public development plan
 
 Phase 2 is in progress. There is no playable second Link or shared cooperative campaign yet. The current
-milestone provides session infrastructure, an animated visual Link and bounded native weapon experiments.
+milestone provides session infrastructure, an animated visual Link, native NPC creation and bounded body experiments.
 This public plan is the resumption reference; it does not depend on private notes in ignored `build/`.
 
 See [the development guide](coop-development.md) for commands, [native research](coop-native-research.md) for
@@ -17,6 +17,7 @@ engine evidence and [the campaign design](coop.md) for the agreed final behavior
 | Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
 | Phase 2: native experiment | One independent weapon request falls, rests and is collected; strict checks passed with/without the visual figure | Still one-shot and triggered by an authentic weapon drop; not companion spawning |
 | Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Native movement/controller access, removal and reusable session ownership are still unverified |
+| Phase 2: NPC body/velocity diagnosis | Scoped CharacterMatterRigidBody ownership and native velocity requests observed; three controlled pulse runs correctly failed movement acceptance | Requests reached the native queue, but the observed body/actor stayed stationary; locate movement authority before connecting peer poses |
 | Phase 2: remote native character | Disabled; native commands are rejected and capabilities remain presence-only | Actor/controller selection, native movement, safe update phase and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 
@@ -51,7 +52,10 @@ until the complete gate below passes.
    manager link are scene-owned; copying them or allocating another PlayerLink is not a safe shortcut. The
    ordinary Hylian NPC packs reference Npc_Size_M character controllers/bodies without direct Player/camera
    components in their own ActorParam. The first Npc_Road_001 creation experiment passed; inspect its native
-   controller and movement contract next. The inventory-display PouchPlayer
+   controller and movement contract next. The generic body-velocity pulse queues successfully but produces no
+   controlled NPC displacement. The initial and later ownership snapshots identify the same primary body;
+   trying that alias again is not a different controller. Follow the Physics component/controller-set update
+   path and native request consumption next. The inventory-display PouchPlayer
    remains a weaker research candidate, not a verified world actor. Parameter references alone are not live-body proof.
 2. Verify creation/storage ownership beyond the one-shot experiment: asynchronous completion, rejection,
    cancellation and safe storage reuse. Retain scoped request, actor, metadata ID and world-generation identities.

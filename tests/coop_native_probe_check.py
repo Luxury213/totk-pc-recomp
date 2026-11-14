@@ -17,6 +17,11 @@ static uint64_t manager, name_pointer, watcher;
 static const char name[] = "Weapon_Sword_101";
 static uint64_t stack[3] __attribute__((aligned(16)));
 static int calls, bad_hash;
+static unsigned char npc_body[0x160], velocity_code[28] = {1}, update_code[28] = {2};
+static int target_valid, velocity_calls;
+static uint32_t target_generation=3;
+static int64_t world_us=8000000;
+static float requested_velocity[3];
 static Cpu original;
 static int range(uint64_t p, uint64_t n, const void *base, size_t size) {
     return n <= size && p >= (uintptr_t)base && p - (uintptr_t)base <= size - n;
@@ -24,6 +29,8 @@ static int range(uint64_t p, uint64_t n, const void *base, size_t size) {
 int mem_guest_readable(uint64_t p, uint64_t n) {
     return (p == MOD_MAIN_BASE+0x3ad7450ull && n == 8) ||
         (p == MOD_MAIN_BASE+0x599670ull && n == sizeof prologue) ||
+        (p == MOD_MAIN_BASE+0x567750ull && n == 28) || (p == MOD_MAIN_BASE+0x2e27b0ull && n == 28) ||
+        range(p,n,npc_body,sizeof npc_body) ||
         range(p,n,arg,sizeof arg) || range(p,n,name,sizeof name) || range(p,n,stack,sizeof stack) ||
         range(p,n,&manager,8) || range(p,n,&name_pointer,8) || range(p,n,&watcher,8);
 }
@@ -31,24 +38,44 @@ int plat_mem_read(uint64_t p, void *dst, size_t n) {
     if (!mem_guest_readable(p,n)) return 0;
     if (p == MOD_MAIN_BASE+0x3ad7450ull) memcpy(dst,&manager,n);
     else if (p == MOD_MAIN_BASE+0x599670ull) memcpy(dst,prologue,n);
+    else if (p == MOD_MAIN_BASE+0x567750ull) memcpy(dst,velocity_code,n);
+    else if (p == MOD_MAIN_BASE+0x2e27b0ull) memcpy(dst,update_code,n);
     else memcpy(dst,(const void *)(uintptr_t)p,n);
     return 1;
 }
-int64_t frame_step_world_us(void) { return 8000000; }
+int64_t frame_step_world_us(void) { return world_us; }
+int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us) {
+    if (!target_valid || actor!=0xabc0) return 0;
+    *body=(uintptr_t)npc_body; *generation=target_generation; *observed_us=8000000; return 1;
+}
 void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_fatal(const char *fmt, ...) { (void)fmt; abort(); }
 void rt_sha256(const void *p, size_t n, uint8_t out[32]) {
     (void)p; assert(n == 28);
     const uint8_t known[32] = {0xf8,0x23,0x0f,0xd5,0xeb,0xab,0x93,0x91,0x09,0xe4,0x71,0x48,0x55,0x34,0xa3,0x7b,
         0xbb,0xd8,0x60,0x51,0xeb,0xe1,0x80,0xd2,0x64,0x30,0x40,0x9e,0x88,0x31,0x63,0x49};
-    memcpy(out,known,32); if (bad_hash) out[0] ^= 1;
+    const uint8_t velocity_hash[32]={0x98,0x3c,0x1c,0xaf,0xee,0x3d,0xee,0x16,0x34,0xe0,0x57,0xa4,0x79,0x07,0xd9,0xcb,
+        0x9e,0xf2,0x66,0x23,0x14,0x62,0xdb,0x66,0xd3,0x62,0x51,0x22,0x73,0x91,0x23,0xa9};
+    const uint8_t update_hash[32]={0x94,0x53,0x6d,0xb8,0x69,0xd0,0x79,0x8e,0x6a,0xd3,0xd9,0xf1,0xb3,0x6b,0x09,0x23,
+        0x96,0xd0,0x0c,0xc7,0x31,0x4d,0xee,0x10,0x59,0x64,0x10,0xbd,0x7c,0xa5,0xa6,0x56};
+    const uint8_t *code=p;
+    memcpy(out,code[0]==1 ? velocity_hash : code[0]==2 ? update_hash : known,32);
+    if (bad_hash) out[0] ^= 1;
 }
 uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
-    assert(fn == MOD_MAIN_BASE+0x599670ull && n == 8);
     va_list ap; va_start(ap,n);
     uint64_t args[8];
     for (int i=0;i<n;i++) args[i]=va_arg(ap,uint64_t);
     va_end(ap);
+    if (fn==MOD_MAIN_BASE+0x567750ull) {
+        assert(n==2 && args[0]==(uintptr_t)npc_body && c->sp==original.sp);
+        memcpy(requested_velocity,(const void *)(uintptr_t)args[1],sizeof requested_velocity);
+        assert(requested_velocity[1]==-.5f && requested_velocity[2]==0);
+        velocity_calls++;
+        coop_native_probe_npc_update(c);
+        memset(c,0x5a,sizeof *c); fesetround(FE_DOWNWARD); return 0;
+    }
+    assert(fn == MOD_MAIN_BASE+0x599670ull && n == 8);
     for (int i=0;i<n;i++) {
         if (armed >= COOP_NATIVE_PROBE_OWNED && (i==1 || i==2)) continue;
         assert(args[i] == (i == 3 ? 0 : original.x[i]));
@@ -56,7 +83,7 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     if (armed >= COOP_NATIVE_PROBE_OWNED) {
         assert(args[1]==(uintptr_t)&owned_name && args[1]!=original.x[1]);
         assert(args[2]==(uintptr_t)&owned_arg && args[2]!=original.x[2]);
-        assert(!strcmp(owned_name,armed == COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101") && !strcmp(owned_arg.name,""));
+        assert(!strcmp(owned_name,armed >= COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101") && !strcmp(owned_arg.name,""));
         assert(owned_arg.position[0]==12 && owned_arg.position[1]==22 && owned_arg.position[2]==30);
         assert(owned_arg.rotation[0]==1 && owned_arg.rotation[4]==1 && owned_arg.rotation[8]==1);
         assert(owned_arg.scale[0]==1 && owned_arg.scale[1]==1 && owned_arg.scale[2]==1);
@@ -150,7 +177,43 @@ int main(int argc, char **argv) {
     assert(calls==1 && attempted && !memcmp(&c,&original,sizeof c) && !strcmp(owned_name,"Npc_Road_001"));
     assert(fegetround()==FE_UPWARD && owned_arg.blackboard==&owned_bb && !owned_arg.creator);
     coop_native_probe_request(&c); assert(calls==1);
-    puts("native creation: guards, borrowed/owned request isolation and CPU/FP restoration passed");
+    // A creation-only NPC marker cannot enable native movement.
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_MOTION); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-velocity-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_MOTION); assert(armed==4);
+    reset(&c); memcpy(arg,pos,sizeof pos);
+    coop_native_probe_request(&c); assert(calls==1 && !strcmp(owned_name,"Npc_Road_001"));
+    c.x[0]=0xabc0; original=c;
+    float falling=-.5f; memcpy(npc_body+0xfc,&falling,4);
+    world_us=10000000;
+    coop_native_probe_npc_update(&c); assert(!velocity_calls); // no live scoped body
+    target_valid=1; bad_hash=1;
+    coop_native_probe_npc_update(&c); assert(!velocity_calls && !npc_motion.calls);
+    bad_hash=0; world_us=9999999;
+    coop_native_probe_npc_update(&c); assert(!velocity_calls); // allow settling first
+    world_us=10000000; fesetround(FE_UPWARD);
+    coop_native_probe_npc_update(&c);
+    assert(velocity_calls==1 && requested_velocity[0]==2 && fegetround()==FE_UPWARD);
+    assert(!memcmp(&c,&original,sizeof c));
+    coop_native_probe_npc_update(&c); assert(velocity_calls==1); // bounded rate
+    int saw_reverse=0;
+    for (int i=0;i<70;i++) {
+        world_us+=33334; coop_native_probe_npc_update(&c);
+        if (requested_velocity[0]==-2) saw_reverse=1;
+        assert(!memcmp(&c,&original,sizeof c) && fegetround()==FE_UPWARD);
+    }
+    assert(saw_reverse && npc_motion.finished && requested_velocity[0]==0 && velocity_calls<=96);
+    int finished_calls=velocity_calls;
+    world_us+=33334; coop_native_probe_npc_update(&c); assert(velocity_calls==finished_calls);
+    memset(&npc_motion,0,sizeof npc_motion); world_us=10000000;
+    coop_native_probe_npc_update(&c); target_generation++;
+    world_us+=33334; finished_calls=velocity_calls; coop_native_probe_npc_update(&c);
+    assert(npc_motion.finished && velocity_calls==finished_calls); // recycled world cannot resume the pulse
+    memset(&npc_motion,0,sizeof npc_motion); world_us=10000000;
+    coop_native_probe_npc_update(&c); world_us+=250001;
+    coop_native_probe_npc_update(&c);
+    assert(npc_motion.finished && requested_velocity[0]==0); // continuity failure stops the same live body
+    puts("native probes: scoped creation/velocity guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }
 '''

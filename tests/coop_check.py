@@ -37,6 +37,9 @@ static unsigned char probe_actor[0x400], probe_data[0x50], probe_descriptor[0x17
 static char probe_name[] = "Weapon_Sword_Test";
 static unsigned char request_stack[0x18], probe_owner[0x40], probe_heap[8], probe_heap_vtable[0x40];
 static unsigned char probe_resource[0xe0];
+static unsigned char npc_component[0x40], npc_set[0x158], npc_set_child[0x20], npc_body_descriptor[0x20], npc_body[0x1e8];
+static unsigned char npc_character[0x40], npc_set8[0x28], npc_set8_20[0x40];
+static unsigned char npc_body_link[0x30], npc_body_agent[0x40];
 static unsigned char player_source_ref[0x18];
 static unsigned char visual_model[0xd0], visual_controller[0x120], visual_player[0x88], visual_clip[0x10];
 static unsigned char visual_name[COOP_ANIMATION_MAX+2];
@@ -83,6 +86,12 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
            in_range(p,n,probe_owner,sizeof probe_owner) || in_range(p,n,probe_heap,sizeof probe_heap) ||
            in_range(p,n,probe_heap_vtable,sizeof probe_heap_vtable) || in_range(p,n,player_source_ref,sizeof player_source_ref) ||
            in_range(p,n,visual_model,sizeof visual_model) || in_range(p,n,visual_controller,sizeof visual_controller) ||
+           in_range(p,n,npc_component,sizeof npc_component) || in_range(p,n,npc_set,sizeof npc_set) ||
+           in_range(p,n,npc_set_child,sizeof npc_set_child) ||
+           in_range(p,n,npc_body_descriptor,sizeof npc_body_descriptor) || in_range(p,n,npc_body,sizeof npc_body) ||
+           in_range(p,n,npc_character,sizeof npc_character) ||
+           in_range(p,n,npc_set8,sizeof npc_set8) || in_range(p,n,npc_set8_20,sizeof npc_set8_20) ||
+           in_range(p,n,npc_body_link,sizeof npc_body_link) || in_range(p,n,npc_body_agent,sizeof npc_body_agent) ||
            in_range(p,n,visual_player,sizeof visual_player) || in_range(p,n,visual_clip,sizeof visual_clip) ||
            in_range(p,n,visual_name,sizeof visual_name);
 }
@@ -543,6 +552,102 @@ int main(void) {
     coop_adapter_function(MOD_MAIN_BASE+0x3900,99,(uintptr_t)probe_actor);
     assert(probe_motion_count==1); // rate limited
     assert(resource_entries[requests_before_probe].ready && resource_entries[requests_before_probe].resource==(uintptr_t)probe_resource);
+    ptr(npc_component,(uintptr_t)(MOD_MAIN_BASE+0x100));
+    ptr(npc_component+0x20,(uintptr_t)npc_set);
+    ptr(npc_component+0x38,(uintptr_t)probe_actor);
+    ptr(npc_set+0x10,(uintptr_t)npc_set_child);
+    ptr(npc_set_child+8,(uintptr_t)npc_body_descriptor);
+    ptr(npc_body_descriptor+0x18,(uintptr_t)npc_body);
+    ptr(npc_body+0x68,0x10);
+    ptr(npc_body,MOD_MAIN_BASE+0x100);
+    ptr(npc_body+0x158,(uintptr_t)npc_character);
+    ptr(npc_set+8,(uintptr_t)npc_set8);
+    ptr(npc_set8+0x20,(uintptr_t)npc_set8_20);
+    ptr(vtable+0x88,MOD_MAIN_BASE+0x298d8e0);
+    for (unsigned m=0;m<8;m++) ptr(vtable+m*8,MOD_MAIN_BASE+0x3000+m*4);
+    ptr(vtable+0x40,MOD_MAIN_BASE+0x298d890);
+    ptr(npc_body+0x1e0,(uintptr_t)npc_body_link);
+    ptr(npc_body_link+0x28,(uintptr_t)npc_body_agent);
+    npc_physics_observe(99,(uintptr_t)npc_component);
+    assert(!npc_physics.ready); // a weapon cannot supply humanoid controller evidence
+    strcpy(actor_request_entries[requests_before_probe].name,"Npc_Road_001");
+    strcpy(probe_name,"Npc_Road_001");
+    ptr(npc_component+0x38,(uintptr_t)other_actor);
+    npc_physics_observe(99,(uintptr_t)npc_component); assert(!npc_physics.ready);
+    ptr(npc_component+0x38,(uintptr_t)probe_actor);
+    probe_entries[0].stages=1;
+    unsigned retired_body_reads=guest_reads;
+    npc_physics_observe(99,(uintptr_t)npc_component);
+    assert(!npc_physics.ready && retired_body_reads==guest_reads);
+    probe_entries[0].stages=0;
+    int32_t invalid_body_id=88; memcpy(probe_data+0x48,&invalid_body_id,4);
+    npc_physics_observe(99,(uintptr_t)npc_component); assert(!npc_physics.ready);
+    memcpy(probe_data+0x48,&probe_id,4);
+    unsigned char npc_before[sizeof npc_component]; memcpy(npc_before,npc_component,sizeof npc_before);
+    npc_physics_observe(99,(uintptr_t)npc_component);
+    assert(npc_physics.ready && npc_physics.request==requests_before_probe && npc_physics.node[0].vtable==0x100);
+    assert(npc_physics.node[0].methods[7]==0x301c && npc_physics.node[2].readable && !npc_physics.node[3].readable);
+    assert(npc_physics.node[5].readable && npc_physics.body_flags==0x10);
+    assert(npc_physics.node[6].readable && npc_physics.node_address[6]==(uintptr_t)npc_character);
+    assert(npc_physics.node[8].readable && npc_physics.node_address[8]==(uintptr_t)npc_set8_20);
+    assert(npc_physics.node[11].readable && npc_physics.node_address[11]==(uintptr_t)npc_body_agent);
+    assert(!memcmp(npc_before,npc_component,sizeof npc_before));
+    unsigned captured_body_reads=guest_reads;
+    npc_physics_observe(99,(uintptr_t)npc_component); assert(guest_reads==captured_body_reads);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3100,77,(uintptr_t)npc_body);
+    assert(npc_receiver_claimed==1 && npc_receivers[0].kind==1);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3100,77,(uintptr_t)npc_body); assert(npc_receiver_claimed==1);
+    ptr(npc_body_descriptor+0x18,(uintptr_t)other_actor);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3200,77,(uintptr_t)npc_body); assert(npc_receiver_claimed==1);
+    ptr(npc_body_descriptor+0x18,(uintptr_t)npc_body);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3300,77,(uintptr_t)npc_character);
+    assert(npc_receiver_claimed==2 && npc_receivers[1].kind==2);
+    npc_physics_late_observe(77,(uintptr_t)probe_actor);
+    assert(!npc_late_physics.ready); // initialization alone is not a later native update
+    world_us+=1000000;
+    npc_physics_late_observe(77,(uintptr_t)other_actor); assert(!npc_late_physics.ready);
+    probe_entries[0].stages=1;
+    unsigned retired_late_reads=guest_reads;
+    npc_physics_late_observe(77,(uintptr_t)probe_actor);
+    assert(!npc_late_physics.ready && guest_reads==retired_late_reads);
+    probe_entries[0].stages=0;
+    npc_physics_late_observe(77,(uintptr_t)probe_actor);
+    assert(npc_late_physics.ready && npc_late_physics.world_us==world_us &&
+           npc_late_physics.entry==MOD_MAIN_BASE+0x2e27b0);
+    unsigned late_reads=guest_reads;
+    npc_physics_late_observe(77,(uintptr_t)probe_actor); assert(guest_reads==late_reads);
+    uint64_t scoped_body=0; uint32_t scoped_generation=0; int64_t scoped_time=0;
+    ptr(npc_body,MOD_MAIN_BASE+0x392af88); ptr(npc_body+0x68,4);
+    ptr(npc_set+0x150,(uintptr_t)npc_body);
+    assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    assert(scoped_body==(uintptr_t)npc_body && scoped_generation==trace_generation && scoped_time==world_us);
+    ptr(npc_set+0x150,(uintptr_t)other_actor);
+    assert(!coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    ptr(npc_set+0x150,(uintptr_t)npc_body);
+    trace_generation++;
+    assert(!coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    trace_generation--;
+    ptr(npc_body+0x68,4|(1u<<8));
+    assert(!coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    ptr(npc_body+0x68,4);
+    ptr(npc_body_descriptor+0x18,(uintptr_t)other_actor);
+    assert(!coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    ptr(npc_body_descriptor+0x18,(uintptr_t)npc_body);
+    ptr(npc_body+0x158,(uintptr_t)other_actor);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3400,77,(uintptr_t)npc_character); assert(npc_receiver_claimed==2);
+    ptr(npc_body+0x158,(uintptr_t)npc_character);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3400,77,(uintptr_t)npc_set8_20);
+    assert(npc_receiver_claimed==3 && npc_receivers[2].kind==4);
+    ptr(npc_set8+0x20,(uintptr_t)other_actor);
+    npc_receiver_observe(MOD_MAIN_BASE+0x3500,77,(uintptr_t)npc_set8_20); assert(npc_receiver_claimed==3);
+    ptr(npc_set8+0x20,(uintptr_t)npc_set8_20);
+    probe_entries[0].stages=1;
+    unsigned retired_receiver_reads=guest_reads;
+    npc_receiver_observe(MOD_MAIN_BASE+0x3200,77,(uintptr_t)npc_body);
+    assert(npc_receiver_claimed==3 && guest_reads==retired_receiver_reads);
+    probe_entries[0].stages=0;
+    strcpy(actor_request_entries[requests_before_probe].name,"Weapon_Sword_Test");
+    strcpy(probe_name,"Weapon_Sword_Test");
     Cpu probe_remove = {.x = {(uintptr_t)probe_actor,0}};
     probe_remove.x[30] = MOD_MAIN_BASE+0x3600;
     probe_preserved = probe_remove;
@@ -640,7 +745,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='coop-', dir=output) as tmp:
         folder = Path(tmp)
-        (folder / 'layout.h').write_text('#define MOD_MAIN_BASE 0x1000000000ull\n', encoding='utf-8')
+        (folder / 'layout.h').write_text('#define MOD_MAIN_BASE 0x1000000000ull\n#define MOD_MAIN_SIZE 0x3adf000ull\n', encoding='utf-8')
         source = folder / 'check.c'
         source.write_text(HARNESS, encoding='utf-8')
         exe = folder / ('check.exe' if os.name == 'nt' else 'check')

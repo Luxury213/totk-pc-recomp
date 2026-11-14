@@ -238,3 +238,59 @@ Likewise, the inspected transform builder at `main+0xa0f3f0` does not
 establish the removed five-argument teleport signature. Keep guessed calls and direct render-time physics writes
 prohibited. Next verify a suitable companion actor/controller, reusable ownership and native movement/update
 operations before associating the Link figure with a native body.
+
+## Scoped NPC body and velocity experiment
+
+`coop_adapter.c:npc_physics_capture` records two bounded ownership snapshots: the observed Physics
+transform-builder entry and the same NPC's later native actor-update entry. It checks the request name,
+actor/metadata backlinks and IDs, generation and retirement state before following the component. The
+component's owner at `+0x38` must be that NPC; its `+0x20` points to the controller set. These checks do not
+establish that arbitrary calls from that phase are safe.
+
+The inspected 1.4.3 transform/bounds paths identify these live links:
+
+| Link or entry | Observation and implication |
+| --- | --- |
+| Set `+0x10`, then `+8`, then `+0x18` | Reaches a body with vtable `main+0x392af88` |
+| Set `+0x150` | Reaches that same body in the controlled NPC; this is an alias, not another movement target |
+| Body type-name getter `main+0x298da40` | Identifies `CharacterMatterRigidBody` |
+| Set `+0x148` and body's optional `+0x158` getter | Null in both initial and later observations; neither supplies a verified controller |
+| Body's virtual `+0x40` getter | Follows `+0x1e0`, then `+0x28`; the latter was null, so no controller is claimed |
+| Native actor-update receiver `main+0x2e27b0` | Repeatedly observes the initialized NPC; still not an accepted production command phase |
+
+`coop_native_probe.c:coop_native_probe_npc_update` adds mode 4, distinct from creation-only mode 3. It requires
+its own copied-profile marker, the exact scoped primary body, current metadata/world identity and matching
+1.4.3 entry hashes. It calls the inspected `main+0x567750` with two arguments: body and three-float velocity.
+The native routine checks the vector, copies it to the body's change request at `+0x44` and sets request
+flag 7 under its own lock. Its native consumers were inspected as well. No generated function is copied
+into public source and no host code directly stores into a physics transform or velocity field.
+
+The bounded experiment requests +2 m/s on world X, then -2 m/s, then zero horizontal velocity. It preserves
+the observed vertical velocity, restores the complete original CPU and host FP environment after calls,
+and retains a stop call within its 96-call budget. The hook runs only at the native actor-update entry;
+rendering and the network worker cannot execute it. Ordinary guest commands remain rejected.
+
+Three copied-save runs made 57, 59 and 59 requests respectively. All exited normally and preserved source-save
+hashes, but all **failed movement acceptance**: forward/reverse displacement was zero. Additional feedback
+observed a native request with flag `0x80` and the requested velocity immediately after the call. At the next
+observed actor update, the request was absent, cached velocity was zero and body position was unchanged.
+This establishes queued requests without effective character movement. It does not distinguish a later
+controller override from another native consumption rule. Do not claim the physics request moves the NPC.
+
+`coop_diagnose.py:npc_velocity_summary` requires the same initialized NPC and world, strictly ordered bounded
+direction changes, at least 0.4 m of travel in each direction, no sampled teleport and later positional rest.
+Synthetic checks reject stationary actors, another probe/world, duplicate/missing requests and missing rest.
+Unrequested gates remain not applicable. A zero process exit or successful native queue call cannot pass the
+explicit movement diagnostic.
+
+Next trace the scoped Physics component/controller-set update path and resolve which native controller
+owns locomotion. The creation-only run also captured controller-set receiver entries `main+0x434fb0`,
+`main+0x679cfc` and `main+0x456d70`. The last selects a body by role; the first two need further inspection
+and argument/phase correlation. They are research targets, not callable movement APIs. An inspected
+immediate velocity setter (`main+0x9da5c4`) also writes cached body state;
+its appropriate calling phase is unverified and it has **not** been invoked as a fallback. Keep the Link
+figure separate until effective movement, safe removal and repeatable lifecycle ownership are established.
+
+The older [Lotuskit physics behavior notes](https://github.com/aquacluck/totk-lotuskit/blob/59dcfccd77b6d4bcfa718bff806bc55be640edb7/src/program/structs/phive.hpp)
+were read as a GPL behavior reference only. No code or layouts were copied; its older game addresses were
+not used as 1.4.3 call targets. The observations and guards above come from this user's local 1.4.3 inputs.

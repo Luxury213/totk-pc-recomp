@@ -36,6 +36,56 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def npc_motion_fixture(self):
+        lines = ['coop native npc physics: probe 10, request 5, entry main+0x2e27b0, caller 0, '
+                 'generation 3, world us 0, host thread 1, phase later-actor-update; owner and metadata matched, observation only']
+        for i in range(41):
+            phase = 'forward' if i < 20 else 'reverse' if i < 40 else 'stop'
+            vx = 2 if i < 20 else -2 if i < 40 else 0
+            lines.append(f'coop native npc velocity probe: step {i+1}, phase {phase}, generation 3, '
+                         f'world us {2000000+i*50000}, velocity {vx}.000000 0.000000 0.000000; '
+                         'native request, original CPU restored')
+        samples = []
+        for i in range(35):
+            t = 1800000+i*100000
+            x = max(0, (t-2000000)/500000) if t <= 3000000 else max(0, (4000000-t)/500000)
+            samples.append(dict(probe=10, request=5, world_us=t, pos=[x, 3, 0]))
+        spawn = dict(actor_name='Npc_Road_001', acceptance_passed=True,
+                     initialized=[dict(probe=10, request=5)], samples=samples)
+        return lines, spawn
+
+    def test_npc_motion_requires_native_direction_changes_and_later_rest(self):
+        lines, spawn = self.npc_motion_fixture()
+        report = diagnose.npc_velocity_summary(lines, spawn)
+        self.assertTrue(report['acceptance_passed'])
+        self.assertEqual(report['forward_distance'], 2)
+        self.assertEqual(report['reverse_distance'], 2)
+        self.assertFalse(report['remote_control_verified'])
+        self.assertFalse(report['native_companion_verified'])
+        for row in spawn['samples']:
+            row['pos'][0] = 0
+        self.assertFalse(diagnose.npc_velocity_summary(lines, spawn)['acceptance_passed'])
+
+    def test_npc_motion_rejects_missing_stop_duplicate_steps_and_wrong_world(self):
+        lines, spawn = self.npc_motion_fixture()
+        for invalid in (lines[:-1], lines+[lines[-1]], lines[1:],
+                        [l.replace('generation 3,', 'generation 4,') if 'step 2,' in l else l for l in lines],
+                        lines+['coop native npc velocity probe: aborted; target identity changed'],
+                        [lines[0].replace('request 5,', 'request 6,'), *lines[1:]]):
+            self.assertFalse(diagnose.npc_velocity_summary(invalid, spawn)['acceptance_passed'])
+
+    def test_npc_motion_rejects_another_actor_a_teleport_or_unsettled_result(self):
+        lines, spawn = self.npc_motion_fixture()
+        spawn['samples'][8]['pos'][0] += 20
+        self.assertFalse(diagnose.npc_velocity_summary(lines, spawn)['acceptance_passed'])
+        lines, spawn = self.npc_motion_fixture()
+        for sample in spawn['samples']:
+            sample['probe'] = 11
+        self.assertFalse(diagnose.npc_velocity_summary(lines, spawn)['acceptance_passed'])
+        lines, spawn = self.npc_motion_fixture()
+        spawn['samples'] = [s for s in spawn['samples'] if s['world_us'] <= 4000000]
+        self.assertFalse(diagnose.npc_velocity_summary(lines, spawn)['acceptance_passed'])
+
     def test_game_exit_zero_does_not_hide_failed_diagnostic_gates(self):
         report=dict(exit_code=0, timed_out=False, source_save_unchanged=True, playable_actor_observed=True,
                     object_lifecycle=dict(acceptance_passed=True),

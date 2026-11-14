@@ -180,6 +180,23 @@ the NPC retains engine behavior. Fall and retirement requirements remain weapon-
 initialized and rendered a real humanoid with the optional figure disabled, while preserving source-save hashes.
 An initialized NPC is not a playable second Link.
 
+For a separately gated native velocity experiment:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-motion --input-script "<recorded drop script>" --seconds 20 --without-figure
+```
+
+This creates the same owned NPC, validates its live metadata/world/body links, waits for a later native actor
+update and requests forward/reverse/stop velocity through the inspected 1.4.3 engine entry. It preserves
+vertical velocity and CPU/FP state, limits requests to 96 and uses its own `isolated-npc-velocity-v1` marker.
+The creation-only marker cannot arm movement. Ordinary diagnostics explicitly set mode zero.
+
+Current controlled runs **fail this diagnostic**: requests enter the native queue, but neither the actor nor
+the observed body travels in the requested directions. This is a reproducible movement blocker, not a playable
+companion. `native_npc_velocity_experiment` requires matching NPC identity/world, ordered bounded requests,
+forward and reverse travel, and later rest; queued calls alone cannot pass. Ownership/receiver observations
+are reported under `native_npc_physics_observations`. See [native research](coop-native-research.md) for findings.
+
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,
 owned arguments, fall/rest and retirement separately. Its creation acceptance alone cannot establish the later

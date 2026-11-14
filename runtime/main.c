@@ -164,6 +164,7 @@ volatile int g_fnprof = 0;   // resolution.c switches it on until the game sets 
 void fnprof_hit(uint64_t addr, Cpu *c) {
     if (__atomic_load_n(&g_fnprof, __ATOMIC_RELAXED) & 1) res_fn_hit(addr, c->x[0]);
     coop_adapter_function(addr, c->x[30], c->x[0]);
+    if (addr == MOD_MAIN_BASE + 0x2e27b0ull) coop_native_probe_npc_update(c);
     // arnaldolima1/totk-recomp runtime/actor_spawn.c spawn identifies this 1.4.3 candidate entry.
     if (addr == MOD_MAIN_BASE + 0x599670ull) {
         // The nested probe must finish before the original request gets its trace association.

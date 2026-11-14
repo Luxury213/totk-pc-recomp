@@ -1,8 +1,7 @@
 """Observe the native co-op integration gate in one background game instance on an isolated save copy.
 
-Read-only by default. --native-clone-weapon, --native-owned-weapon or --native-owned-npc enables one bounded native
-creation experiment on the copied profile.
-No teleport, host physics writes or original-profile changes are performed.
+Read-only by default. Explicit native options enable bounded creation or velocity experiments on the copied profile.
+No teleport, direct host physics writes or original-profile changes are performed.
 """
 import argparse
 import csv
@@ -271,8 +270,56 @@ def native_spawn_summary(lines, actor_name='Weapon_Sword_101'):
                 physics_verified=False, native_companion_verified=False)
 
 
+def npc_velocity_summary(lines, spawn):
+    """Require requested direction changes and corresponding motion of the same initialized native NPC."""
+    number = r'(-?\d+(?:\.\d+)?)'
+    commands = [dict(step=int(m[1]), phase=m[2], generation=int(m[3]), world_us=int(m[4]),
+                     velocity=[float(m[i]) for i in (5, 6, 7)]) for line in lines if (m := re.search(
+        r'coop native npc velocity probe: step (\d+), phase (forward|reverse|stop), generation (\d+), world us (\d+), '
+        r'velocity ' + number + ' ' + number + ' ' + number + r'; native request, original CPU restored', line))]
+    scopes = [dict(probe=int(m[1]), request=int(m[2]), generation=int(m[3])) for line in lines if (m := re.search(
+        r'coop native npc physics: probe (\d+), request (\d+), .*generation (\d+), .*phase later-actor-update;', line))]
+    aborted = any('coop native npc velocity probe: aborted;' in line for line in lines)
+    valid = (spawn.get('actor_name') == 'Npc_Road_001' and spawn['acceptance_passed'] and
+             len(scopes) == 1 and {k: scopes[0][k] for k in ('probe', 'request')} in spawn['initialized'] and
+             3 <= len(commands) <= 96 and not aborted)
+    phases = [c['phase'] for c in commands]
+    valid = bool(valid and phases[0] == 'forward' and phases[-1] == 'stop' and phases.count('stop') == 1 and
+                 'reverse' in phases and phases == sorted(phases, key=('forward', 'reverse', 'stop').index) and
+                 [c['step'] for c in commands] == list(range(1, len(commands) + 1)) and
+                 all(c['generation'] == scopes[0]['generation'] and all(map(math.isfinite, c['velocity'])) and
+                     c['velocity'][0] == {'forward': 2, 'reverse': -2, 'stop': 0}[c['phase']] and
+                     c['velocity'][2] == 0 and abs(c['velocity'][1]) <= 50 for c in commands) and
+                 all(30000 <= b['world_us'] - a['world_us'] <= 250000 for a, b in zip(commands, commands[1:])))
+    forward = reverse = 0.0
+    rest = False
+    if valid:
+        start = commands[0]['world_us']
+        turn = next(c['world_us'] for c in commands if c['phase'] == 'reverse')
+        stop = commands[-1]['world_us']
+        valid = 1000000 <= turn-start <= 1250000 and 2000000 <= stop-start <= 2250000
+        samples = sorted((s for s in spawn['samples'] if s['probe'] == scopes[0]['probe'] and
+                          s['request'] == scopes[0]['request']), key=lambda s: s['world_us'])
+        before = [s for s in samples if start-500000 <= s['world_us'] <= start]
+        advancing = [s for s in samples if start <= s['world_us'] <= turn+200000]
+        returning = [s for s in samples if turn+200000 <= s['world_us'] <= stop+200000]
+        stopped = [s for s in samples if stop+300000 <= s['world_us'] <= stop+1200000]
+        if before and advancing and returning:
+            peak = max(s['pos'][0] for s in advancing)
+            forward = peak - before[-1]['pos'][0]
+            reverse = peak - min(s['pos'][0] for s in returning)
+        rest = len(stopped) >= 3 and max(math.dist(a['pos'], b['pos']) for a in stopped for b in stopped) <= .10
+        path = [s for s in samples if start-500000 <= s['world_us'] <= stop+1200000]
+        valid = bool(valid and all(math.dist(a['pos'], b['pos']) < 1 for a, b in zip(path, path[1:])))
+    return dict(commands=commands, aborted=aborted, forward_distance=round(forward, 6),
+                reverse_distance=round(reverse, 6), rest_observed=rest,
+                acceptance_passed=bool(valid and forward >= .4 and reverse >= .4 and rest),
+                remote_control_verified=False, native_companion_verified=False)
+
+
 def diagnostic_acceptance(report, *, scenario, require_animation=False, require_figure=False,
-                          spawning=False, owned=False, require_spawn_retirement=False, require_spawn_fall=False):
+                          spawning=False, owned=False, require_spawn_retirement=False, require_spawn_fall=False,
+                          require_npc_motion=False):
     spawn = report['native_spawn_experiment']
     return dict(game_exited=report['exit_code'] == 0 and not report['timed_out'],
                 validation=(not report.get('vulkan_validation_requested', False) or
@@ -291,7 +338,8 @@ def diagnostic_acceptance(report, *, scenario, require_animation=False, require_
                 native_creation=not spawning or spawn['acceptance_passed'],
                 owned_argument=not owned or spawn['owned_argument_observed'],
                 native_retirement=not require_spawn_retirement or spawn['retirement_observed'],
-                native_fall=not require_spawn_fall or spawn['fall']['acceptance_passed'])
+                native_fall=not require_spawn_fall or spawn['fall']['acceptance_passed'],
+                native_npc_motion=not require_npc_motion or report['native_npc_velocity_experiment']['acceptance_passed'])
 
 
 def main():
@@ -317,6 +365,8 @@ def main():
                        help='create one elevated native weapon with independent arguments and no actor dependencies')
     spawn.add_argument('--native-owned-npc', action='store_true',
                        help='try one Npc_Road_001 request with owned arguments; isolated creation diagnostic only')
+    spawn.add_argument('--native-npc-motion', action='store_true',
+                       help='create one scoped NPC and test a bounded native forward/reverse/stop velocity pulse')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
@@ -338,12 +388,14 @@ def main():
         ap.error('--require-allocator requires --scenario object')
     if args.require_resource and args.scenario != 'object':
         ap.error('--require-resource requires --scenario object')
-    spawning = args.native_clone_weapon or args.native_owned_weapon or args.native_owned_npc
+    npc = args.native_owned_npc or args.native_npc_motion
+    spawning = args.native_clone_weapon or args.native_owned_weapon or npc
     if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
-    if args.native_owned_npc and (args.scenario != 'idle' or not args.input_script or args.seconds < 15 or
+    if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < (20 if args.native_npc_motion else 15) or
                                   args.require_spawn_retirement or args.require_spawn_fall):
-        ap.error('native NPC creation requires --scenario idle, recorded drop input and at least 15 seconds; no pickup/fall acceptance')
+        ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
+                 f'{20 if args.native_npc_motion else 15} world seconds; no pickup/fall acceptance')
     if args.require_spawn_retirement and not spawning:
         ap.error('--require-spawn-retirement requires a native weapon experiment')
     if args.require_spawn_fall and not args.native_owned_weapon:
@@ -383,14 +435,14 @@ def main():
     if before != save_hashes(profile / 'save') or before != save_hashes(seed / 'save'):
         raise SystemExit(f'The source save changed during copying; diagnostic not launched. Copy retained at {folder}')
     if spawning:
-        marker = ('isolated-npc-road-001-v1\n' if args.native_owned_npc else
+        marker = ('isolated-npc-velocity-v1\n' if args.native_npc_motion else 'isolated-npc-road-001-v1\n' if npc else
                   'isolated-physics-owned-v1\n' if args.native_owned_weapon else 'isolated-physics-probe-v1\n')
         (profile / 'coop-native-probe.txt').write_bytes(marker.encode('ascii'))
     script = args.input_script.resolve() if args.input_script else folder / 'input.txt'
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='3' if args.native_owned_npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -460,7 +512,7 @@ def main():
                   vulkan_validation_enabled=any('vk: validation layer enabled (VK_LAYER_KHRONOS_validation)' in line
                                                 for line in lines),
                   object_lifecycle=probe_summary(lines, args.probe_name, args.require_allocator, args.require_resource),
-                  native_spawn_experiment=native_spawn_summary(lines, 'Npc_Road_001' if args.native_owned_npc else 'Weapon_Sword_101'),
+                  native_spawn_experiment=native_spawn_summary(lines, 'Npc_Road_001' if npc else 'Weapon_Sword_101'),
                   frame_series=[str(p) for p in sorted((folder / 'frames').glob('f*.png'))],
                   observations=observations, native_function_observations=traces,
                   native_method_candidates=candidates, native_vtable_observations=vtables,
@@ -476,6 +528,7 @@ def main():
                   native_actor_teardown_observations=actor_teardowns,
                   native_teardown_scope_observations=teardown_scopes,
                   native_probe_actor_observations=probe_actors,
+                  native_npc_physics_observations=[line for line in lines if 'coop native npc ' in line],
                   native_probe_teardown_observations=probe_teardowns,
                   native_probe_allocator_observations=probe_allocators,
                   native_request_abi_observations=request_abi,
@@ -497,10 +550,11 @@ def main():
                   playable_actor_observed=any('player observed' in line for line in observations),
                   native_actor_creation_verified=False, world_mutation_phase_verified=False,
                   native_gameplay_enabled=False, log=str(log))
+    report['native_npc_velocity_experiment'] = npc_velocity_summary(lines, report['native_spawn_experiment'])
     report['acceptance_checks'] = diagnostic_acceptance(
         report, scenario=args.scenario, require_animation=args.require_animation, require_figure=args.require_figure,
-        spawning=spawning, owned=args.native_owned_weapon or args.native_owned_npc, require_spawn_retirement=args.require_spawn_retirement,
-        require_spawn_fall=args.require_spawn_fall)
+        spawning=spawning, owned=args.native_owned_weapon or npc, require_spawn_retirement=args.require_spawn_retirement,
+        require_spawn_fall=args.require_spawn_fall, require_npc_motion=args.native_npc_motion)
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))
