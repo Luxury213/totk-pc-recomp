@@ -78,6 +78,7 @@ class DiagnosticChecks(unittest.TestCase):
         lines, spawn = self.npc_motion_fixture()
         spawn['samples'][8]['pos'][0] += 20
         self.assertFalse(diagnose.npc_velocity_summary(lines, spawn)['acceptance_passed'])
+
         lines, spawn = self.npc_motion_fixture()
         for sample in spawn['samples']:
             sample['probe'] = 11
@@ -85,6 +86,17 @@ class DiagnosticChecks(unittest.TestCase):
         lines, spawn = self.npc_motion_fixture()
         spawn['samples'] = [s for s in spawn['samples'] if s['world_us'] <= 4000000]
         self.assertFalse(diagnose.npc_velocity_summary(lines, spawn)['acceptance_passed'])
+
+    def test_consumer_corrections_require_the_same_world_and_pulse(self):
+        lines, spawn = self.npc_motion_fixture()
+        motion = diagnose.npc_velocity_summary(lines, spawn)
+        corrections = [f'coop native npc velocity consumer reapply: correction {i+1}, generation 3, '
+                       f'world us {2000000+i*50000}; same live pending request, original CPU restored' for i in range(40)]
+        self.assertTrue(diagnose.npc_consumer_reapply_summary(corrections, motion)['acceptance_passed'])
+        for invalid in ([], corrections+[corrections[-1]], corrections[1:],
+                        [l.replace('generation 3,', 'generation 4,') for l in corrections],
+                        [l.replace('world us 2000000;', 'world us 1999999;') for l in corrections]):
+            self.assertFalse(diagnose.npc_consumer_reapply_summary(invalid, motion)['acceptance_passed'])
 
     def test_game_exit_zero_does_not_hide_failed_diagnostic_gates(self):
         report=dict(exit_code=0, timed_out=False, source_save_unchanged=True, playable_actor_observed=True,

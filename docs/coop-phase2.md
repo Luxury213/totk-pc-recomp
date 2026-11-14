@@ -1,7 +1,7 @@
 # Co-op status and public development plan
 
 Phase 2 is in progress. There is no playable second Link or shared cooperative campaign yet. The current
-milestone provides session infrastructure, an animated visual Link, native NPC creation and bounded body experiments.
+milestone provides session infrastructure, an animated visual Link, native NPC creation and bounded native movement.
 This public plan is the resumption reference; it does not depend on private notes in ignored `build/`.
 
 See [the development guide](coop-development.md) for commands, [native research](coop-native-research.md) for
@@ -16,8 +16,9 @@ engine evidence and [the campaign design](coop.md) for the agreed final behavior
 | Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
 | Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
 | Phase 2: native experiment | One independent weapon request falls, rests and is collected; strict checks passed with/without the visual figure | Still one-shot and triggered by an authentic weapon drop; not companion spawning |
-| Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Native movement/controller access, removal and reusable session ownership are still unverified |
-| Phase 2: NPC body/velocity diagnosis | Scoped CharacterMatterRigidBody ownership and native velocity requests observed; three controlled pulse runs correctly failed movement acceptance | Requests reached the native queue, but the observed body/actor stayed stationary; locate movement authority before connecting peer poses |
+| Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Removal and reusable session ownership are still unverified |
+| Phase 2: NPC body/velocity diagnosis | Early actor-update pulses failed; scoped consumer/backend tracing showed their velocity was already zero before consumption | The exact native override writer remains unconfirmed |
+| Phase 2: isolated NPC movement | Two consumer-entry pulse runs passed: about 2 m forward, 1.9 m reverse and positional rest; normal exits and unchanged source saves | Synthetic commands only; no peer control, verified locomotion animation/grounding contract or Link model binding |
 | Phase 2: remote native character | Disabled; native commands are rejected and capabilities remain presence-only | Actor/controller selection, native movement, safe update phase and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 
@@ -52,16 +53,18 @@ until the complete gate below passes.
    manager link are scene-owned; copying them or allocating another PlayerLink is not a safe shortcut. The
    ordinary Hylian NPC packs reference Npc_Size_M character controllers/bodies without direct Player/camera
    components in their own ActorParam. The first Npc_Road_001 creation experiment passed; inspect its native
-   controller and movement contract next. The generic body-velocity pulse queues successfully but produces no
-   controlled NPC displacement. The initial and later ownership snapshots identify the same primary body;
-   trying that alias again is not a different controller. Follow the Physics component/controller-set update
-   path and native request consumption next. The inventory-display PouchPlayer
+   controller and movement contract further. Early actor-update velocity requests are overwritten before
+   consumption. Reapplying through the same native API at the verified request-consumer entry passed two
+   bounded movement tests. This is an isolated scheduling result, not yet a production locomotion contract.
+   The initial and later ownership snapshots identify the same primary body; trying that alias again is not
+   a different controller. The inventory-display PouchPlayer
    remains a weaker research candidate, not a verified world actor. Parameter references alone are not live-body proof.
 2. Verify creation/storage ownership beyond the one-shot experiment: asynchronous completion, rejection,
    cancellation and safe storage reuse. Retain scoped request, actor, metadata ID and world-generation identities.
-3. Locate a verified native movement/controller update phase. Keep network work on its worker, consume bounded
-   commands on the appropriate guest phase and preserve local input/camera ownership. No direct physics writes
-   from rendering, guessed function signatures or teleport fallback.
+3. Generalize the verified consumer-entry experiment into a bounded movement contract, including stale-command
+   stop behavior, world transitions, ground/collision behavior and local input/camera ownership. Then connect
+   peer commands on that guest phase while keeping network work on its worker. No direct physics writes from
+   rendering, guessed function signatures or teleport fallback.
 4. Bind the existing visual Link to that native character and route the peer's movement/orientation/basic
    animation. The model, extraction and ENet infrastructure already exist; do not restart those implementations.
 5. Exercise repeated creation/removal, scene load/unload and reconnect. Only then enable supported native
@@ -100,6 +103,18 @@ pause both peers and transitions wait until both are ready.
 Persistent operations need identifiers, revisions and recovery semantics. Reliable notification labels are not
 persistent events. Do not copy actively written save folders. Personalization beyond the fixed black hair,
 public servers, split screen and PvP remain outside the initial target.
+
+## Reusing Link's appearance
+
+The companion may reuse Link's locally extracted mesh, skeleton and animation data. The current figure already
+provides a visual starting point. Giving a native companion that appearance still requires a verified model
+binding or replacement path and removal of the NPC's original visible model. Drawing both at the same position
+would not establish that binding.
+
+Keep the companion's actor/body identity and lifetime independent. Copying the local Player's component memory,
+input owner, camera links or singleton references cannot create a second independent human-controlled player.
+Each PC keeps its own local Player and camera; peer state drives the companion through the native adapter once
+movement authority is verified. Neither a copied model nor a successful spawn completes that movement gate.
 
 ## Source delivery and known limits
 

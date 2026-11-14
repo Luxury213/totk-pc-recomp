@@ -46,6 +46,7 @@ void coop_adapter_trace_enable(int enable);
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument);
 // Diagnostic-only target for the scoped NPC's native actor-update entry. Revalidates live ownership and world.
 int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us);
+void coop_adapter_npc_velocity_consume(const Cpu *cpu);
 void coop_adapter_actor_request(const Cpu *cpu);
 void coop_adapter_request_context(const Cpu *cpu);
 void coop_adapter_request_enqueue(const Cpu *cpu);

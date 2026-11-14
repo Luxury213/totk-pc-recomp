@@ -274,8 +274,8 @@ Three copied-save runs made 57, 59 and 59 requests respectively. All exited norm
 hashes, but all **failed movement acceptance**: forward/reverse displacement was zero. Additional feedback
 observed a native request with flag `0x80` and the requested velocity immediately after the call. At the next
 observed actor update, the request was absent, cached velocity was zero and body position was unchanged.
-This establishes queued requests without effective character movement. It does not distinguish a later
-controller override from another native consumption rule. Do not claim the physics request moves the NPC.
+This establishes queued requests without effective character movement at that early actor-update phase.
+The later consumer-entry experiment below distinguishes that failure from the request API itself.
 
 `coop_diagnose.py:npc_velocity_summary` requires the same initialized NPC and world, strictly ordered bounded
 direction changes, at least 0.4 m of travel in each direction, no sampled teleport and later positional rest.
@@ -283,13 +283,58 @@ Synthetic checks reject stationary actors, another probe/world, duplicate/missin
 Unrequested gates remain not applicable. A zero process exit or successful native queue call cannot pass the
 explicit movement diagnostic.
 
-Next trace the scoped Physics component/controller-set update path and resolve which native controller
-owns locomotion. The creation-only run also captured controller-set receiver entries `main+0x434fb0`,
+Further controller research must resolve locomotion ownership. The creation-only run also captured controller-set
+receiver entries `main+0x434fb0`,
 `main+0x679cfc` and `main+0x456d70`. The last selects a body by role; the first two need further inspection
 and argument/phase correlation. They are research targets, not callable movement APIs. An inspected
 immediate velocity setter (`main+0x9da5c4`) also writes cached body state;
 its appropriate calling phase is unverified and it has **not** been invoked as a fallback. Keep the Link
-figure separate until effective movement, safe removal and repeatable lifecycle ownership are established.
+figure separate until safe binding/removal and repeatable lifecycle ownership are established.
+
+## Native request consumption and effective NPC movement
+
+`coop_adapter.c:coop_adapter_npc_velocity_consume` and `npc_velocity_backend_observe` correlate a request with
+the same live NPC body, SDK body identity, thread and world generation. Every consumer entry clears the previous
+thread-local handoff, including consumers for other actors. The bounded trace stores at most 192 records and
+never writes guest state. Lock-entry/unlock-entry observations additionally track a matching request under the
+body's native mutex; an entry observation does not claim the lock has already been acquired or released.
+
+An early actor-update pulse run produced 108 consumer/backend records. All observed vectors were already zero
+at the consumer `main+0x182eb0` and its backend dispatch `main+0x11c96ec`, despite immediate post-request feedback
+showing the requested +/-2 m/s. The native velocity is overwritten before consumption. This does not identify
+the exact writer or establish a Havok activation/sleep failure.
+
+Inspection of `main+0x182410` verifies its call to `main+0x182eb0`, returning at `main+0x1824f8`, with request,
+body, output-mask pointer and worker flag as its four arguments. At this entry the parent has not yet acquired
+the body's `+0x78` mutex. Normal request cleanup takes that lock after the consumer returns. The owned body's
+pending request at `+0x60` still equals the consumer's request argument in the successful experiment.
+
+`coop_native_probe.c:coop_native_probe_npc_consume` adds separately armed mode 5. The actor-update pulse latches
+its target velocity; at consumer entry the probe revalidates the same live NPC/body/world, exact pending request,
+velocity flag, native caller and consumer/parent code hashes. It rejects a command older than 100 ms and allows
+at most one correction per world timestamp, with a separate 96-call ceiling. It invokes only the existing
+inspected `main+0x567750` body/vector API, which takes its own native lock, then restores the complete CPU and
+host FP environment before the original consumer runs. It does not replace consumer arguments, call a guessed
+controller ABI or store directly into a request/body. A shared try-lock and thread-local recursion guard prevent
+concurrent or nested probe calls. Creation-only and mode 4 markers cannot arm mode 5.
+
+Two copied-save runs with the optional Link figure disabled passed displacement/rest acceptance:
+
+| Run | Actor-update requests | Consumer reapplications | Forward / reverse | Result |
+| --- | --- | --- | --- | --- |
+| 20 world seconds, scripted local walking/camera input during the pulse | 57 | 61 | 1.993 m / 1.933 m | Later rest, normal exit, source-save hashes unchanged |
+| 22 world seconds, no local movement after creation | 62 | 61 | 1.931 m / 1.867 m | Later rest, normal exit, source-save hashes unchanged |
+
+The saved logs also passed the stricter consumer-correlation parser after its addition: correction sequence,
+generation and timestamps match the same bounded pulse. Images confirm the original Hylian NPC appearance;
+there is no Link model binding yet. Synthetic fixtures cover incorrect callers/hashes, changed pending request,
+stale commands, duplicate timestamps, recursion and CPU/FP preservation. Diagnostic acceptance requires real
+actor displacement in both directions and later rest, rather than successful API calls alone.
+
+This proves bounded effective movement of the native NPC in the controlled scene. The commands are synthetic;
+no human peer controls it. Continuous movement/stop recovery, native locomotion animation, grounding/collision
+on varied terrain, full local camera/input independence, removal and repeated scene/session lifecycle remain
+unverified. Ordinary native commands still reject mutation and session capabilities remain presence-only.
 
 The older [Lotuskit physics behavior notes](https://github.com/aquacluck/totk-lotuskit/blob/59dcfccd77b6d4bcfa718bff806bc55be640edb7/src/program/structs/phive.hpp)
 were read as a GPL behavior reference only. No code or layouts were copied; its older game addresses were

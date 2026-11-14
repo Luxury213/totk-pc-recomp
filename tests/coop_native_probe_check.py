@@ -18,6 +18,7 @@ static const char name[] = "Weapon_Sword_101";
 static uint64_t stack[3] __attribute__((aligned(16)));
 static int calls, bad_hash;
 static unsigned char npc_body[0x160], velocity_code[28] = {1}, update_code[28] = {2};
+static unsigned char npc_request[0xd8], consumer_code[28] = {3}, parent_code[28] = {4};
 static int target_valid, velocity_calls;
 static uint32_t target_generation=3;
 static int64_t world_us=8000000;
@@ -30,6 +31,8 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
     return (p == MOD_MAIN_BASE+0x3ad7450ull && n == 8) ||
         (p == MOD_MAIN_BASE+0x599670ull && n == sizeof prologue) ||
         (p == MOD_MAIN_BASE+0x567750ull && n == 28) || (p == MOD_MAIN_BASE+0x2e27b0ull && n == 28) ||
+        (p == MOD_MAIN_BASE+0x182eb0ull && n == 28) || (p == MOD_MAIN_BASE+0x182410ull && n == 28) ||
+        range(p,n,npc_request,sizeof npc_request) ||
         range(p,n,npc_body,sizeof npc_body) ||
         range(p,n,arg,sizeof arg) || range(p,n,name,sizeof name) || range(p,n,stack,sizeof stack) ||
         range(p,n,&manager,8) || range(p,n,&name_pointer,8) || range(p,n,&watcher,8);
@@ -40,6 +43,8 @@ int plat_mem_read(uint64_t p, void *dst, size_t n) {
     else if (p == MOD_MAIN_BASE+0x599670ull) memcpy(dst,prologue,n);
     else if (p == MOD_MAIN_BASE+0x567750ull) memcpy(dst,velocity_code,n);
     else if (p == MOD_MAIN_BASE+0x2e27b0ull) memcpy(dst,update_code,n);
+    else if (p == MOD_MAIN_BASE+0x182eb0ull) memcpy(dst,consumer_code,n);
+    else if (p == MOD_MAIN_BASE+0x182410ull) memcpy(dst,parent_code,n);
     else memcpy(dst,(const void *)(uintptr_t)p,n);
     return 1;
 }
@@ -59,7 +64,12 @@ void rt_sha256(const void *p, size_t n, uint8_t out[32]) {
     const uint8_t update_hash[32]={0x94,0x53,0x6d,0xb8,0x69,0xd0,0x79,0x8e,0x6a,0xd3,0xd9,0xf1,0xb3,0x6b,0x09,0x23,
         0x96,0xd0,0x0c,0xc7,0x31,0x4d,0xee,0x10,0x59,0x64,0x10,0xbd,0x7c,0xa5,0xa6,0x56};
     const uint8_t *code=p;
-    memcpy(out,code[0]==1 ? velocity_hash : code[0]==2 ? update_hash : known,32);
+    const uint8_t consumer_hash[32]={0x9b,0x0d,0xc2,0xe4,0x50,0xcb,0xba,0x22,0x9b,0xa6,0xfc,0x43,0x13,0x76,0x6f,0x35,
+        0xc5,0xd6,0x1f,0x9c,0x97,0x53,0x9c,0x5f,0x96,0x87,0xa0,0x59,0x78,0x98,0x66,0xed};
+    const uint8_t parent_hash[32]={0xd3,0x2d,0x66,0x8a,0x58,0xff,0x87,0x78,0xb8,0x11,0xd6,0x46,0x5a,0x3c,0x33,0x9c,
+        0x67,0x4b,0xe4,0x66,0x29,0x25,0xc6,0x68,0x65,0x91,0x4a,0x62,0xf6,0x2f,0x0c,0xec};
+    memcpy(out,code[0]==1 ? velocity_hash : code[0]==2 ? update_hash :
+               code[0]==3 ? consumer_hash : code[0]==4 ? parent_hash : known,32);
     if (bad_hash) out[0] ^= 1;
 }
 uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
@@ -73,6 +83,8 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
         assert(requested_velocity[1]==-.5f && requested_velocity[2]==0);
         velocity_calls++;
         coop_native_probe_npc_update(c);
+        coop_native_probe_npc_consume(c);
+        if (armed==COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) memcpy(npc_request+0x44,requested_velocity,12);
         memset(c,0x5a,sizeof *c); fesetround(FE_DOWNWARD); return 0;
     }
     assert(fn == MOD_MAIN_BASE+0x599670ull && n == 8);
@@ -213,6 +225,37 @@ int main(int argc, char **argv) {
     coop_native_probe_npc_update(&c); world_us+=250001;
     coop_native_probe_npc_update(&c);
     assert(npc_motion.finished && requested_velocity[0]==0); // continuity failure stops the same live body
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-consumer-velocity-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION); assert(armed==5);
+    reset(&c); memcpy(arg,pos,sizeof pos); coop_native_probe_request(&c); assert(calls==1);
+    c.x[0]=0xabc0; original=c; memset(&npc_motion,0,sizeof npc_motion); world_us=10000000;
+    uint64_t pending=(uintptr_t)npc_request; memcpy(npc_body+0x60,&pending,8);
+    uint32_t pending_flags=0x80; memcpy(npc_request+0xd4,&pending_flags,4);
+    coop_native_probe_npc_update(&c); assert(npc_motion.calls==1);
+    memset(npc_request+0x44,0,12); // native preparation replaces the early request before consumption
+    Cpu consumer=c; consumer.x[0]=pending; consumer.x[1]=(uintptr_t)npc_body; consumer.x[30]=MOD_MAIN_BASE+0x1824f8;
+    Cpu consumer_before=consumer;
+    int before_consume=velocity_calls;
+    consumer.x[30]++; coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume);
+    consumer=consumer_before; bad_hash=1;
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume);
+    bad_hash=0; memset(npc_body+0x60,0,8);
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume);
+    memcpy(npc_body+0x60,&pending,8); fesetround(FE_UPWARD);
+    coop_native_probe_npc_consume(&consumer);
+    assert(velocity_calls==before_consume+1 && npc_motion.consumer_calls==1 && !memcmp(&consumer,&consumer_before,sizeof consumer));
+    float actual[3]; memcpy(actual,npc_request+0x44,sizeof actual);
+    assert(actual[0]==2 && actual[1]==-.5f && fegetround()==FE_UPWARD);
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume+1);
+    world_us+=100001; coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume+1); // stale command
+    world_us=npc_motion.last_us+1; target_generation++;
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume+1); // another world
+    target_generation--; npc_motion.consumer_calls=96;
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume+1); // consumer budget
+    npc_motion.consumer_calls=1; npc_motion_busy=1;
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume+1); // busy guest phase
+    npc_motion_busy=0;
     puts("native probes: scoped creation/velocity guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }

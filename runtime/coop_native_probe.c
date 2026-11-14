@@ -49,13 +49,15 @@ static const char *owned_name = "Weapon_Sword_101";
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_NPC_MOTION ? "isolated-npc-velocity-v1\n" :
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION ? "isolated-npc-consumer-velocity-v1\n" :
+                         mode == COOP_NATIVE_PROBE_NPC_MOTION ? "isolated-npc-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC ? "isolated-npc-road-001-v1\n" :
                          mode == COOP_NATIVE_PROBE_CLONE ? "isolated-physics-probe-v1\n" : "isolated-physics-owned-v1\n";
     char content[64] = {0};
     if (rt_game_version != 143 || !timed_run || !profile ||
         (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED &&
-         mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION)) goto denied;
+         mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION &&
+         mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -156,7 +158,9 @@ static struct {
     uint64_t actor, body;
     uint32_t generation;
     int64_t started_us, last_us;
-    unsigned calls, finished;
+    int64_t last_consumer_us;
+    float target_velocity[3];
+    unsigned calls, consumer_calls, finished;
 } npc_motion;
 static unsigned npc_motion_busy;
 
@@ -169,7 +173,8 @@ static int probe_code_matches(uint64_t entry, const uint8_t expected[32]) {
 
 static void npc_probe_update_locked(Cpu *c) {
     if (!c || inside || rt_game_version != 143 || npc_motion.finished ||
-        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION ||
+        (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION &&
+         __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) ||
         !__atomic_load_n(&attempted, __ATOMIC_ACQUIRE)) return;
     uint64_t body;
     uint32_t generation;
@@ -235,6 +240,7 @@ static void npc_probe_update_locked(Cpu *c) {
     rt_log("coop native npc velocity queued: request %s, flags %#x, velocity %.6f %.6f %.6f; observation only",
            queued_request ? "present" : "absent", queued_flags, queued_velocity[0], queued_velocity[1], queued_velocity[2]);
     npc_motion.last_us = now; npc_motion.calls++;
+    memcpy(npc_motion.target_velocity, velocity, sizeof velocity);
     npc_motion.finished = phase == 2;
     if (stop_early) rt_log("coop native npc velocity probe: aborted; requested stop after update budget or continuity exceeded");
     rt_log("coop native npc velocity probe: step %u, phase %s, generation %u, world us %lld, velocity %.6f %.6f %.6f; native request, original CPU restored",
@@ -243,9 +249,51 @@ static void npc_probe_update_locked(Cpu *c) {
 }
 
 void coop_native_probe_npc_update(Cpu *c) {
-    if (!c || inside || __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION) return;
+    if (!c || inside || (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION &&
+                        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION)) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     npc_probe_update_locked(c);
+    __atomic_store_n(&npc_motion_busy, 0, __ATOMIC_RELEASE);
+}
+
+static void npc_probe_consume_locked(Cpu *c) {
+    if (!npc_motion.calls || npc_motion.finished || npc_motion.consumer_calls >= 96 ||
+        c->x[30] != MOD_MAIN_BASE + 0x1824f8ull || c->x[1] != npc_motion.body) return;
+    int64_t now = frame_step_world_us(), observed_us;
+    if (now < npc_motion.last_us || now > npc_motion.last_us + 100000 || now <= npc_motion.last_consumer_us) return;
+    uint64_t body, pending; uint32_t generation, flags;
+    if (!coop_adapter_npc_probe_body(npc_motion.actor, &body, &generation, &observed_us) ||
+        body != npc_motion.body || generation != npc_motion.generation ||
+        !read_guest(body + 0x60, &pending, 8) || pending != c->x[0] ||
+        !read_guest(pending + 0xd4, &flags, 4) || !(flags & 0x80)) return;
+    const uint8_t consumer_hash[32] = {0x9b,0x0d,0xc2,0xe4,0x50,0xcb,0xba,0x22,0x9b,0xa6,0xfc,0x43,0x13,0x76,0x6f,0x35,
+        0xc5,0xd6,0x1f,0x9c,0x97,0x53,0x9c,0x5f,0x96,0x87,0xa0,0x59,0x78,0x98,0x66,0xed};
+    const uint8_t parent_hash[32] = {0xd3,0x2d,0x66,0x8a,0x58,0xff,0x87,0x78,0xb8,0x11,0xd6,0x46,0x5a,0x3c,0x33,0x9c,
+        0x67,0x4b,0xe4,0x66,0x29,0x25,0xc6,0x68,0x65,0x91,0x4a,0x62,0xf6,0x2f,0x0c,0xec};
+    if (!probe_code_matches(MOD_MAIN_BASE + 0x182eb0ull, consumer_hash) ||
+        !probe_code_matches(MOD_MAIN_BASE + 0x182410ull, parent_hash)) return;
+    // main+0x182410 has popped this exact live request but has not acquired body+0x78 here. Its normal
+    // consumer call precedes the native request cleanup and lock. Reapply via the verified request API,
+    // never by changing the consumer's arguments or directly storing into the request/body.
+    Cpu saved = *c;
+    fenv_t fp;
+    if (fegetenv(&fp)) return;
+    inside = 1;
+    rt_call(c, MOD_MAIN_BASE + 0x567750ull, 2, body, (uint64_t)(uintptr_t)npc_motion.target_velocity);
+    *c = saved;
+    if (fesetenv(&fp)) rt_fatal("coop native npc velocity consumer: cannot restore host floating-point environment");
+    inside = 0;
+    npc_motion.consumer_calls++; npc_motion.last_consumer_us = now;
+    rt_log("coop native npc velocity consumer reapply: correction %u, generation %u, world us %lld; same live pending request, original CPU restored",
+           npc_motion.consumer_calls, generation, (long long)now);
+}
+
+void coop_native_probe_npc_consume(Cpu *c) {
+    if (!c || inside || rt_game_version != 143 ||
+        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) return;
+    unsigned zero = 0;
+    if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+    npc_probe_consume_locked(c);
     __atomic_store_n(&npc_motion_busy, 0, __ATOMIC_RELEASE);
 }

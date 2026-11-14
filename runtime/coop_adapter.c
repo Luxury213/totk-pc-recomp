@@ -381,6 +381,17 @@ typedef struct {
 static NpcPhysicsSnapshot npc_physics, npc_late_physics;
 static unsigned npc_receiver_claimed, npc_receiver_consumed;
 static struct { uint64_t address, caller; int64_t world_us; uint32_t thread, kind; unsigned ready; } npc_receivers[64];
+enum { NPC_VELOCITY_TRACE_LIMIT = 192 };
+static unsigned npc_velocity_claimed, npc_velocity_consumed;
+static struct {
+    uint64_t entry, caller;
+    int64_t world_us;
+    uint32_t generation, flags, thread;
+    float velocity[3];
+    unsigned backend, ready;
+} npc_velocity_entries[NPC_VELOCITY_TRACE_LIMIT];
+static _Thread_local struct { uint64_t body_id; uint32_t generation, flags; int ready; } npc_velocity_scope;
+static _Thread_local struct { uint64_t request; uint32_t generation; int ready; } npc_velocity_lock_scope;
 
 static uint64_t main_relative(uint64_t address) {
     return address >= MOD_MAIN_BASE && address - MOD_MAIN_BASE < MOD_MAIN_SIZE ? address - MOD_MAIN_BASE : 0;
@@ -484,6 +495,83 @@ int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *genera
         guest_pointer(n[5] + 0x158) != n[6] || !probe_identity_live(s->probe, actor)) return 0;
     *body = n[5]; *generation = s->generation; *observed_us = s->world_us;
     return 1;
+}
+
+static void npc_velocity_capture(uint64_t entry, uint64_t caller, uint32_t generation,
+                                 uint32_t flags, const float velocity[3], int backend) {
+    unsigned slot = __atomic_fetch_add(&npc_velocity_claimed, 1, __ATOMIC_RELAXED);
+    if (slot >= NPC_VELOCITY_TRACE_LIMIT) return;
+    npc_velocity_entries[slot].entry = entry; npc_velocity_entries[slot].caller = caller;
+    npc_velocity_entries[slot].generation = generation; npc_velocity_entries[slot].flags = flags;
+    npc_velocity_entries[slot].thread = plat_thread_id(); npc_velocity_entries[slot].world_us = frame_step_world_us();
+    memcpy(npc_velocity_entries[slot].velocity, velocity, sizeof npc_velocity_entries[slot].velocity);
+    npc_velocity_entries[slot].backend = backend;
+    __atomic_store_n(&npc_velocity_entries[slot].ready, 1, __ATOMIC_RELEASE);
+}
+
+void coop_adapter_npc_velocity_consume(const Cpu *cpu) {
+    // Every native request consumer invalidates this thread's preceding handoff, including other actors.
+    npc_velocity_scope.ready = 0;
+    if (!cpu || !__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) ||
+        !__atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&npc_velocity_claimed, __ATOMIC_RELAXED) >= NPC_VELOCITY_TRACE_LIMIT ||
+        cpu->x[1] != npc_late_physics.node_address[5]) return;
+    uint64_t body; uint32_t generation; int64_t observed_us;
+    if (!coop_adapter_npc_probe_body(probe_entries[npc_late_physics.probe].actor, &body, &generation, &observed_us) ||
+        body != cpu->x[1] || !guest_readable(cpu->x[0], 0xd8)) return;
+    uint32_t flags = (uint32_t)guest_s32(cpu->x[0] + 0xd4);
+    float velocity[3];
+    // The consumer owns its request argument even after the native queue clears body+0x60.
+    if (!(flags & 0x80) || !plat_mem_read(cpu->x[0] + 0x44, velocity, sizeof velocity)) return;
+    for (unsigned i = 0; i < 3; i++) if (!isfinite(velocity[i])) return;
+    uint64_t sdk = guest_pointer(body + 0x70);
+    if (!guest_readable(sdk, 0x10)) return;
+    npc_velocity_scope.body_id = guest_pointer(sdk + 8);
+    npc_velocity_scope.generation = generation; npc_velocity_scope.flags = flags; npc_velocity_scope.ready = 1;
+    npc_velocity_capture(MOD_MAIN_BASE + 0x182eb0ull, cpu->x[30], generation, flags, velocity, 0);
+}
+
+static void npc_velocity_backend_observe(uint64_t entry, uint64_t caller, uint64_t body_id, uint64_t vector) {
+    if (!npc_velocity_scope.ready || (caller != MOD_MAIN_BASE + 0x183078ull &&
+        caller != MOD_MAIN_BASE + 0x183518ull && caller != MOD_MAIN_BASE + 0x1843b0ull) ||
+        body_id != npc_velocity_scope.body_id || !__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) ||
+        npc_velocity_scope.generation != __atomic_load_n(&trace_generation, __ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&npc_velocity_claimed, __ATOMIC_RELAXED) >= NPC_VELOCITY_TRACE_LIMIT || !main_relative(entry)) return;
+    uint64_t body; uint32_t generation; int64_t observed_us;
+    if (!coop_adapter_npc_probe_body(probe_entries[npc_late_physics.probe].actor, &body, &generation, &observed_us)) return;
+    uint64_t sdk = guest_pointer(body + 0x70);
+    float velocity[3];
+    if (!guest_readable(sdk, 0x10) || guest_pointer(sdk + 8) != body_id ||
+        !guest_readable(vector, sizeof velocity) || !plat_mem_read(vector, velocity, sizeof velocity)) return;
+    for (unsigned i = 0; i < 3; i++) if (!isfinite(velocity[i])) return;
+    npc_velocity_capture(entry, caller, generation, npc_velocity_scope.flags, velocity, 1);
+    npc_velocity_scope.ready = 0;
+}
+
+static void npc_velocity_lock_observe(uint64_t entry, uint64_t caller, uint64_t mutex) {
+    int unlock = entry == MOD_MAIN_BASE + 0x2bb7a70ull;
+    if ((!unlock && entry != MOD_MAIN_BASE + 0x2bb7a60ull) ||
+        !__atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE) ||
+        mutex != npc_late_physics.node_address[5] + 0x78 ||
+        __atomic_load_n(&npc_velocity_claimed, __ATOMIC_RELAXED) >= NPC_VELOCITY_TRACE_LIMIT ||
+        (unlock && !npc_velocity_lock_scope.ready)) return;
+    uint64_t body; uint32_t generation; int64_t observed_us;
+    if (!coop_adapter_npc_probe_body(probe_entries[npc_late_physics.probe].actor, &body, &generation, &observed_us)) return;
+    uint64_t request = guest_pointer(body + 0x60);
+    float velocity[3];
+    if (!guest_readable(request, 0xd8) || !plat_mem_read(request + 0x44, velocity, sizeof velocity)) return;
+    for (unsigned i = 0; i < 3; i++) if (!isfinite(velocity[i])) return;
+    uint32_t flags = (uint32_t)guest_s32(request + 0xd4);
+    if (!unlock) {
+        npc_velocity_lock_scope.ready = 0;
+        if (!(flags & 0x80) || (fabsf(velocity[0]) < .001f && fabsf(velocity[1]) < .001f && fabsf(velocity[2]) < .001f)) return;
+        npc_velocity_lock_scope.request = request; npc_velocity_lock_scope.generation = generation;
+        npc_velocity_lock_scope.ready = 1;
+    } else {
+        npc_velocity_lock_scope.ready = 0;
+        if (request != npc_velocity_lock_scope.request || generation != npc_velocity_lock_scope.generation) return;
+    }
+    npc_velocity_capture(entry, caller, generation, flags, velocity, unlock ? 3 : 2);
 }
 
 static void npc_receiver_observe(uint64_t address, uint64_t caller, uint64_t argument) {
@@ -606,7 +694,7 @@ void coop_adapter_actor_request(const Cpu *cpu) {
     char prefix[6];
     if (!name_at || !plat_mem_read(name_at, prefix, sizeof prefix)) return;
     int npc = !memcmp(prefix, "Npc_Ro", sizeof prefix) && cpu->x[30] == RT_RET_HOST &&
-              (cfg_int("TOTK_COOP_NATIVE_PROBE") == 3 || cfg_int("TOTK_COOP_NATIVE_PROBE") == 4);
+              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 5);
     int probe = !memcmp(prefix, "Weapon", sizeof prefix) || npc;
     if (memcmp(prefix, "Player", sizeof prefix) && !probe) return;
     if (probe && (frame_step_world_us() < 6000000 ||
@@ -969,6 +1057,7 @@ void coop_adapter_actor_teardown(uint64_t address, const Cpu *cpu) {
 void coop_adapter_native_dispatch(uint64_t address, uint64_t caller, uint64_t x0,
                                   uint64_t x1, uint64_t x2) {
     if (rt_game_version != 143) return;
+    npc_velocity_backend_observe(address, caller, x1, x2);
     if (__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) && dispose_scope.target &&
         address == dispose_scope.target && caller == dispose_scope.caller &&
         x0 == dispose_scope.allocator && x1 == dispose_scope.actor) {
@@ -1034,6 +1123,7 @@ void coop_adapter_native_dispatch(uint64_t address, uint64_t caller, uint64_t x0
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
+    npc_velocity_lock_observe(address, caller, argument);
     if (address == MOD_MAIN_BASE + 0xa0f3f0ull) npc_physics_observe(caller, argument);
     if (address == MOD_MAIN_BASE + 0x2e27b0ull) npc_physics_late_observe(caller, argument);
     npc_receiver_observe(address, caller, argument);
@@ -1289,6 +1379,17 @@ void coop_adapter_observe(const Cpu *cpu) {
                npc_receivers[i].kind == 5 ? "set150" : npc_receivers[i].kind == 4 ? "set8_20" : npc_receivers[i].kind == 3 ? "set8" :
                npc_receivers[i].kind == 2 ? "body158" : npc_receivers[i].kind ? "body" : "set10", (unsigned long long)main_relative(npc_receivers[i].address),
                (unsigned long long)npc_receivers[i].caller, (long long)npc_receivers[i].world_us, npc_receivers[i].thread);
+    }
+    while (npc_velocity_consumed < NPC_VELOCITY_TRACE_LIMIT &&
+           __atomic_load_n(&npc_velocity_entries[npc_velocity_consumed].ready, __ATOMIC_ACQUIRE)) {
+        unsigned i = npc_velocity_consumed++;
+        rt_log("coop native npc velocity path: stage %s, entry main+%#llx, caller %#llx, generation %u, world us %lld, request flags %#x, velocity %.6f %.6f %.6f, host thread %u; observation only",
+               npc_velocity_entries[i].backend == 3 ? "body-unlock-entry" : npc_velocity_entries[i].backend == 2 ? "body-lock-entry" :
+               npc_velocity_entries[i].backend ? "backend-dispatch" : "request-consumer",
+               (unsigned long long)main_relative(npc_velocity_entries[i].entry), (unsigned long long)npc_velocity_entries[i].caller,
+               npc_velocity_entries[i].generation, (long long)npc_velocity_entries[i].world_us, npc_velocity_entries[i].flags,
+               npc_velocity_entries[i].velocity[0], npc_velocity_entries[i].velocity[1], npc_velocity_entries[i].velocity[2],
+               npc_velocity_entries[i].thread);
     }
     for (unsigned i = 0; i < ACTOR_REQUEST_TRACE_LIMIT; i++) {
         if (__atomic_load_n(&resource_entries[i].ready, __ATOMIC_ACQUIRE) && !resource_entries[i].emitted) {

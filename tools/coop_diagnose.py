@@ -317,6 +317,20 @@ def npc_velocity_summary(lines, spawn):
                 remote_control_verified=False, native_companion_verified=False)
 
 
+def npc_consumer_reapply_summary(lines, motion):
+    corrections = [dict(correction=int(m[1]), generation=int(m[2]), world_us=int(m[3]))
+                   for line in lines if (m := re.search(
+                       r'coop native npc velocity consumer reapply: correction (\d+), generation (\d+), world us (\d+); '
+                       r'same live pending request, original CPU restored', line))]
+    commands = motion['commands']
+    valid = bool(commands and 0 < len(corrections) <= 96 and
+                 [c['correction'] for c in corrections] == list(range(1, len(corrections)+1)) and
+                 all(c['generation'] == commands[0]['generation'] and
+                     commands[0]['world_us'] <= c['world_us'] <= commands[-1]['world_us'] for c in corrections) and
+                 all(a['world_us'] < b['world_us'] for a, b in zip(corrections, corrections[1:])))
+    return dict(corrections=corrections, count=len(corrections), acceptance_passed=valid)
+
+
 def diagnostic_acceptance(report, *, scenario, require_animation=False, require_figure=False,
                           spawning=False, owned=False, require_spawn_retirement=False, require_spawn_fall=False,
                           require_npc_motion=False):
@@ -367,6 +381,8 @@ def main():
                        help='try one Npc_Road_001 request with owned arguments; isolated creation diagnostic only')
     spawn.add_argument('--native-npc-motion', action='store_true',
                        help='create one scoped NPC and test a bounded native forward/reverse/stop velocity pulse')
+    spawn.add_argument('--native-npc-consumer-motion', action='store_true',
+                       help='test a separate NPC pulse reapplied through the native API at its request-consumer entry')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
@@ -388,14 +404,15 @@ def main():
         ap.error('--require-allocator requires --scenario object')
     if args.require_resource and args.scenario != 'object':
         ap.error('--require-resource requires --scenario object')
-    npc = args.native_owned_npc or args.native_npc_motion
+    motion = args.native_npc_motion or args.native_npc_consumer_motion
+    npc = args.native_owned_npc or motion
     spawning = args.native_clone_weapon or args.native_owned_weapon or npc
     if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
-    if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < (20 if args.native_npc_motion else 15) or
+    if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < (20 if motion else 15) or
                                   args.require_spawn_retirement or args.require_spawn_fall):
         ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
-                 f'{20 if args.native_npc_motion else 15} world seconds; no pickup/fall acceptance')
+                 f'{20 if motion else 15} world seconds; no pickup/fall acceptance')
     if args.require_spawn_retirement and not spawning:
         ap.error('--require-spawn-retirement requires a native weapon experiment')
     if args.require_spawn_fall and not args.native_owned_weapon:
@@ -435,14 +452,15 @@ def main():
     if before != save_hashes(profile / 'save') or before != save_hashes(seed / 'save'):
         raise SystemExit(f'The source save changed during copying; diagnostic not launched. Copy retained at {folder}')
     if spawning:
-        marker = ('isolated-npc-velocity-v1\n' if args.native_npc_motion else 'isolated-npc-road-001-v1\n' if npc else
+        marker = ('isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
+                  'isolated-npc-velocity-v1\n' if args.native_npc_motion else 'isolated-npc-road-001-v1\n' if npc else
                   'isolated-physics-owned-v1\n' if args.native_owned_weapon else 'isolated-physics-probe-v1\n')
         (profile / 'coop-native-probe.txt').write_bytes(marker.encode('ascii'))
     script = args.input_script.resolve() if args.input_script else folder / 'input.txt'
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -551,10 +569,15 @@ def main():
                   native_actor_creation_verified=False, world_mutation_phase_verified=False,
                   native_gameplay_enabled=False, log=str(log))
     report['native_npc_velocity_experiment'] = npc_velocity_summary(lines, report['native_spawn_experiment'])
+    consumer = npc_consumer_reapply_summary(lines, report['native_npc_velocity_experiment'])
+    report['native_npc_velocity_experiment']['consumer_reapply'] = consumer
+    report['native_npc_velocity_experiment']['consumer_reapplications'] = consumer['count']
     report['acceptance_checks'] = diagnostic_acceptance(
         report, scenario=args.scenario, require_animation=args.require_animation, require_figure=args.require_figure,
         spawning=spawning, owned=args.native_owned_weapon or npc, require_spawn_retirement=args.require_spawn_retirement,
-        require_spawn_fall=args.require_spawn_fall, require_npc_motion=args.native_npc_motion)
+        require_spawn_fall=args.require_spawn_fall, require_npc_motion=motion)
+    if args.native_npc_consumer_motion:
+        report['acceptance_checks']['native_consumer_reapply'] = consumer['acceptance_passed']
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))

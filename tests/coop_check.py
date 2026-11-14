@@ -40,6 +40,8 @@ static unsigned char probe_resource[0xe0];
 static unsigned char npc_component[0x40], npc_set[0x158], npc_set_child[0x20], npc_body_descriptor[0x20], npc_body[0x1e8];
 static unsigned char npc_character[0x40], npc_set8[0x28], npc_set8_20[0x40];
 static unsigned char npc_body_link[0x30], npc_body_agent[0x40];
+static unsigned char npc_sdk[0x10], npc_change[0xd8];
+static float npc_velocity[4] = {2,0,0,0};
 static unsigned char player_source_ref[0x18];
 static unsigned char visual_model[0xd0], visual_controller[0x120], visual_player[0x88], visual_clip[0x10];
 static unsigned char visual_name[COOP_ANIMATION_MAX+2];
@@ -92,6 +94,8 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
            in_range(p,n,npc_character,sizeof npc_character) ||
            in_range(p,n,npc_set8,sizeof npc_set8) || in_range(p,n,npc_set8_20,sizeof npc_set8_20) ||
            in_range(p,n,npc_body_link,sizeof npc_body_link) || in_range(p,n,npc_body_agent,sizeof npc_body_agent) ||
+           in_range(p,n,npc_sdk,sizeof npc_sdk) || in_range(p,n,npc_change,sizeof npc_change) ||
+           in_range(p,n,npc_velocity,sizeof npc_velocity) ||
            in_range(p,n,visual_player,sizeof visual_player) || in_range(p,n,visual_clip,sizeof visual_clip) ||
            in_range(p,n,visual_name,sizeof visual_name);
 }
@@ -621,6 +625,46 @@ int main(void) {
     ptr(npc_set+0x150,(uintptr_t)npc_body);
     assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
     assert(scoped_body==(uintptr_t)npc_body && scoped_generation==trace_generation && scoped_time==world_us);
+    ptr(npc_body+0x70,(uintptr_t)npc_sdk); ptr(npc_sdk+8,0x1234);
+    memcpy(npc_change+0x44,npc_velocity,12);
+    uint32_t change_flags=0x80; memcpy(npc_change+0xd4,&change_flags,4);
+    Cpu consume={.x={(uintptr_t)npc_change,(uintptr_t)npc_body}};
+    consume.x[30]=MOD_MAIN_BASE+0x4500;
+    Cpu consume_before=consume;
+    coop_adapter_npc_velocity_consume(&consume);
+    assert(npc_velocity_claimed==1 && npc_velocity_scope.ready && !memcmp(&consume,&consume_before,sizeof consume));
+    assert(npc_velocity_entries[0].velocity[0]==2 && !npc_velocity_entries[0].backend);
+    // The native consumer owns its request even with body+0x60 already cleared by the queue.
+    assert(!guest_pointer((uintptr_t)npc_body+0x60));
+    coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3c00,MOD_MAIN_BASE+0x183518,0,0x9999,(uintptr_t)npc_velocity);
+    assert(npc_velocity_claimed==1);
+    coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3c00,MOD_MAIN_BASE+0x183514,0,0x1234,(uintptr_t)npc_velocity);
+    assert(npc_velocity_claimed==1);
+    coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3c00,MOD_MAIN_BASE+0x183518,0,0x1234,(uintptr_t)npc_velocity);
+    assert(npc_velocity_claimed==2 && npc_velocity_entries[1].backend && !npc_velocity_scope.ready);
+    coop_adapter_npc_velocity_consume(&consume); assert(npc_velocity_claimed==3);
+    trace_generation++;
+    unsigned stale_backend_reads=guest_reads;
+    coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3c00,MOD_MAIN_BASE+0x183518,0,0x1234,(uintptr_t)npc_velocity);
+    assert(npc_velocity_claimed==3 && stale_backend_reads==guest_reads);
+    trace_generation--;
+    consume.x[1]=(uintptr_t)other_actor;
+    coop_adapter_npc_velocity_consume(&consume); assert(!npc_velocity_scope.ready && npc_velocity_claimed==3);
+    coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3c00,MOD_MAIN_BASE+0x183518,0,0x1234,(uintptr_t)npc_velocity);
+    assert(npc_velocity_claimed==3);
+    ptr(npc_body+0x60,(uintptr_t)npc_change);
+    coop_adapter_function(MOD_MAIN_BASE+0x2bb7a60,MOD_MAIN_BASE+0x4400,(uintptr_t)npc_body+0x78);
+    assert(npc_velocity_claimed==4 && npc_velocity_entries[3].backend==2 && npc_velocity_entries[3].velocity[0]==2);
+    memset(npc_change+0x44,0,12); // model the native writer replacing the pending command under its body lock
+    coop_adapter_function(MOD_MAIN_BASE+0x2bb7a70,MOD_MAIN_BASE+0x4500,(uintptr_t)npc_body+0x78);
+    assert(npc_velocity_claimed==5 && npc_velocity_entries[4].backend==3 && npc_velocity_entries[4].velocity[0]==0);
+    ptr(npc_body+0x60,0); memcpy(npc_change+0x44,npc_velocity,12);
+    consume.x[1]=(uintptr_t)npc_body;
+    for (unsigned i=0;i<NPC_VELOCITY_TRACE_LIMIT+10;i++) coop_adapter_npc_velocity_consume(&consume);
+    assert(npc_velocity_claimed==NPC_VELOCITY_TRACE_LIMIT);
+    unsigned full_velocity_reads=guest_reads;
+    coop_adapter_npc_velocity_consume(&consume);
+    assert(guest_reads==full_velocity_reads && !npc_velocity_scope.ready);
     ptr(npc_set+0x150,(uintptr_t)other_actor);
     assert(!coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
     ptr(npc_set+0x150,(uintptr_t)npc_body);

@@ -1,7 +1,7 @@
 # Co-op development guide
 
 This is an experimental TotK 1.4.3 prototype on Windows. It provides ENet presence sessions, an optional
-animated Link figure and isolated native weapon experiments. It does not provide a playable second Link
+animated Link figure and isolated native weapon/NPC experiments. It does not provide a playable second Link
 or a cooperative campaign. Native session capabilities remain presence-only.
 
 Start with [the public development plan](coop-phase2.md) for current status and the next milestone.
@@ -20,6 +20,7 @@ The public plan is authoritative for resuming development; private notes under i
 | Presentation | Interpolated animated Link, black hair, scene depth, lighting and shadows; silhouette fallback | No native body, collision, input, inventory or combat |
 | Native diagnostics | Scoped request/task/actor/resource/reference/retirement observations | Observation does not establish an unrestricted calling contract |
 | Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
+| Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Synthetic movement only; no peer-driven NPC, Link binding or removal API |
 
 State packets are 152 bytes. Rotation and animation fields have explicit presence flags; malformed/nonfinite
 values and noncanonical strings are rejected. Stale observations clear optional pose data. Quaternion blending
@@ -191,11 +192,32 @@ update and requests forward/reverse/stop velocity through the inspected 1.4.3 en
 vertical velocity and CPU/FP state, limits requests to 96 and uses its own `isolated-npc-velocity-v1` marker.
 The creation-only marker cannot arm movement. Ordinary diagnostics explicitly set mode zero.
 
-Current controlled runs **fail this diagnostic**: requests enter the native queue, but neither the actor nor
+Mode 4 controlled runs **fail this diagnostic**: requests enter the native queue, but neither the actor nor
 the observed body travels in the requested directions. This is a reproducible movement blocker, not a playable
 companion. `native_npc_velocity_experiment` requires matching NPC identity/world, ordered bounded requests,
 forward and reverse travel, and later rest; queued calls alone cannot pass. Ownership/receiver observations
 are reported under `native_npc_physics_observations`. See [native research](coop-native-research.md) for findings.
+
+The separate mode 5 tests reapplication through that same native API immediately before the inspected native
+request consumer runs:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-consumer-motion --input-script "<recorded drop script>" --seconds 22 --shots 2 --without-figure
+```
+
+Use an idle scenario and at least 20 world seconds. The script must trigger the authentic drop and close the
+inventory; leave enough time to observe the NPC after the pulse. This mode needs its own
+`isolated-npc-consumer-velocity-v1` marker. It retains the 96 actor-update request limit and allows at most 96
+consumer reapplications. Each reapplication checks the live body/world, exact current request, verified
+consumer/caller hashes and command age of at most 100 ms. CPU and host FP state are restored after each call;
+no host write sets a physics transform or request vector.
+
+Two copied-save runs passed actual forward/reverse/rest acceptance: 1.993/1.933 m and 1.931/1.867 m respectively.
+Each made 61 consumer reapplications, exited normally and preserved source-save hashes. The first also scripted
+local walking/camera input during the pulse; this does not establish the full camera/input independence gate.
+`native_consumer_reapply` additionally requires ordered corrections in the same world and command interval.
+The NPC still has its own native appearance and behavior. These short synthetic pulses do not verify peer
+control, locomotion animation, grounding/collision across terrain, safe removal or a playable second Link.
 
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,
