@@ -7,6 +7,11 @@ This public plan is the resumption reference; it does not depend on private note
 See [the development guide](coop-development.md) for commands, [native research](coop-native-research.md) for
 engine evidence and [the campaign design](coop.md) for the agreed final behavior.
 
+**Resume here:** [the next-session handover](coop-next-session.md) records the tested source/build checkpoint,
+the November 14 reference review and the ordered work toward original Link movement and attacks. The next
+character milestone includes final blended pose and equipment replication, original run/jump/attack evidence,
+and a verified native companion lifecycle. The current NPC stream does not establish Player behavior.
+
 ## Current status
 
 | Area | Verified result | Remaining gate |
@@ -50,8 +55,9 @@ Deliver a real companion actor that appears, moves independently and disappears 
 operations, while the local player's camera and input continue working. Keep the native capability bits disabled
 until the complete gate below passes.
 
-1. Inspect a suitable non-Player actor/controller and its native body. The existing Player's resident record and
-   manager link are scene-owned; copying them or allocating another PlayerLink is not a safe shortcut. The
+1. Assess a suitable companion actor/controller and its native body, including a Player-derived puppet if its
+   ownership can be verified. The existing Player's resident record and manager link are scene-owned; copying
+   them or allocating another PlayerLink is not a verified shortcut. The
    ordinary Hylian NPC packs reference Npc_Size_M character controllers/bodies without direct Player/camera
    components in their own ActorParam. The first Npc_Road_001 creation experiment passed; inspect its native
    controller and movement contract further. Early actor-update velocity requests are overwritten before
@@ -67,8 +73,9 @@ until the complete gate below passes.
    generation revokes the actor binding. Verify world transitions, broader ground/collision behavior and local
    input/camera ownership while keeping network work on its worker. No direct physics writes from
    rendering, guessed function signatures or teleport fallback.
-4. Bind the existing visual Link to that native character and route the peer's movement/orientation/basic
-   animation. The model, extraction and ENet infrastructure already exist; do not restart those implementations.
+4. Reproduce the original Link's final blended pose, equipment and run/jump/attack actions, then establish their
+   binding to the native companion. The model, extraction and ENet infrastructure already exist; do not restart
+   those implementations. Exact attack appearance and cooperative enemy damage are separate acceptance gates.
 5. Exercise repeated creation/removal, scene load/unload and reconnect. Only then enable supported native
    capabilities and validate with two PCs over the private VPN.
 
@@ -106,7 +113,7 @@ Persistent operations need identifiers, revisions and recovery semantics. Reliab
 persistent events. Do not copy actively written save folders. Personalization beyond the fixed black hair,
 public servers, split screen and PvP remain outside the initial target.
 
-## Reusing Link's appearance
+## Reusing Link's appearance and behavior
 
 The companion may reuse Link's locally extracted mesh, skeleton and animation data. The current figure already
 provides a visual starting point. Giving a native companion that appearance still requires a verified model
@@ -115,8 +122,11 @@ would not establish that binding.
 
 Keep the companion's actor/body identity and lifetime independent. Copying the local Player's component memory,
 input owner, camera links or singleton references cannot create a second independent human-controlled player.
-Each PC keeps its own local Player and camera; peer state drives the companion through the native adapter once
-movement authority is verified. Neither a copied model nor a successful spawn completes that movement gate.
+Each PC keeps its own local Player and camera. Its original movements and attacks can supply final pose,
+equipment and action data for the other PC's independently owned representation. A complete extra Player
+instance remains an investigation route requiring a verified control/camera/manager contract. The current NPC
+does not inherit that behavior through a mesh change. Neither appearance replication nor a successful spawn
+establishes shared combat, abilities or campaign authority. See the handover for the next pose/combat gates.
 
 ## Source delivery and known limits
 

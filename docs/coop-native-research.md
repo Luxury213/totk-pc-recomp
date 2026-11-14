@@ -18,6 +18,11 @@ model conversion/pose evaluation and rendering helpers. Exact source revisions a
 The external MeshCodec decoder is pinned MIT McSharp. Reference checkouts remain read-only; derived assets stay
 ignored. GPL/AGPL references were consulted for behavior only, not copied into this implementation.
 
+The [November 14 follow-up and next-session handover](coop-next-session.md#reference-review-on-2026-11-14)
+records the unchanged arnaldolima1 revision, its still-unintegrated final body-pose/equipment path, Daurosk's
+newly reviewed main and working branches, and LFarhi's early-access announcement. Keep pending body/combat
+work and GPL behavior references distinct from verified reusable implementations.
+
 The private audit tool `tools/coop_native_audit.py` maps scoped observations to the local generated functions,
 resolves a return address to its call instruction, excludes non-executable data and distinguishes candidates from
 invocations. Its output stays below `build/`, carries the generated-content marker and contains offsets/equality
