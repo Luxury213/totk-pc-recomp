@@ -22,7 +22,9 @@ static unsigned char npc_request[0xd8], consumer_code[28] = {3}, parent_code[28]
 static int target_valid, velocity_calls;
 static uint32_t target_generation=3;
 static int64_t world_us=8000000;
+static uint64_t host_ns=1000000000ull;
 static float requested_velocity[3];
+static float expected_vertical=-.5f;
 static Cpu original;
 static int range(uint64_t p, uint64_t n, const void *base, size_t size) {
     return n <= size && p >= (uintptr_t)base && p - (uintptr_t)base <= size - n;
@@ -49,6 +51,7 @@ int plat_mem_read(uint64_t p, void *dst, size_t n) {
     return 1;
 }
 int64_t frame_step_world_us(void) { return world_us; }
+uint64_t plat_now_ns(void) { return host_ns; }
 int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us) {
     if (!target_valid || actor!=0xabc0) return 0;
     *body=(uintptr_t)npc_body; *generation=target_generation; *observed_us=8000000; return 1;
@@ -80,11 +83,11 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     if (fn==MOD_MAIN_BASE+0x567750ull) {
         assert(n==2 && args[0]==(uintptr_t)npc_body && c->sp==original.sp);
         memcpy(requested_velocity,(const void *)(uintptr_t)args[1],sizeof requested_velocity);
-        assert(requested_velocity[1]==-.5f && requested_velocity[2]==0);
+        assert(requested_velocity[1]==expected_vertical && requested_velocity[2]==0);
         velocity_calls++;
         coop_native_probe_npc_update(c);
         coop_native_probe_npc_consume(c);
-        if (armed==COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) memcpy(npc_request+0x44,requested_velocity,12);
+        if (armed>=COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) memcpy(npc_request+0x44,requested_velocity,12);
         memset(c,0x5a,sizeof *c); fesetround(FE_DOWNWARD); return 0;
     }
     assert(fn == MOD_MAIN_BASE+0x599670ull && n == 8);
@@ -256,6 +259,54 @@ int main(int argc, char **argv) {
     npc_motion.consumer_calls=1; npc_motion_busy=1;
     coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume+1); // busy guest phase
     npc_motion_busy=0;
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_PEER_MOTION); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-enet-velocity-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_PEER_MOTION); assert(armed==6);
+    reset(&c); memcpy(arg,pos,sizeof pos); coop_native_probe_request(&c);
+    c.x[0]=0xabc0; original=c; world_us=10000000; target_generation=3;
+    memset(&npc_motion,0,sizeof npc_motion); memset(&npc_peer,0,sizeof npc_peer);
+    coop_native_probe_npc_update(&c); assert(requested_velocity[0]==0 && !npc_motion.finished);
+    CoopNetSnapshot peer={.negotiated=1,.has_remote=1,.session=11,.peer_player=22,.state_received_ns=host_ns,
+                         .remote={.generation=7,.flags=COOP_SAMPLE_PLAYER,.time_ns=100,.velocity={2,0,0}}};
+    assert(coop_native_probe_peer_offer(&peer,3,host_ns));
+    assert(npc_peer.bound && npc_peer.session==11 && npc_peer.generation==7);
+    world_us+=33333; coop_native_probe_npc_update(&c); assert(requested_velocity[0]==2);
+    host_ns+=250000000; peer.state_received_ns=host_ns;
+    coop_native_probe_peer_offer(&peer,3,host_ns); // repeated sender sample cannot extend the lease
+    assert(npc_peer.received_ns!=host_ns);
+    world_us+=33333; consumer_before.x[30]=MOD_MAIN_BASE+0x1824f8; consumer=consumer_before;
+    expected_vertical=-.75f; memcpy(npc_request+0x48,&expected_vertical,4);
+    before_consume=velocity_calls; coop_native_probe_npc_consume(&consumer);
+    assert(velocity_calls==before_consume+1 && requested_velocity[0]==0); // stop at consumer, even before actor update
+    assert(!memcmp(&consumer,&consumer_before,sizeof consumer) && fegetround()==FE_UPWARD);
+    expected_vertical=-.5f; peer.remote.time_ns++; peer.remote.velocity[0]=-2;
+    coop_native_probe_peer_offer(&peer,3,host_ns);
+    world_us+=33333; coop_native_probe_npc_update(&c); assert(requested_velocity[0]==-2); // same-epoch recovery
+    peer.remote.time_ns++; peer.remote.velocity[0]=NAN;
+    coop_native_probe_peer_offer(&peer,3,host_ns); assert(!npc_peer.valid);
+    peer.remote.velocity[0]=3; coop_native_probe_peer_offer(&peer,3,host_ns); assert(!npc_peer.valid);
+    peer.remote.velocity[0]=2; peer.state_received_ns=++host_ns;
+    coop_native_probe_peer_offer(&peer,3,host_ns); assert(npc_peer.valid);
+    peer.remote.generation++; coop_native_probe_peer_offer(&peer,3,host_ns);
+    assert(npc_peer.revoked && !npc_peer.valid);
+    peer.remote.generation--; peer.remote.time_ns++; peer.state_received_ns=++host_ns;
+    coop_native_probe_peer_offer(&peer,3,host_ns); assert(!npc_peer.valid); // revoked actor cannot be rebound
+    world_us+=33333; coop_native_probe_npc_update(&c); assert(requested_velocity[0]==0);
+    npc_peer.revoked=0; coop_native_probe_peer_offer(&peer,3,host_ns); assert(npc_peer.valid);
+    peer.session++; coop_native_probe_peer_offer(&peer,3,host_ns); assert(npc_peer.revoked);
+    npc_peer.revoked=0; peer.session--; coop_native_probe_peer_offer(&peer,4,host_ns); assert(npc_peer.revoked);
+    world_us=npc_motion.started_us+8000000;
+    coop_native_probe_npc_update(&c); assert(npc_motion.finished && npc_motion.stop_pending && requested_velocity[0]==0);
+    coop_native_probe_npc_consume(&consumer);
+    assert(!npc_motion.stop_pending && requested_velocity[0]==0);
+    before_consume=velocity_calls; world_us+=33333;
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume);
+    npc_motion.finished=0; npc_motion.consumer_calls=255; npc_motion.last_us=npc_motion.started_us=world_us;
+    npc_peer.revoked=0; npc_peer.valid=1; npc_peer.received_ns=host_ns; npc_peer.horizontal[0]=2;
+    coop_native_probe_npc_consume(&consumer);
+    assert(npc_motion.consumer_calls==256 && npc_motion.finished && requested_velocity[0]==0);
+    before_consume=velocity_calls; world_us+=33333;
+    coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume); // no call past the final stop budget
     puts("native probes: scoped creation/velocity guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }

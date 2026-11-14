@@ -49,7 +49,8 @@ static const char *owned_name = "Weapon_Sword_101";
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION ? "isolated-npc-consumer-velocity-v1\n" :
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION ? "isolated-npc-enet-velocity-v1\n" :
+                         mode == COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION ? "isolated-npc-consumer-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_MOTION ? "isolated-npc-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC ? "isolated-npc-road-001-v1\n" :
                          mode == COOP_NATIVE_PROBE_CLONE ? "isolated-physics-probe-v1\n" : "isolated-physics-owned-v1\n";
@@ -57,7 +58,7 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (rt_game_version != 143 || !timed_run || !profile ||
         (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED &&
          mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION &&
-         mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION)) goto denied;
+         mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && mode != COOP_NATIVE_PROBE_NPC_PEER_MOTION)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -160,9 +161,75 @@ static struct {
     int64_t started_us, last_us;
     int64_t last_consumer_us;
     float target_velocity[3];
-    unsigned calls, consumer_calls, finished;
+    unsigned calls, consumer_calls, finished, stop_pending;
 } npc_motion;
 static unsigned npc_motion_busy;
+static struct {
+    uint64_t session, player, received_ns, sender_ns;
+    uint32_t generation;
+    float horizontal[2];
+    unsigned bound, valid, revoked, notified;
+} npc_peer;
+static const uint8_t npc_velocity_hash[32] = {0x98,0x3c,0x1c,0xaf,0xee,0x3d,0xee,0x16,0x34,0xe0,0x57,0xa4,0x79,0x07,0xd9,0xcb,
+    0x9e,0xf2,0x66,0x23,0x14,0x62,0xdb,0x66,0xd3,0x62,0x51,0x22,0x73,0x91,0x23,0xa9};
+
+static int npc_peer_offer_locked(const CoopNetSnapshot *peer, uint32_t generation, uint64_t now) {
+    if (!npc_motion.body || npc_motion.finished || npc_peer.revoked) return 0;
+    if (generation != npc_motion.generation || (npc_peer.bound && (!peer->negotiated ||
+        peer->session != npc_peer.session || peer->peer_player != npc_peer.player ||
+        (peer->has_remote && peer->remote.generation != npc_peer.generation)))) {
+        npc_peer.valid = 0; npc_peer.revoked = 1;
+        return 0;
+    }
+    int notify = peer->negotiated && !npc_peer.notified;
+    if (notify) npc_peer.notified = 1;
+    if (!peer->negotiated || !peer->has_remote || !peer->session || !peer->peer_player ||
+        !(peer->remote.flags & COOP_SAMPLE_PLAYER) || !peer->remote.generation || !peer->remote.time_ns ||
+        !peer->state_received_ns || peer->state_received_ns > now) {
+        npc_peer.valid = 0;
+        return notify;
+    }
+    for (unsigned i = 0; i < 3; i++) if (!isfinite(peer->remote.velocity[i])) {
+        npc_peer.valid = 0;
+        return notify;
+    }
+    float x = peer->remote.velocity[0], z = peer->remote.velocity[2];
+    if (x*x + z*z > 4.0001f) { npc_peer.valid = 0; return notify; }
+    // A retransmitted state with the same sender timestamp must not renew the receive-time lease.
+    // Sender clocks are never compared with our clock; only their ordering is used.
+    if (peer->state_received_ns <= npc_peer.received_ns || peer->remote.time_ns <= npc_peer.sender_ns) return notify;
+    if (!npc_peer.bound)
+        rt_log("coop native npc peer binding: session %llu, player %llu, remote generation %u, local generation %u; diagnostic velocity only",
+               (unsigned long long)peer->session, (unsigned long long)peer->peer_player, peer->remote.generation, generation);
+    npc_peer.session = peer->session; npc_peer.player = peer->peer_player;
+    npc_peer.generation = peer->remote.generation; npc_peer.bound = npc_peer.valid = 1;
+    npc_peer.received_ns = peer->state_received_ns; npc_peer.sender_ns = peer->remote.time_ns;
+    npc_peer.horizontal[0] = x; npc_peer.horizontal[1] = z;
+    return notify;
+}
+
+int coop_native_probe_peer_enabled(void) {
+    return __atomic_load_n(&armed, __ATOMIC_ACQUIRE) == COOP_NATIVE_PROBE_NPC_PEER_MOTION;
+}
+
+int coop_native_probe_peer_offer(const CoopNetSnapshot *peer, uint32_t generation, uint64_t now) {
+    if (!peer || !coop_native_probe_peer_enabled()) return 0;
+    unsigned zero = 0;
+    if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return 0;
+    int notify = npc_peer_offer_locked(peer, generation, now);
+    __atomic_store_n(&npc_motion_busy, 0, __ATOMIC_RELEASE);
+    return notify;
+}
+
+static const char *npc_peer_velocity(uint64_t now, float velocity[3]) {
+    velocity[0] = velocity[2] = 0;
+    if (npc_motion.finished) return "finished";
+    if (npc_peer.revoked) return "revoked";
+    if (!npc_peer.valid) return "waiting";
+    if (now < npc_peer.received_ns || now - npc_peer.received_ns > 200000000ull) return "expired";
+    velocity[0] = npc_peer.horizontal[0]; velocity[2] = npc_peer.horizontal[1];
+    return "fresh";
+}
 
 static int probe_code_matches(uint64_t entry, const uint8_t expected[32]) {
     uint8_t bytes[28], hash[32];
@@ -172,9 +239,10 @@ static int probe_code_matches(uint64_t entry, const uint8_t expected[32]) {
 }
 
 static void npc_probe_update_locked(Cpu *c) {
+    unsigned mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE);
+    int peer_mode = mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION;
     if (!c || inside || rt_game_version != 143 || npc_motion.finished ||
-        (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION &&
-         __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) ||
+        (mode != COOP_NATIVE_PROBE_NPC_MOTION && mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && !peer_mode) ||
         !__atomic_load_n(&attempted, __ATOMIC_ACQUIRE)) return;
     uint64_t body;
     uint32_t generation;
@@ -187,12 +255,10 @@ static void npc_probe_update_locked(Cpu *c) {
         return;
     }
     // Keep one call in reserve to stop the same live body if timing or the update budget is exceeded.
-    int stop_early = npc_motion.calls >= 95 || (npc_motion.calls && now > npc_motion.last_us + 250000);
-    const uint8_t velocity_hash[32] = {0x98,0x3c,0x1c,0xaf,0xee,0x3d,0xee,0x16,0x34,0xe0,0x57,0xa4,0x79,0x07,0xd9,0xcb,
-        0x9e,0xf2,0x66,0x23,0x14,0x62,0xdb,0x66,0xd3,0x62,0x51,0x22,0x73,0x91,0x23,0xa9};
+    int stop_early = npc_motion.calls >= (peer_mode ? 255u : 95u) || (npc_motion.calls && now > npc_motion.last_us + 250000);
     const uint8_t update_hash[32] = {0x94,0x53,0x6d,0xb8,0x69,0xd0,0x79,0x8e,0x6a,0xd3,0xd9,0xf1,0xb3,0x6b,0x09,0x23,
         0x96,0xd0,0x0c,0xc7,0x31,0x4d,0xee,0x10,0x59,0x64,0x10,0xbd,0x7c,0xa5,0xa6,0x56};
-    if (!probe_code_matches(MOD_MAIN_BASE + 0x567750ull, velocity_hash) ||
+    if (!probe_code_matches(MOD_MAIN_BASE + 0x567750ull, npc_velocity_hash) ||
         !probe_code_matches(MOD_MAIN_BASE + 0x2e27b0ull, update_hash)) return;
     // Preserve native vertical motion; the experiment requests only bounded horizontal travel.
     float previous[3], velocity[3];
@@ -219,6 +285,12 @@ static void npc_probe_update_locked(Cpu *c) {
     unsigned phase = stop_early ? 2 : elapsed < 1000000 ? 0 : elapsed < 2000000 ? 1 : 2;
     velocity[0] = phase == 0 ? 2.0f : phase == 1 ? -2.0f : 0.0f;
     velocity[1] = previous[1]; velocity[2] = 0;
+    const char *peer_reason = NULL;
+    if (peer_mode) {
+        phase = stop_early || elapsed >= 8000000 ? 2 : 3;
+        peer_reason = npc_peer_velocity(plat_now_ns(), velocity);
+        if (phase == 2) { velocity[0] = velocity[2] = 0; peer_reason = "finished"; }
+    }
     Cpu saved = *c;
     fenv_t fp;
     if (fegetenv(&fp)) return;
@@ -242,15 +314,20 @@ static void npc_probe_update_locked(Cpu *c) {
     npc_motion.last_us = now; npc_motion.calls++;
     memcpy(npc_motion.target_velocity, velocity, sizeof velocity);
     npc_motion.finished = phase == 2;
+    if (peer_mode) npc_motion.stop_pending = npc_motion.finished;
     if (stop_early) rt_log("coop native npc velocity probe: aborted; requested stop after update budget or continuity exceeded");
-    rt_log("coop native npc velocity probe: step %u, phase %s, generation %u, world us %lld, velocity %.6f %.6f %.6f; native request, original CPU restored",
+    if (peer_mode)
+        rt_log("coop native npc peer velocity: step %u, reason %s, generation %u, world us %lld, velocity %.6f %.6f %.6f; leased native request, original CPU restored",
+               npc_motion.calls, peer_reason, generation, (long long)now, velocity[0], velocity[1], velocity[2]);
+    else rt_log("coop native npc velocity probe: step %u, phase %s, generation %u, world us %lld, velocity %.6f %.6f %.6f; native request, original CPU restored",
            npc_motion.calls, phase == 0 ? "forward" : phase == 1 ? "reverse" : "stop", generation,
            (long long)now, velocity[0], velocity[1], velocity[2]);
 }
 
 void coop_native_probe_npc_update(Cpu *c) {
     if (!c || inside || (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION &&
-                        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION)) return;
+                        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION &&
+                        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_PEER_MOTION)) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     npc_probe_update_locked(c);
@@ -258,10 +335,12 @@ void coop_native_probe_npc_update(Cpu *c) {
 }
 
 static void npc_probe_consume_locked(Cpu *c) {
-    if (!npc_motion.calls || npc_motion.finished || npc_motion.consumer_calls >= 96 ||
+    int peer_mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE) == COOP_NATIVE_PROBE_NPC_PEER_MOTION;
+    if (!npc_motion.calls || (npc_motion.finished && (!peer_mode || !npc_motion.stop_pending)) ||
+        npc_motion.consumer_calls >= (peer_mode ? 256u : 96u) ||
         c->x[30] != MOD_MAIN_BASE + 0x1824f8ull || c->x[1] != npc_motion.body) return;
     int64_t now = frame_step_world_us(), observed_us;
-    if (now < npc_motion.last_us || now > npc_motion.last_us + 100000 || now <= npc_motion.last_consumer_us) return;
+    if (now < npc_motion.last_us || (!peer_mode && now > npc_motion.last_us + 100000) || now <= npc_motion.last_consumer_us) return;
     uint64_t body, pending; uint32_t generation, flags;
     if (!coop_adapter_npc_probe_body(npc_motion.actor, &body, &generation, &observed_us) ||
         body != npc_motion.body || generation != npc_motion.generation ||
@@ -271,8 +350,28 @@ static void npc_probe_consume_locked(Cpu *c) {
         0xc5,0xd6,0x1f,0x9c,0x97,0x53,0x9c,0x5f,0x96,0x87,0xa0,0x59,0x78,0x98,0x66,0xed};
     const uint8_t parent_hash[32] = {0xd3,0x2d,0x66,0x8a,0x58,0xff,0x87,0x78,0xb8,0x11,0xd6,0x46,0x5a,0x3c,0x33,0x9c,
         0x67,0x4b,0xe4,0x66,0x29,0x25,0xc6,0x68,0x65,0x91,0x4a,0x62,0xf6,0x2f,0x0c,0xec};
-    if (!probe_code_matches(MOD_MAIN_BASE + 0x182eb0ull, consumer_hash) ||
+    if (!probe_code_matches(MOD_MAIN_BASE + 0x567750ull, npc_velocity_hash) ||
+        !probe_code_matches(MOD_MAIN_BASE + 0x182eb0ull, consumer_hash) ||
         !probe_code_matches(MOD_MAIN_BASE + 0x182410ull, parent_hash)) return;
+    float velocity[3];
+    memcpy(velocity, npc_motion.target_velocity, sizeof velocity);
+    if (peer_mode) {
+        // Preserve this consumer's native vertical request, including gravity/ground response. Cached body
+        // velocity precedes native preparation and feeding it back can accumulate an artificial ascent.
+        if (!read_guest(pending + 0x44, velocity, sizeof velocity)) return;
+        for (unsigned i = 0; i < 3; i++) if (!isfinite(velocity[i]) || fabsf(velocity[i]) > 50) return;
+        npc_peer_velocity(plat_now_ns(), velocity);
+        if (now > npc_motion.last_us + 100000 || now >= npc_motion.started_us + 8000000 || npc_motion.consumer_calls >= 255) {
+            velocity[0] = velocity[2] = 0;
+            // Duration alone leaves the actor-update hook its final stop/report opportunity. A missing
+            // actor update or exhausted consumer budget terminates the experiment without rebinding.
+            if (now > npc_motion.last_us + 100000 || npc_motion.consumer_calls >= 255) {
+                npc_motion.finished = 1;
+                rt_log("coop native npc peer consumer stop: reason %s, generation %u, world us %lld; requested zero horizontal velocity",
+                       npc_motion.consumer_calls >= 255 ? "budget" : "actor-update-stale", generation, (long long)now);
+            }
+        }
+    }
     // main+0x182410 has popped this exact live request but has not acquired body+0x78 here. Its normal
     // consumer call precedes the native request cleanup and lock. Reapply via the verified request API,
     // never by changing the consumer's arguments or directly storing into the request/body.
@@ -280,18 +379,20 @@ static void npc_probe_consume_locked(Cpu *c) {
     fenv_t fp;
     if (fegetenv(&fp)) return;
     inside = 1;
-    rt_call(c, MOD_MAIN_BASE + 0x567750ull, 2, body, (uint64_t)(uintptr_t)npc_motion.target_velocity);
+    rt_call(c, MOD_MAIN_BASE + 0x567750ull, 2, body, (uint64_t)(uintptr_t)velocity);
     *c = saved;
     if (fesetenv(&fp)) rt_fatal("coop native npc velocity consumer: cannot restore host floating-point environment");
     inside = 0;
     npc_motion.consumer_calls++; npc_motion.last_consumer_us = now;
+    if (peer_mode && npc_motion.finished) npc_motion.stop_pending = 0;
     rt_log("coop native npc velocity consumer reapply: correction %u, generation %u, world us %lld; same live pending request, original CPU restored",
            npc_motion.consumer_calls, generation, (long long)now);
 }
 
 void coop_native_probe_npc_consume(Cpu *c) {
     if (!c || inside || rt_game_version != 143 ||
-        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION) return;
+        (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION &&
+         __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_PEER_MOTION)) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     npc_probe_consume_locked(c);

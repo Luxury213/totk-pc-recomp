@@ -153,6 +153,10 @@ void coop_net_configure(CoopNet *n, const CoopNetConfig *c) { (void)n; (void)c; 
 void coop_net_publish(CoopNet *n, const CoopSample *s) { (void)n; (void)s; }
 void coop_net_snapshot(CoopNet *n, CoopNetSnapshot *s) { (void)n; memset(s,0,sizeof *s); }
 int coop_net_notice(CoopNet *n, const char *s) { (void)n; (void)s; return 0; }
+int coop_native_probe_peer_offer(const CoopNetSnapshot *p, uint32_t generation, uint64_t ns) {
+    (void)p; (void)generation; (void)ns; return 0;
+}
+int coop_native_probe_peer_enabled(void) { return 0; }
 int coop_net_player_id(const char *s, uint64_t *id) { (void)s; *id=42; return 1; }
 void rt_sha256(const void *p, size_t n, uint8_t out[32]) { (void)p; (void)n; memset(out,0,32); }
 const RtFileHash rt_exefs_sha256[] = {{"main","synthetic"}};

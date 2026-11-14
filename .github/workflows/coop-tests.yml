@@ -45,6 +45,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/coop_native_probe_check.py --cc $compiler
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/build_coop_velocity_peer.py --cc $compiler
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/coop_diagnose_check.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/settings_doc_check.py

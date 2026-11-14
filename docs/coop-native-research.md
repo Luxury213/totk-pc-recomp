@@ -331,10 +331,59 @@ there is no Link model binding yet. Synthetic fixtures cover incorrect callers/h
 stale commands, duplicate timestamps, recursion and CPU/FP preservation. Diagnostic acceptance requires real
 actor displacement in both directions and later rest, rather than successful API calls alone.
 
-This proves bounded effective movement of the native NPC in the controlled scene. The commands are synthetic;
-no human peer controls it. Continuous movement/stop recovery, native locomotion animation, grounding/collision
-on varied terrain, full local camera/input independence, removal and repeated scene/session lifecycle remain
-unverified. Ordinary native commands still reject mutation and session capabilities remain presence-only.
+This proves bounded effective movement of the native NPC in the controlled scene. Mode 5 commands are synthetic;
+no human peer controls it. The mode 6 experiment below extends that result to a bounded ENet stream and stop
+recovery. Native locomotion animation, grounding/collision on varied terrain, full local camera/input independence,
+removal and repeated scene/session lifecycle remain unverified. Ordinary native commands still reject mutation
+and session capabilities remain presence-only.
+
+## Leased ENet velocity diagnostic
+
+`coop.c:coop_guest_observe` offers a decoded worker snapshot to `coop_native_probe.c:coop_native_probe_peer_offer`
+only while separately armed mode 6 is active. The observer copies data into one slot protected by the same
+nonblocking probe lock; it performs no guest mutation. At native actor update and request consumption, the probe
+checks the exact owned NPC/body/world again before applying horizontal velocity through the existing verified
+API. The renderer and network worker never call the native velocity routine. Normal gameplay capabilities and
+the ordinary guest command queue remain disabled.
+
+The binding identifies the negotiated session, peer player, peer generation and the scoped local generation.
+A change revokes it without creating or rebinding an actor. Expiry within the same epoch permits recovery.
+Only a newly published sender timestamp and newer receive timestamp can replace a command. Sender time is used
+for ordering, never compared with the receiver's clock. The local receive-time lease lasts 200 ms; repeated
+transmissions of the same pose cannot extend it. Native consumption rechecks expiry independently of actor
+update, so an old latched horizontal velocity cannot continue through a publication gap. Missing actor updates
+also request a stop, and an eight-world-second duration plus 256 calls per hook bound the diagnostic.
+
+`tools/coop_velocity_peer.c` is a game-free loopback client using the production ENet worker and protocol/content
+negotiation. After a reliable readiness label it publishes forward velocity, pauses, publishes reverse, pauses,
+publishes diagonal velocity and stops. The worker continues retransmitting the old sample during each short
+pause. This specifically exercises stale publication rather than relying on a transport disconnect. It uses
+presence packets as an explicit diagnostic velocity source, not a new gameplay-command protocol or a shared
+scene identity. Its absolute position and vertical velocity are ignored. No guest pointer crosses the wire.
+
+The first ENet run failed acceptance despite moving in each requested direction. Feeding the cached body's
+vertical velocity back at consumption caused artificial ascent and eventually a stale actor-update stop. The
+corrected mode 6 instead retains Y from the exact pending native request at `+0x44`, after native preparation,
+before replacing X/Z. This preserves the current native gravity/ground response. Synthetic checks deliberately
+make pending Y differ from cached Y and require the native call to retain pending Y. Do not remove the stale
+update guard to make this failed run pass.
+
+Two corrected 28-world-second runs passed all requested ENet gates:
+
+| Local input | Producer / consumer calls | Sampled forward / reverse | Sampled diagonal X/Z | Stops and exit |
+| --- | --- | --- | --- | --- |
+| Idle after creation | 237 / 125 | 2.066 m / 2.208 m | 1.039 m / 1.073 m | Two three-axis expiry rests, final rest, normal game/peer exit, source save unchanged |
+| Walking and camera input during the stream | 234 / 123 | 2.311 m / 2.483 m | 0.776 m / 0.808 m | Same stop/exit/save requirements passed; local horizontal travel 4.230 m |
+
+`coop_diagnose.py:npc_peer_velocity_summary` matches the initialized actor and world, bounded ordered commands,
+one binding, direction-specific displacement, both expiry rests and final positional rest. All three axes must
+rest; unreasonable horizontal steps fail acceptance. Consumer correction sequence/generation/time and the peer's
+exit are separate required gates. Distances use sampled segments with transition margins. They are not exact
+integrals of network velocity. Images show the native Hylian NPC, with the optional Link figure disabled.
+
+This establishes a local ENet-to-native movement diagnostic with stop/recovery. It does not establish human
+control, arbitrary native movement, animation, safe removal/reconnect, shared world identities or Internet
+acceptance. Keep the experiment isolated until those lifecycle and movement contracts are verified.
 
 The older [Lotuskit physics behavior notes](https://github.com/aquacluck/totk-lotuskit/blob/59dcfccd77b6d4bcfa718bff806bc55be640edb7/src/program/structs/phive.hpp)
 were read as a GPL behavior reference only. No code or layouts were copied; its older game addresses were

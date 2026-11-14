@@ -171,7 +171,7 @@ static const CfgMeta metas[] = {
     {"COOP_IP", "127.0.0.1", NULL, LIVE},
     {"COOP_PORT", "7777", "1024..65535", LIVE},
     {"COOP_TRACE_GUEST", "0", "0|1", RESTART},
-    {"COOP_NATIVE_PROBE", "0", "0|1|2|3|4|5", RESTART},
+    {"COOP_NATIVE_PROBE", "0", "0|1|2|3|4|5|6", RESTART},
     // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "0", "0|1", RESTART},
     {"REPLAY_WORKERS", "0", "0..16", RESTART}, {"REPLAY_CHUNKS", "0", "0..64", RESTART},

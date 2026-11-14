@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import time
 import uuid
@@ -317,18 +318,75 @@ def npc_velocity_summary(lines, spawn):
                 remote_control_verified=False, native_companion_verified=False)
 
 
-def npc_consumer_reapply_summary(lines, motion):
+def npc_consumer_reapply_summary(lines, motion, limit=96):
     corrections = [dict(correction=int(m[1]), generation=int(m[2]), world_us=int(m[3]))
                    for line in lines if (m := re.search(
                        r'coop native npc velocity consumer reapply: correction (\d+), generation (\d+), world us (\d+); '
                        r'same live pending request, original CPU restored', line))]
     commands = motion['commands']
-    valid = bool(commands and 0 < len(corrections) <= 96 and
+    valid = bool(commands and 0 < len(corrections) <= limit and
                  [c['correction'] for c in corrections] == list(range(1, len(corrections)+1)) and
                  all(c['generation'] == commands[0]['generation'] and
                      commands[0]['world_us'] <= c['world_us'] <= commands[-1]['world_us'] for c in corrections) and
                  all(a['world_us'] < b['world_us'] for a, b in zip(corrections, corrections[1:])))
     return dict(corrections=corrections, count=len(corrections), acceptance_passed=valid)
+
+
+def npc_peer_velocity_summary(lines, spawn):
+    """Require native displacement, two lease-expiry stops and same-epoch recovery from actual peer commands."""
+    number = r'(-?\d+(?:\.\d+)?)'
+    commands = [dict(step=int(m[1]), reason=m[2], generation=int(m[3]), world_us=int(m[4]),
+                     velocity=[float(m[i]) for i in (5, 6, 7)]) for line in lines if (m := re.search(
+        r'coop native npc peer velocity: step (\d+), reason (\w+), generation (\d+), world us (\d+), '
+        r'velocity ' + number + ' ' + number + ' ' + number + r'; leased native request, original CPU restored', line))]
+    scopes = [dict(probe=int(m[1]), request=int(m[2]), generation=int(m[3])) for line in lines if (m := re.search(
+        r'coop native npc physics: probe (\d+), request (\d+), .*generation (\d+), .*phase later-actor-update;', line))]
+    bindings = [tuple(map(int, m.groups())) for line in lines if (m := re.search(
+        r'coop native npc peer binding: session (\d+), player (\d+), remote generation (\d+), local generation (\d+);', line))]
+    valid = bool(spawn.get('actor_name') == 'Npc_Road_001' and spawn['acceptance_passed'] and len(scopes) == 1 and
+                 {k: scopes[0][k] for k in ('probe', 'request')} in spawn['initialized'] and
+                 3 <= len(commands) <= 256 and len(bindings) == 1 and all(bindings[0]) and
+                 bindings[0][3] == scopes[0]['generation'] and
+                 [c['step'] for c in commands] == list(range(1, len(commands)+1)) and
+                 all(c['generation'] == scopes[0]['generation'] and all(map(math.isfinite, c['velocity'])) and
+                     c['velocity'][0]**2+c['velocity'][2]**2 <= 4.001 and abs(c['velocity'][1]) <= 50 for c in commands) and
+                 all(30000 <= b['world_us']-a['world_us'] <= 250000 for a, b in zip(commands, commands[1:])) and
+                 commands[-1]['reason'] == 'finished' and
+                 8000000 <= commands[-1]['world_us']-commands[0]['world_us'] <= 8250000 and
+                 all(c['velocity'][0] == c['velocity'][2] == 0 for c in commands if c['reason'] != 'fresh'))
+    samples = sorted((s for s in spawn['samples'] if scopes and s['probe'] == scopes[0]['probe'] and
+                      s['request'] == scopes[0]['request']), key=lambda s: s['world_us'])
+    valid = valid and all(0 < b['world_us']-a['world_us'] <= 350000 and
+                         math.hypot(b['pos'][0]-a['pos'][0], b['pos'][2]-a['pos'][2]) <=
+                         2.1*(b['world_us']-a['world_us'])/1000000+.1 for a, b in zip(samples, samples[1:]))
+    groups = []
+    for c in commands:
+        x, _, z = c['velocity']
+        kind = ('forward' if x == 2 and z == 0 else 'reverse' if x == -2 and z == 0 else
+                'diagonal' if x == z == 1 else 'expired' if c['reason'] == 'expired' else 'idle')
+        if not groups or groups[-1]['kind'] != kind:
+            groups.append(dict(kind=kind, start=c['world_us'], end=c['world_us']))
+        groups[-1]['end'] = c['world_us']
+    segments = []
+    for group in groups:
+        points = [s['pos'] for s in samples if group['start']+100000 <= s['world_us'] <= group['end']]
+        displacement = [points[-1][i]-points[0][i] for i in range(3)] if len(points) >= 2 else [0., 0., 0.]
+        rest = len(points) >= 3 and group['end']-group['start'] >= 300000 and all(
+            max(p[i] for p in points)-min(p[i] for p in points) <= .06 for i in range(3))
+        segments.append(dict(**group, samples=len(points), displacement=displacement, positional_rest=rest))
+    kinds = [s['kind'] for s in segments if s['kind'] != 'idle']
+    movement = kinds == ['forward', 'expired', 'reverse', 'expired', 'diagonal']
+    for s in segments:
+        dx, _, dz = s['displacement']
+        movement = movement and dict(forward=dx >= .4, reverse=dx <= -.4, diagonal=dx >= .2 and dz >= .2,
+                                     expired=s['positional_rest'], idle=True)[s['kind']]
+    stop = commands[-1]['world_us'] if commands else 0
+    later = [s for s in samples if stop+200000 <= s['world_us'] <= stop+1200000]
+    rest = len(later) >= 4 and later[-1]['world_us']-later[0]['world_us'] >= 400000 and all(
+        max(s['pos'][i] for s in later)-min(s['pos'][i] for s in later) <= .06 for i in range(3))
+    return dict(commands=commands, bindings=bindings, segments=segments, rest_observed=rest,
+                acceptance_passed=bool(valid and movement and rest), human_peer_verified=False,
+                native_companion_verified=False)
 
 
 def diagnostic_acceptance(report, *, scenario, require_animation=False, require_figure=False,
@@ -383,6 +441,8 @@ def main():
                        help='create one scoped NPC and test a bounded native forward/reverse/stop velocity pulse')
     spawn.add_argument('--native-npc-consumer-motion', action='store_true',
                        help='test a separate NPC pulse reapplied through the native API at its request-consumer entry')
+    spawn.add_argument('--native-npc-peer-motion', action='store_true',
+                       help='test bounded ENet loopback velocities, lease-expiry stops and same-session recovery')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
@@ -405,14 +465,15 @@ def main():
     if args.require_resource and args.scenario != 'object':
         ap.error('--require-resource requires --scenario object')
     motion = args.native_npc_motion or args.native_npc_consumer_motion
-    npc = args.native_owned_npc or motion
+    npc = args.native_owned_npc or motion or args.native_npc_peer_motion
     spawning = args.native_clone_weapon or args.native_owned_weapon or npc
     if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
-    if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < (20 if motion else 15) or
+    minimum = 27 if args.native_npc_peer_motion else 20 if motion else 15
+    if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < minimum or
                                   args.require_spawn_retirement or args.require_spawn_fall):
         ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
-                 f'{20 if motion else 15} world seconds; no pickup/fall acceptance')
+                 f'{minimum} world seconds; no pickup/fall acceptance')
     if args.require_spawn_retirement and not spawning:
         ap.error('--require-spawn-retirement requires a native weapon experiment')
     if args.require_spawn_fall and not args.native_owned_weapon:
@@ -452,7 +513,8 @@ def main():
     if before != save_hashes(profile / 'save') or before != save_hashes(seed / 'save'):
         raise SystemExit(f'The source save changed during copying; diagnostic not launched. Copy retained at {folder}')
     if spawning:
-        marker = ('isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
+        marker = ('isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
+                  'isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
                   'isolated-npc-velocity-v1\n' if args.native_npc_motion else 'isolated-npc-road-001-v1\n' if npc else
                   'isolated-physics-owned-v1\n' if args.native_owned_weapon else 'isolated-physics-probe-v1\n')
         (profile / 'coop-native-probe.txt').write_bytes(marker.encode('ascii'))
@@ -460,28 +522,67 @@ def main():
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
                TOTK_OUTPUT_RES='1280x720', TOTK_WINDOW_SIZE='1280x720', TOTK_DLAA='0')
     if args.shots is not None:
         env.update(TOTK_SHOTS=f'w0-{args.seconds}:{args.shots}', TOTK_SHOTS_DIR=str(folder / 'frames'))
+    peer_command = None
+    if args.native_npc_peer_motion:
+        from build_coop_velocity_peer import build_peer
+        peer_exe = build_peer()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        hashes = json.loads((ROOT / 'tools/data/expected-v1.4.3.json').read_text())['exefs_sha256']
+        content = hashlib.sha256(''.join(h for name, h in sorted(hashes.items())
+                                        if name in ('main', 'sdk', 'subsdk0')).encode('ascii')).hexdigest()
+        peer_profile = folder / 'peer-profile'
+        peer_profile.mkdir()
+        peer_command = [str(peer_exe), str(port), content, str(peer_profile)]
+        env.update(TOTK_COOP_MODE='host', TOTK_COOP_IP='127.0.0.1', TOTK_COOP_PORT=str(port))
     # Explicit game assets from the verified build manifest; only the new profile is writable.
     command = [str(exe), '--exefs', info['exefs'], '--romfs', info['romfs'], '--profile', str(profile),
                '--seconds', str(args.seconds), '--shot', str(folder / 'last-frame.png')]
     started = time.monotonic()
     timed_out = False
     log = folder / 'guest.log'
-    with log.open('w', encoding='utf-8') as f:
+    peer_process = None
+    peer_result = None
+    with log.open('w', encoding='utf-8') as f, (folder / 'peer.log').open('w', encoding='utf-8') as peer_log:
         process = subprocess.Popen(command, cwd=output / 'game', env=env, stdout=f, stderr=subprocess.STDOUT,
                                    creationflags=subprocess.CREATE_NO_WINDOW)
         try:
-            result = process.wait(timeout=args.timeout)
+            if peer_command:
+                with log.open('r', encoding='utf-8', errors='replace') as reader:
+                    tail = ''
+                    while process.poll() is None and time.monotonic()-started < args.timeout:
+                        if peer_process is None:
+                            chunk = tail + reader.read()
+                            if 'coop native npc peer velocity: step 1,' in chunk:
+                                peer_process = subprocess.Popen(peer_command, env=dict(env, PATH='C:/msys64/ucrt64/bin'+os.pathsep+env.get('PATH', '')),
+                                    stdout=peer_log, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
+                            tail = chunk[-256:]
+                        time.sleep(.05)
+                result = process.wait(timeout=max(.01, args.timeout-(time.monotonic()-started)))
+            else:
+                result = process.wait(timeout=args.timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
             process.kill()   # only this runner's own child, never an existing game instance
             result = process.wait()
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            raise
+        finally:
+            if peer_process is not None:
+                if peer_process.poll() is None:
+                    peer_process.kill()
+                peer_result = peer_process.wait()
     lines = log.read_text(encoding='utf-8', errors='replace').splitlines()
     observations = [line for line in lines if 'coop adapter:' in line]
     traces = [line for line in lines if 'coop native trace:' in line]
@@ -578,6 +679,14 @@ def main():
         require_spawn_fall=args.require_spawn_fall, require_npc_motion=motion)
     if args.native_npc_consumer_motion:
         report['acceptance_checks']['native_consumer_reapply'] = consumer['acceptance_passed']
+    if args.native_npc_peer_motion:
+        peer_motion = npc_peer_velocity_summary(lines, report['native_spawn_experiment'])
+        peer_motion['peer_exit_code'] = peer_result
+        peer_motion['consumer_reapply'] = npc_consumer_reapply_summary(lines, peer_motion, limit=256)
+        report['native_npc_peer_experiment'] = peer_motion
+        report['acceptance_checks']['native_peer_velocity'] = peer_motion['acceptance_passed']
+        report['acceptance_checks']['native_peer_consumer'] = peer_motion['consumer_reapply']['acceptance_passed']
+        report['acceptance_checks']['native_peer_process'] = peer_result == 0
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))

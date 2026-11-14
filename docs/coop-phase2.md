@@ -19,7 +19,8 @@ engine evidence and [the campaign design](coop.md) for the agreed final behavior
 | Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Removal and reusable session ownership are still unverified |
 | Phase 2: NPC body/velocity diagnosis | Early actor-update pulses failed; scoped consumer/backend tracing showed their velocity was already zero before consumption | The exact native override writer remains unconfirmed |
 | Phase 2: isolated NPC movement | Two consumer-entry pulse runs passed: about 2 m forward, 1.9 m reverse and positional rest; normal exits and unchanged source saves | Synthetic commands only; no peer control, verified locomotion animation/grounding contract or Link model binding |
-| Phase 2: remote native character | Disabled; native commands are rejected and capabilities remain presence-only | Actor/controller selection, native movement, safe update phase and repeated lifecycle tests |
+| Phase 2: ENet NPC diagnostic | A game-free loopback peer drives forward/reverse/diagonal movement; two lease-expiry stops, recovery and final positional rest passed | Scripted peer only; no human/Internet acceptance or complete native companion lifecycle |
+| Phase 2: ordinary native character commands | Disabled; the ordinary command queue rejects mutation and capabilities remain presence-only | Production movement/animation contract, Link binding, removal, shared world identities and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 
 The visual Link and the native weapon are separate objects. An observed weapon fall does not establish humanoid
@@ -61,9 +62,10 @@ until the complete gate below passes.
    remains a weaker research candidate, not a verified world actor. Parameter references alone are not live-body proof.
 2. Verify creation/storage ownership beyond the one-shot experiment: asynchronous completion, rejection,
    cancellation and safe storage reuse. Retain scoped request, actor, metadata ID and world-generation identities.
-3. Generalize the verified consumer-entry experiment into a bounded movement contract, including stale-command
-   stop behavior, world transitions, ground/collision behavior and local input/camera ownership. Then connect
-   peer commands on that guest phase while keeping network work on its worker. No direct physics writes from
+3. Extend the bounded ENet velocity experiment into a production movement contract. Its 200 ms receive-time
+   lease stops repeated stale samples and permits recovery within the same session; a changed session/player or
+   generation revokes the actor binding. Verify world transitions, broader ground/collision behavior and local
+   input/camera ownership while keeping network work on its worker. No direct physics writes from
    rendering, guessed function signatures or teleport fallback.
 4. Bind the existing visual Link to that native character and route the peer's movement/orientation/basic
    animation. The model, extraction and ENet infrastructure already exist; do not restart those implementations.

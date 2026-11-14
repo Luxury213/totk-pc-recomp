@@ -9,6 +9,7 @@
 #include "coop.h"
 #include "coop_adapter.h"
 #include "coop_net.h"
+#include "coop_native_probe.h"
 #include "coop_interp.h"
 #include "host.h"
 #include "nvn_api.h"
@@ -156,9 +157,17 @@ void coop_guest_observe(const Cpu *cpu) {
     coop_adapter_observe(cpu);
     CoopAdapterSnapshot adapter;
     coop_adapter_snapshot(&adapter);
+    int peer_probe = coop_native_probe_peer_enabled();
+    CoopNetSnapshot peer;
     plat_mutex_lock(&C_lock);
     coop_net_publish(C.net, &adapter.sample);
+    if (peer_probe) coop_net_snapshot(C.net, &peer);
     plat_mutex_unlock(&C_lock);
+    if (peer_probe && coop_native_probe_peer_offer(&peer, adapter.sample.generation, plat_now_ns())) {
+        plat_mutex_lock(&C_lock);
+        coop_net_notice(C.net, "npc-velocity-ready-v1");
+        plat_mutex_unlock(&C_lock);
+    }
 }
 
 // Guest-snapshot entry for callers without replay-local uniform updates.

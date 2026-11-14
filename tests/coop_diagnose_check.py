@@ -36,6 +36,58 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def npc_peer_fixture(self):
+        lines = ['coop native npc physics: probe 10, request 5, entry main+0x2e27b0, caller 0, '
+                 'generation 3, world us 0, host thread 1, phase later-actor-update; owner and metadata matched, observation only',
+                 'coop native npc peer binding: session 11, player 22, remote generation 1, local generation 3; diagnostic velocity only']
+        samples, pos, previous = [], [0., 3., 0.], [0., 0., 0.]
+        for i in range(187):
+            t = 1000000+i*50000
+            pos = [p+v*.05 for p, v in zip(pos, previous)]
+            samples.append(dict(probe=10, request=5, world_us=t, pos=list(pos)))
+            if i > 160:
+                continue
+            reason, vx, vz = ('fresh', 2, 0) if 1250000 <= t < 2250000 else (
+                ('expired', 0, 0) if 2250000 <= t < 3050000 else (
+                ('fresh', -2, 0) if 3050000 <= t < 4050000 else (
+                ('expired', 0, 0) if 4050000 <= t < 4850000 else (
+                ('fresh', 1, 1) if 4850000 <= t < 5850000 else ('finished' if i == 160 else 'waiting', 0, 0)))))
+            previous = [vx, 0., vz]
+            lines.append(f'coop native npc peer velocity: step {i+1}, reason {reason}, generation 3, '
+                         f'world us {t}, velocity {vx:.6f} 0.000000 {vz:.6f}; leased native request, original CPU restored')
+        return lines, dict(actor_name='Npc_Road_001', acceptance_passed=True,
+                           initialized=[dict(probe=10, request=5)], samples=samples)
+
+    def test_peer_motion_requires_displacement_expiry_stops_and_recovery(self):
+        lines, spawn = self.npc_peer_fixture()
+        result = diagnose.npc_peer_velocity_summary(lines, spawn)
+        self.assertTrue(result['acceptance_passed'])
+        self.assertFalse(result['human_peer_verified'])
+        for change in ('wrong_world', 'wrong_probe', 'missing_finish', 'duplicate_step', 'no_expiry',
+                       'moving_during_gap', 'floating_during_gap', 'teleport', 'stationary'):
+            with self.subTest(change=change):
+                lines, spawn = self.npc_peer_fixture()
+                if change == 'wrong_world':
+                    lines = [l.replace('generation 3,', 'generation 4,') for l in lines]
+                elif change == 'wrong_probe':
+                    spawn['initialized'] = [dict(probe=11, request=5)]
+                elif change == 'missing_finish':
+                    lines = [l for l in lines if 'reason finished,' not in l]
+                elif change == 'duplicate_step':
+                    lines.append(lines[-1])
+                elif change == 'no_expiry':
+                    lines = [l.replace('reason expired,', 'reason waiting,') for l in lines]
+                elif change in ('moving_during_gap', 'floating_during_gap'):
+                    for s in spawn['samples']:
+                        if 2250000 <= s['world_us'] < 3050000:
+                            s['pos'][0 if change == 'moving_during_gap' else 1] += (s['world_us']-2250000)/1000000
+                elif change == 'teleport':
+                    spawn['samples'][20]['pos'][0] += 10
+                else:
+                    for s in spawn['samples']:
+                        s['pos'] = [0., 3., 0.]
+                self.assertFalse(diagnose.npc_peer_velocity_summary(lines, spawn)['acceptance_passed'])
+
     def npc_motion_fixture(self):
         lines = ['coop native npc physics: probe 10, request 5, entry main+0x2e27b0, caller 0, '
                  'generation 3, world us 0, host thread 1, phase later-actor-update; owner and metadata matched, observation only']

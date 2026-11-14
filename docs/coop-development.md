@@ -20,7 +20,8 @@ The public plan is authoritative for resuming development; private notes under i
 | Presentation | Interpolated animated Link, black hair, scene depth, lighting and shadows; silhouette fallback | No native body, collision, input, inventory or combat |
 | Native diagnostics | Scoped request/task/actor/resource/reference/retirement observations | Observation does not establish an unrestricted calling contract |
 | Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
-| Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Synthetic movement only; no peer-driven NPC, Link binding or removal API |
+| Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Fixed synthetic pulse; Link binding and removal API remain unverified |
+| Native ENet diagnostic | One scoped NPC consumes a loopback peer's leased horizontal velocities and stops/restarts across publication gaps | Scripted peer; no human/Internet, Link binding or complete lifecycle acceptance |
 
 State packets are 152 bytes. Rotation and animation fields have explicit presence flags; malformed/nonfinite
 values and noncanonical strings are rejected. Stale observations clear optional pose data. Quaternion blending
@@ -219,6 +220,38 @@ local walking/camera input during the pulse; this does not establish the full ca
 The NPC still has its own native appearance and behavior. These short synthetic pulses do not verify peer
 control, locomotion animation, grounding/collision across terrain, safe removal or a playable second Link.
 
+For the separately armed ENet diagnostic, the runner builds a small game-free peer, starts one copied-profile
+host and connects the peer over loopback once the native NPC is ready:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-peer-motion --input-script "<recorded drop script>" --seconds 28 --shots 2 --without-figure
+```
+
+This mode requires at least 27 world seconds and the `isolated-npc-enet-velocity-v1` marker. The peer uses the
+normal protocol/content negotiation and ENet worker. It sends forward velocity, pauses publication, resumes
+in reverse, pauses again, sends diagonal velocity and stops. Its repeated old samples during the gaps must not
+renew movement. Host observer code copies one peer sample; only the native actor-update/request-consumer hooks
+can apply it. Commands expire 200 ms after their local receive timestamp, even if the consumer runs before
+the next actor update. Sender clocks supply ordering only. A changed session/player, peer generation or local
+world generation revokes that actor's binding. Same-epoch fresh samples can recover after an expiry stop.
+
+Horizontal speed is limited to 2 m/s; incoming vertical velocity and absolute position are ignored. At consumption
+the current native request supplies vertical motion, including gravity/ground response, rather than feeding back
+the body's older cached vertical velocity. The experiment ends after eight world seconds, with at most 256 actor-update
+requests and 256 consumer calls including a final stop opportunity. It neither spawns another actor on reconnect
+nor enables ordinary native commands. The report requires bidirectional/diagonal native displacement, two
+positional rests during expiry, recovery, final rest, consumer correlation and a successful peer process.
+This local scripted peer does not validate another person's PC, Internet play, shared scene identities or
+the complete companion lifecycle. Peer output remains in the ignored diagnostic folder beside the game report.
+
+Two 28-world-second runs passed the ENet diagnostic, including the stricter three-axis rest and no-horizontal-
+teleport checks. The idle-local run sampled 2.066 m forward, 2.208 m reverse and diagonal displacement
+(1.039, 1.073) m on X/Z. The run with scripted local walking/camera input sampled 2.311 m forward, 2.483 m
+reverse and (0.776, 0.808) m diagonally; local horizontal travel during world seconds 15-18 was 4.230 m.
+Both rested during each publication gap and after the final stop, exited normally and preserved source-save
+hashes. These sampled segment distances exclude transition margins. Full camera/input independence and varied
+terrain behavior are still acceptance gates, not conclusions from the input script alone.
+
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,
 owned arguments, fall/rest and retirement separately. Its creation acceptance alone cannot establish the later
@@ -253,6 +286,7 @@ Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or
 .venv/Scripts/python.exe tests/coop_figure_check.py
 .venv/Scripts/python.exe tests/coop_native_audit_check.py
 .venv/Scripts/python.exe tests/coop_native_probe_check.py
+.venv/Scripts/python.exe tools/build_coop_velocity_peer.py
 .venv/Scripts/python.exe tests/coop_diagnose_check.py
 .venv/Scripts/python.exe tests/settings_doc_check.py
 .venv/Scripts/python.exe tools/build_shaders.py --check
