@@ -37,12 +37,16 @@ void coop_figure_publish(const CoopSnapshot *snapshot) {
         figure.frame = fallback_frame;
     }
     previous_animation = figure.anim;
+    figure.has_body = (snapshot->peer_visual_flags & COOP_SAMPLE_BODY) && model->npalm && model->parent &&
+                      figure.anim>=0 && figure.anim<model->nanims && !model->anims[figure.anim].mats &&
+                      coop_body_valid(&snapshot->peer_body);
+    if (figure.has_body) figure.body = snapshot->peer_body;
     float q[4];
     if (snapshot->peer_visual_flags & COOP_SAMPLE_ROTATION) memcpy(q, snapshot->peer_rotation, sizeof q);
     else {
         float angle = snapshot->peer_yaw * (3.14159265359f / 360);
         q[0] = q[2] = 0; q[1] = sinf(angle); q[3] = cosf(angle);
     }
-    link_figure_orient(q, link_figure_root_yaw(model, figure.anim, figure.frame), figure.rot);
+    link_figure_orient(q, figure.has_body ? 0 : link_figure_root_yaw(model, figure.anim, figure.frame), figure.rot);
     gfx_figures_set(&figure, 1);
 }

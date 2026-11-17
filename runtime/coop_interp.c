@@ -6,6 +6,13 @@
 // runtime/net_mp.c place_on @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c (MIT).
 // Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
 static void blend_visual(const CoopSample *a, const CoopSample *b, float t, CoopSample *out) {
+    if (a->flags & b->flags & COOP_SAMPLE_BODY) coop_body_lerp(&a->body, &b->body, t, &out->body);
+    else {
+        // Optional data is cleared as soon as a bracketing sample loses it. Never
+        // drag an earlier skeleton across a model switch or unavailable capture.
+        out->flags &= ~COOP_SAMPLE_BODY;
+        memset(&out->body, 0, sizeof out->body);
+    }
     if ((a->flags & b->flags & COOP_SAMPLE_ROTATION)) {
         float dot = 0, norm = 0;
         for (int i = 0; i < 4; i++) dot += a->rotation[i] * b->rotation[i];

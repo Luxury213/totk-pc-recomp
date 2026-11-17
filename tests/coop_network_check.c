@@ -11,6 +11,9 @@ static void publish(CoopNet *h,CoopNet *c) {
     CoopSample a={.generation=1,.flags=COOP_SAMPLE_PLAYER,.pos={10,20,30},.time_ns=plat_now_ns()};
     a.flags |= COOP_SAMPLE_ROTATION | COOP_SAMPLE_ANIMATION;
     a.rotation[3]=1; strcpy(a.animation,"Nml_Wait"); a.animation_frame=7.5f;
+    a.flags |= COOP_SAMPLE_BODY;
+    for(unsigned i=0;i<COOP_BODY_BONES;i++) a.body.q[i][3]=1;
+    a.body.t[0][0]=1.25f;
     coop_net_publish(h,&a);
     a.pos[0]=40; a.rotation[3]=0; a.rotation[0]=1;
     strcpy(a.animation,"Sword_Synthetic"); a.animation_frame=17.25f; coop_net_publish(c,&a);
@@ -25,6 +28,8 @@ static void connected(CoopNet *h,CoopNet *c) {
             assert(!strcmp(a.remote.animation,"Sword_Synthetic") && a.remote.animation_frame==17.25f);
             assert(!strcmp(b.remote.animation,"Nml_Wait") && b.remote.animation_frame==7.5f);
             assert(a.remote.rotation[0]==1 && b.remote.rotation[3]==1);
+            assert((a.remote.flags & b.remote.flags & COOP_SAMPLE_BODY) &&
+                   a.remote.body.q[57][3]==1 && b.remote.body.t[0][0]==1.25f);
             assert(a.state==COOP_SESSION_LOADING && b.state==COOP_SESSION_LOADING);
             return;
         }

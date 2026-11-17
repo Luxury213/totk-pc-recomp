@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -89,7 +90,9 @@ def package(game, out):
                   f'"{folder / "totk-coop.exe"}" --exefs "{game / "exefs"}" --romfs "{game / "romfs"}" '
                   f'--profile "{profile}"', 'if errorlevel 1 pause', 'endlocal']
         (out / f'start-{role}.bat').write_text('\r\n'.join(lines) + '\r\n', encoding='utf-8')
-    record = dict(marker=GENERATED_MARKER, game_version='1.4.3', protocol=3, native_gameplay_enabled=False,
+    protocol = int(re.search(r'^#define COOP_PROTOCOL (\d+)u$',
+                            (ROOT / 'runtime/coop_wire.h').read_text(), re.M)[1])
+    record = dict(marker=GENERATED_MARKER, game_version='1.4.3', protocol=protocol, native_gameplay_enabled=False,
                   executable_sha256=digest(folder / 'totk-coop.exe'),
                   exefs=str(game / 'exefs'), romfs=str(game / 'romfs'),
                   profiles=str(out / 'profiles'), status='Presence and native integration diagnostics only')

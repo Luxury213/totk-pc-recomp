@@ -5,8 +5,44 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Round-trip real captured poses through a separate ENet worker. Position is offset
+// for inspection only; this tool never creates or controls a guest actor.
+static int pose_echo(CoopNet *net) {
+    uint64_t begin=plat_now_ns(), last_capture=0, session=0;
+    uint32_t generation=0;
+    unsigned samples=0, bodies=0, changed=0;
+    CoopBody previous={0};
+    while (plat_now_ns()-begin < 90000000000ull) {
+        CoopNetSnapshot view; coop_net_snapshot(net,&view);
+        if (samples && (!view.negotiated || view.session!=session)) break;
+        if (view.negotiated && view.has_remote &&
+            (view.remote.time_ns!=last_capture || view.remote.generation!=generation)) {
+            CoopSample sample=view.remote;
+            session=view.session; last_capture=sample.time_ns; generation=sample.generation;
+            samples++;
+            if (sample.flags & COOP_SAMPLE_BODY) {
+                if (bodies && memcmp(&previous,&sample.body,sizeof previous)) changed++;
+                previous=sample.body; bodies++;
+            }
+            sample.pos[0]+=3; sample.time_ns=plat_now_ns();
+            coop_net_publish(net,&sample);
+            if (samples==1 || samples%30==0) {
+                printf("peer: pose echo: samples %u, bodies %u, changed %u, animation %s\n",
+                       samples,bodies,changed,sample.animation);
+                fflush(stdout);
+            }
+        }
+        plat_sleep_ms(10);
+    }
+    int ok=bodies>=10 && changed>0;
+    printf("peer: pose echo %s: samples %u, bodies %u, changed %u\n",
+           ok ? "completed" : "failed",samples,bodies,changed);
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
-    if (argc != 4 || strlen(argv[2]) != 64) return 2;
+    int echo=argc==5 && !strcmp(argv[4],"--pose-echo");
+    if ((argc != 4 && !echo) || strlen(argv[2]) != 64) return 2;
     char *end;
     unsigned long port = strtoul(argv[1], &end, 10);
     if (*end || port < 1024 || port > 65535) return 2;
@@ -22,6 +58,11 @@ int main(int argc, char **argv) {
     CoopNet *net=coop_net_create();
     if (!net) return 2;
     coop_net_configure(net,&config);
+    if (echo) {
+        int result=pose_echo(net);
+        coop_net_destroy(net);
+        return result;
+    }
     uint64_t begin=plat_now_ns(), pulse=0;
     unsigned last_phase=99;
     int success=0;

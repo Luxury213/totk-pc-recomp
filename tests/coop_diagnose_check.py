@@ -36,6 +36,19 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_pose_echo_waits_for_world_and_requires_live_applied_bones(self):
+        self.assertFalse(diagnose.peer_start_ready(True,'boot: first NVN call'))
+        self.assertFalse(diagnose.peer_start_ready(True,'coop native npc peer velocity: step 1,'))
+        self.assertTrue(diagnose.peer_start_ready(True,'frame step: world clock starts at present 12'))
+        self.assertTrue(diagnose.peer_start_ready(False,'coop native npc peer velocity: step 1,'))
+        peer='peer: pose echo completed: samples 50, bodies 45, changed 44'
+        lines=['figure: final body pose applied (89 palette entries, 100 bones); presentation only']
+        self.assertTrue(diagnose.pose_echo_summary(peer,lines,0)['acceptance_passed'])
+        for text, log, code in ((peer,[],0), (peer,lines,1), ('',lines,0),
+                                (peer.replace('changed 44','changed 0'),lines,0),
+                                (peer.replace('bodies 45','bodies 55'),lines,0)):
+            self.assertFalse(diagnose.pose_echo_summary(text,log,code)['acceptance_passed'])
+
     def npc_peer_fixture(self):
         lines = ['coop native npc physics: probe 10, request 5, entry main+0x2e27b0, caller 0, '
                  'generation 3, world us 0, host thread 1, phase later-actor-update; owner and metadata matched, observation only',

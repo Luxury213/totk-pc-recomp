@@ -4,6 +4,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "coop_body.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,6 +56,8 @@ typedef struct {
 // NULL when <profile>/link-figure.bin is missing or unreadable.
 const LinkFigure *link_figure(void);
 void link_figure_pose(const LinkFigure *figure, int animation, float frame, float *vertices);
+void link_figure_pose_body(const LinkFigure *figure, int animation, float frame,
+                           const CoopBody *body, float *vertices);
 int link_figure_find(const LinkFigure *figure, const char *name);
 void link_figure_rotate(const LinkFigure *figure, float *vertices, const float rotation[9]);
 void link_figure_orient(const float quaternion[4], float turn, float rotation[9]);

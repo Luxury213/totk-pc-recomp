@@ -54,6 +54,7 @@ typedef struct {
     float peer_rotation[4]; // captured unit quaternion, separate from the yaw fallback
     char peer_animation[COOP_ANIMATION_MAX];
     float peer_animation_frame;
+    CoopBody peer_body;      // copied presentation data, valid only with COOP_SAMPLE_BODY
     int peer_action;        // COOP_ACT_*
     float peer_dist;        // 3D Euclidean distance to partner in meters
     int peer_on_screen;     // 1 when projected in front of the camera, 0 when clamped to screen edge

@@ -517,8 +517,18 @@ static int pose_figures(const LinkFigure *base) {
         if (!posed.pose[i] || !pose2) return 0;
         float frame = g->frame + g->fps * ahead, prev = g->prev_frame + g->fps * ahead;
         float blend = fminf(1.0f, g->blend + 4.0f * ahead);
-        link_figure_pose(lf, g->anim, frame, posed.pose[i]);
-        if (blend < 1) {   // still blending out of the previous animation
+        if (g->has_body) {
+            link_figure_pose_body(lf, g->anim, frame, &g->body, posed.pose[i]);
+            static int body_logged;
+            if (!body_logged && lf->npalm && lf->parent && g->anim>=0 && g->anim<lf->nanims &&
+                !lf->anims[g->anim].mats && coop_body_valid(&g->body)) {
+                body_logged=1;
+                rt_log("figure: final body pose applied (%u palette entries, %u bones); presentation only",
+                       lf->npalm,lf->nbones);
+            }
+        }
+        else link_figure_pose(lf, g->anim, frame, posed.pose[i]);
+        if (!g->has_body && blend < 1) {   // still blending out of the previous animation
             float *p = posed.pose[i];
             link_figure_pose(lf, g->prev_anim, prev, pose2);
             for (uint64_t q = 0; q < 3ull * lf->nverts; q++) p[q] = pose2[q] + (p[q] - pose2[q]) * blend;

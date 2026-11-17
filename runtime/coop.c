@@ -408,10 +408,11 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
         out->peer_speed = C.peer_speed;
         out->peer_anim_phase = C.peer_anim_phase;
         if (C.mode != COOP_BOT) {
-            out->peer_visual_flags = C.peer_visual.flags & (COOP_SAMPLE_ROTATION | COOP_SAMPLE_ANIMATION);
+            out->peer_visual_flags = C.peer_visual.flags & (COOP_SAMPLE_ROTATION | COOP_SAMPLE_ANIMATION | COOP_SAMPLE_BODY);
             memcpy(out->peer_rotation, C.peer_visual.rotation, sizeof out->peer_rotation);
             memcpy(out->peer_animation, C.peer_visual.animation, sizeof out->peer_animation);
             out->peer_animation_frame = C.peer_visual.animation_frame;
+            if (out->peer_visual_flags & COOP_SAMPLE_BODY) out->peer_body = C.peer_visual.body;
         }
         out->peer_action = C.peer_action;
         float dx = C.peer_pos[0] - C.local_pos[0];

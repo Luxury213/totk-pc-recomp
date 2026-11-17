@@ -17,8 +17,9 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 | Area | Verified result | Remaining gate |
 | --- | --- | --- |
 | Phase 1: isolated build | 1.4.3 module hashes, separate runtime/executable, dedicated profiles, selftest/config probe | Each participant supplies their own local build |
-| Phase 2: transport | ENet worker, protocol v3, reliable labels, 30 Hz pose, compatibility/freshness and local impairment tests | Real two-PC private-VPN validation; gameplay authority is not implemented |
+| Phase 2: transport | ENet worker, protocol v4, reliable labels, 30 Hz pose, compatibility/freshness and local impairment tests | Real two-PC private-VPN validation; gameplay authority is not implemented |
 | Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
+| Phase 2: final body pose | 58-bone capture/encoding/interpolation/application; one-game ENet echo passed with 387 body samples and unchanged source saves | Equipment, full run/jump/attack fidelity and binding to a native body remain pending |
 | Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
 | Phase 2: native experiment | One independent weapon request falls, rests and is collected; strict checks passed with/without the visual figure | Still one-shot and triggered by an authentic weapon drop; not companion spawning |
 | Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Removal and reusable session ownership are still unverified |

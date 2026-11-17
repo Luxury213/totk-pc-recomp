@@ -11,6 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = r'''
 #include <assert.h>
+#include "coop_body.c"
 #include "link_figure.c"
 #include "coop_figure.c"
 static uint8_t *bytes;
@@ -61,6 +62,27 @@ int main(int argc,char **argv) {
     snapshot.has_peer_pos=1; snapshot.peer_visual_flags=0;
     coop_figure_publish(&snapshot); float before=sent.frame;
     clock_ms+=100; coop_figure_publish(&snapshot); assert(sent.frame>before); // idle clock advances
+    snapshot.peer_visual_flags=COOP_SAMPLE_BODY;
+    for(unsigned i=0;i<COOP_BODY_BONES;i++) snapshot.peer_body.q[i][3]=1;
+    snapshot.peer_body.t[0][0]=2;
+    coop_figure_publish(&snapshot); assert(!sent.has_body); // old assets keep clip/root-yaw fallback
+    snapshot.peer_visual_flags=0; coop_figure_publish(&snapshot);
+    assert(!sent.has_body && sent.body.t[0][0]==0);
+    // Authored three-bone skeleton: transmitted root/arm, hair child follows arm.
+    float verts[3]={1,1,0}, bind[27]={1,1,1,0,0,0,0,0,0, 1,1,1,0,0,0,1,0,0, 1,1,1,0,0,0,0,1,0};
+    float inv[36]={1,0,0,0,0,1,0,0,0,0,1,0, 1,0,0,-1,0,1,0,0,0,0,1,0, 1,0,0,-1,0,1,0,-1,0,0,1,0};
+    int32_t parents[3]={-1,0,1}; uint16_t skin[8]={2,65535,0,0,0,0,0,0}, mapping[89]; uint8_t rigid[89]={0};
+    for(int i=0;i<89;i++) mapping[i]=0xffff;
+    mapping[0]=0; mapping[1]=1;
+    LinkAnim idle={.frames=1,.loop=1};
+    LinkFigure skeleton={.nverts=1,.verts=verts,.nbones=3,.skin=skin,.nanims=1,.anims=&idle,
+        .parent=parents,.bind=bind,.inv_bind=inv,.npalm=89,.palm_bone=mapping,.palm_rigid=rigid};
+    CoopBody body=snapshot.peer_body;
+    body.q[1][2]=body.q[1][3]=.70710678f;
+    link_figure_pose_body(&skeleton,0,0,&body,pose);
+    assert(fabsf(pose[0]-2)<.001f && fabsf(pose[1])<.001f && fabsf(pose[2])<.001f);
+    skeleton.npalm=0; link_figure_pose_body(&skeleton,0,0,&body,pose);
+    assert(pose[0]==1 && pose[1]==1); // unsupported asset retains the clip pose
     figure_clear(); free(bytes);
     puts("co-op figure: truncated assets, invalid indices, curves, loop wrap, orientation and disappearance passed");
     return 0;

@@ -15,18 +15,27 @@ The public plan is authoritative for resuming development; private notes under i
 | --- | --- | --- |
 | Build | Separate runtime/executable folders, verified 1.4.3 modules, explicit paths, isolated profiles | Each participant builds locally from their own content |
 | Session | ENet 1.3.18 worker, direct VPN IPv4, reliable labels and 30 Hz presence | Labels are not gameplay transactions; Internet acceptance is pending |
-| Protocol | Version 3, explicit serialization, game/content checks, session/player identities, freshness and deduplication | Older peers must rebuild; no gameplay-command decoder |
-| Pose | Position, velocity, yaw, optional unit quaternion and FSKA animation name/frame | No final blended bone palette or native animation controller |
+| Protocol | Version 4, explicit serialization, game/content checks, session/player identities, freshness and deduplication | Older peers must rebuild; no gameplay-command decoder |
+| Pose | Position, velocity, yaw, optional unit quaternion, FSKA clip/frame and final 58-bone body pose | No equipment replication or native animation controller |
 | Presentation | Interpolated animated Link, black hair, scene depth, lighting and shadows; silhouette fallback | No native body, collision, input, inventory or combat |
 | Native diagnostics | Scoped request/task/actor/resource/reference/retirement observations | Observation does not establish an unrestricted calling contract |
 | Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
 | Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Fixed synthetic pulse; Link binding and removal API remain unverified |
 | Native ENet diagnostic | One scoped NPC consumes a loopback peer's leased horizontal velocities and stops/restarts across publication gaps | Scripted peer; no human/Internet, Link binding or complete lifecycle acceptance |
 
-State packets are 152 bytes. Rotation and animation fields have explicit presence flags; malformed/nonfinite
-values and noncanonical strings are rejected. Stale observations clear optional pose data. Quaternion blending
-uses the shortest path; clip changes and loop restarts hold the earlier frame until the next sample. Equipment,
-blended poses and character audio are deferred.
+State packets are 152 bytes without a body pose and 628 bytes with one (640-byte protocol ceiling).
+The body adds 58 signed little-endian int16 quaternions and two three-axis translations in millimetres,
+476 bytes total. Each optional field has an explicit presence flag. Malformed/nonfinite transforms,
+non-unit quaternions, out-of-range translations and noncanonical strings are rejected. Body poses require
+actor rotation. Stale observations clear optional data; a missing body in an interpolation bracket clears
+the earlier skeleton. Quaternion blending uses the shortest path. Clip changes and loop restarts hold the
+earlier frame until the next sample. Equipment and character audio remain deferred.
+
+The guest observer copies the 1.4.3 final skinning palette through the pinned MIT reference's model path,
+validates transforms and the render-origin proximity, and rechecks model links, actor identity and transform.
+The render-origin search remains heuristic. Rendering consumes copies and never reads/writes guest actors.
+Supported figures apply the transmitted body chains while unmapped face/hair children retain their local
+animation. Older assets without palette mapping keep clip-based fallback. Native capabilities remain unchanged.
 
 UI/rendering consume snapshots. Guest observations run before the blocking scope in
 `runtime/nvn_api_obj.c` `nvnQueuePresentTexture`; this is not a verified mutation phase. The ordinary native
@@ -98,6 +107,10 @@ review and remove expendable artifacts. Folder totals can count hardlinked asset
 one name may recover no blocks until the last link is removed. Never include original game inputs, keys or
 original saves in cleanup, and never share writable save files through hardlinks.
 
+Retain the offline seed and at most two useful copied diagnostic profiles; retain reports, logs and selected
+images separately. Do not rebuild full installer fixtures or restore archived test outputs merely to resume.
+Existing co-op shader packs are directly readable; no loose-file expansion or shader preparation is needed.
+
 ## Run an isolated diagnostic
 
 Stop existing game instances and use an offline test profile containing a `save` directory:
@@ -134,6 +147,18 @@ For a local visual/control check:
 ```powershell
 .venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --scenario controls --require-animation --require-figure --shots 2
 ```
+
+For final-body capture -> ENet -> interpolation -> rendering, using one game and a game-free echo peer:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --pose-echo --scenario controls --require-animation --require-figure --seconds 15 --shots 3
+```
+
+The peer starts after the world-clock marker, echoes fresh captured samples three metres along X and never
+creates a native actor. The runner requires at least ten body samples, changing bones, renderer application,
+both successful exits and unchanged source saves. This gate proves the copied-pose path, not jump/attack
+fidelity, independent human input, equipment, collision or cooperative combat. `--pose-echo` is mutually
+exclusive with native creation/movement options and requires the figure. Diagnostic results and images stay private.
 
 The bot follows a synthetic trajectory and estimates height from the local player. It has no terrain collision.
 A successful local-reader check, pose packet or submitted draw does not prove a playable remote character.

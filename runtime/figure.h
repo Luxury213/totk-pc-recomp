@@ -11,6 +11,8 @@ typedef struct {
     float rot[9];
     const void *fig;
     float hair[3];
+    int has_body;
+    CoopBody body;           // owned copy: render never dereferences network/guest storage
 } GfxFigure;
 
 #ifdef __cplusplus

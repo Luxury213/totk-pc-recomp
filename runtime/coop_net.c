@@ -101,6 +101,7 @@ static void worker(void *arg) {
             memset(local.rotation, 0, sizeof local.rotation);
             memset(local.animation, 0, sizeof local.animation);
             local.animation_frame = 0;
+            memset(&local.body, 0, sizeof local.body);
         }
         coop_session_sample(&session, &local);
         if (host) {

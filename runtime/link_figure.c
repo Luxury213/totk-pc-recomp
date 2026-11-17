@@ -445,3 +445,56 @@ void link_figure_pose(const LinkFigure *f, int anim, float frame, float *out) {
     uint32_t f0 = (uint32_t)fr % a->frames, f1 = (f0 + 1) % a->frames;
     skin_verts(f, a->mats + 12ull * f->nbones * f0, a->mats + 12ull * f->nbones * f1, fr - floorf(fr), out);
 }
+
+// Adapted from arnaldolima1/totk-recomp runtime/link_figure.c link_figure_pose_body
+// @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c (MIT, license/header above).
+// Override the transmitted body chains, retaining animation-local transforms for
+// unmapped children such as hair and face. Equipment is a separate future slice.
+void link_figure_pose_body(const LinkFigure *f, int anim, float frame, const CoopBody *body, float *out) {
+    if (!f->npalm || !f->parent || !f->bind || !f->inv_bind || !f->palm_bone || !f->palm_rigid ||
+        f->nbones > 1024 || anim < 0 || anim >= f->nanims || f->anims[anim].mats || !coop_body_valid(body)) {
+        link_figure_pose(f,anim,frame,out);
+        return;
+    }
+    // The loader caps skeletons at 1024 bones. Bounded scratch avoids new per-frame
+    // heap allocations and contains no guest/network storage.
+    float loc[9*1024], world[12*1024], bindw[12*1024], mats[12*1024];
+    int slot[1024];
+    uint32_t nb=f->nbones;
+    const LinkAnim *a=&f->anims[anim];
+    pose_worlds(f,a,anim_frame(a,frame),loc,world);
+    for (uint32_t b=0;b<nb;b++) {
+        float m[12]; trs(f->bind+9*b,m);
+        if (f->parent[b]>=0) mul34(bindw+12*f->parent[b],m,bindw+12*b);
+        else memcpy(bindw+12*b,m,sizeof m);
+        slot[b]=-1;
+    }
+    for (int i=COOP_BODY_BONES-1;i>=0;i--) {
+        unsigned entry=coop_body_entry[i];
+        if (entry<f->npalm && f->palm_bone[entry]<nb && !f->palm_rigid[entry]) slot[f->palm_bone[entry]]=i;
+    }
+    for (uint32_t b=0;b<nb;b++) {
+        float m[12]; trs(loc+9*b,m);
+        int s=slot[b], p=f->parent[b];
+        if (s<0) {
+            if (p>=0) mul34(world+12*p,m,world+12*b);
+            continue;
+        }
+        const float *q=body->q[s];
+        float x=q[0], y=q[1], z=q[2], w=q[3];
+        float r[12]={1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w),0,
+                     2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w),0,
+                     2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y),0}, posed[12];
+        mul34(r,bindw+12*b,posed);
+        if (s==0 || s==34) {
+            for (int k=0;k<3;k++) posed[4*k+3]+=body->t[s==34][k];
+        } else if (p>=0) {
+            for (int k=0;k<3;k++)
+                posed[4*k+3]=world[12*p+4*k]*m[3]+world[12*p+4*k+1]*m[7]+
+                             world[12*p+4*k+2]*m[11]+world[12*p+4*k+3];
+        }
+        memcpy(world+12*b,posed,sizeof posed);
+    }
+    for (uint32_t b=0;b<nb;b++) mul34(world+12*b,f->inv_bind+12*b,mats+12*b);
+    skin_verts(f,mats,mats,0,out);
+}

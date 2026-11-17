@@ -414,6 +414,22 @@ def diagnostic_acceptance(report, *, scenario, require_animation=False, require_
                 native_npc_motion=not require_npc_motion or report['native_npc_velocity_experiment']['acceptance_passed'])
 
 
+def peer_start_ready(pose_echo, text):
+    # ENet's connect timeout is shorter than title/loading. Start the echo only
+    # when the game has an initialized host and the copied world is available.
+    marker = 'frame step: world clock starts' if pose_echo else 'coop native npc peer velocity: step 1,'
+    return marker in text
+
+
+def pose_echo_summary(peer_text, lines, exit_code):
+    match=re.search(r'peer: pose echo completed: samples (\d+), bodies (\d+), changed (\d+)',peer_text)
+    samples, bodies, changed = tuple(map(int,match.groups())) if match else (0,0,0)
+    body_applied=any('figure: final body pose applied' in line for line in lines)
+    passed=exit_code==0 and samples>=bodies>=10 and 0<changed<bodies and body_applied
+    return dict(peer_exit_code=exit_code, samples=samples, bodies=bodies, changed=changed,
+                renderer_body_applied=body_applied, acceptance_passed=passed, native_companion_verified=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -431,6 +447,8 @@ def main():
     ap.add_argument('--require-figure', action='store_true', help='require a loaded model and a diagnostic G-buffer figure submission')
     ap.add_argument('--without-figure', action='store_true', help='omit the optional figure asset for a baseline comparison')
     spawn = ap.add_mutually_exclusive_group()
+    spawn.add_argument('--pose-echo', action='store_true',
+                       help='round-trip captured body poses through a game-free ENet peer; no native actor')
     spawn.add_argument('--native-clone-weapon', action='store_true',
                     help='create one extra native Weapon_Sword_101 at a verified drop call; copied test profile only')
     spawn.add_argument('--native-owned-weapon', action='store_true',
@@ -450,6 +468,8 @@ def main():
     args = ap.parse_args()
     if args.require_figure and args.without_figure:
         ap.error('--require-figure and --without-figure are mutually exclusive')
+    if args.pose_echo and args.without_figure:
+        ap.error('--pose-echo requires the figure to verify received-pose application')
     args.seconds = args.seconds if args.seconds is not None else {'idle': 5, 'controls': 15, 'reload': 45, 'object': 24}[args.scenario]
     if not math.isfinite(args.seconds) or args.seconds <= 0 or not math.isfinite(args.timeout) or args.timeout <= 0:
         ap.error('--seconds and --timeout must be finite and positive')
@@ -530,7 +550,7 @@ def main():
     if args.shots is not None:
         env.update(TOTK_SHOTS=f'w0-{args.seconds}:{args.shots}', TOTK_SHOTS_DIR=str(folder / 'frames'))
     peer_command = None
-    if args.native_npc_peer_motion:
+    if args.native_npc_peer_motion or args.pose_echo:
         from build_coop_velocity_peer import build_peer
         peer_exe = build_peer()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -542,6 +562,8 @@ def main():
         peer_profile = folder / 'peer-profile'
         peer_profile.mkdir()
         peer_command = [str(peer_exe), str(port), content, str(peer_profile)]
+        if args.pose_echo:
+            peer_command.append('--pose-echo')
         env.update(TOTK_COOP_MODE='host', TOTK_COOP_IP='127.0.0.1', TOTK_COOP_PORT=str(port))
     # Explicit game assets from the verified build manifest; only the new profile is writable.
     command = [str(exe), '--exefs', info['exefs'], '--romfs', info['romfs'], '--profile', str(profile),
@@ -561,7 +583,7 @@ def main():
                     while process.poll() is None and time.monotonic()-started < args.timeout:
                         if peer_process is None:
                             chunk = tail + reader.read()
-                            if 'coop native npc peer velocity: step 1,' in chunk:
+                            if peer_start_ready(args.pose_echo,chunk):
                                 peer_process = subprocess.Popen(peer_command, env=dict(env, PATH='C:/msys64/ucrt64/bin'+os.pathsep+env.get('PATH', '')),
                                     stdout=peer_log, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
                             tail = chunk[-256:]
@@ -580,6 +602,11 @@ def main():
             raise
         finally:
             if peer_process is not None:
+                if args.pose_echo and peer_process.poll() is None:
+                    try:
+                        peer_process.wait(timeout=7)
+                    except subprocess.TimeoutExpired:
+                        pass
                 if peer_process.poll() is None:
                     peer_process.kill()
                 peer_result = peer_process.wait()
@@ -687,6 +714,10 @@ def main():
         report['acceptance_checks']['native_peer_velocity'] = peer_motion['acceptance_passed']
         report['acceptance_checks']['native_peer_consumer'] = peer_motion['consumer_reapply']['acceptance_passed']
         report['acceptance_checks']['native_peer_process'] = peer_result == 0
+    if args.pose_echo:
+        peer_text=(folder / 'peer.log').read_text(encoding='utf-8',errors='replace')
+        report['pose_echo'] = pose_echo_summary(peer_text,lines,peer_result)
+        report['acceptance_checks']['pose_echo'] = report['pose_echo']['acceptance_passed']
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))

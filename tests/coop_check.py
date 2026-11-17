@@ -11,6 +11,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = r'''
 #include <assert.h>
+#include "coop_body.c"
 #include "coop_adapter.c"
 #include "coop_interp.c"
 #include "coop.c"
@@ -43,7 +44,10 @@ static unsigned char npc_body_link[0x30], npc_body_agent[0x40];
 static unsigned char npc_sdk[0x10], npc_change[0xd8];
 static float npc_velocity[4] = {2,0,0,0};
 static unsigned char player_source_ref[0x18];
-static unsigned char visual_model[0xd0], visual_controller[0x120], visual_player[0x88], visual_clip[0x10];
+static unsigned char visual_model[0x3e8], visual_controller[0x120], visual_player[0x88], visual_clip[0x10];
+static unsigned char body_mesh[0x460], body_resource[0x10];
+static float body_palette[COOP_BODY_PALETTE*12];
+static int switch_body_palette;
 static unsigned char visual_name[COOP_ANIMATION_MAX+2];
 static int switch_visual_clip;
 
@@ -97,10 +101,14 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
            in_range(p,n,npc_sdk,sizeof npc_sdk) || in_range(p,n,npc_change,sizeof npc_change) ||
            in_range(p,n,npc_velocity,sizeof npc_velocity) ||
            in_range(p,n,visual_player,sizeof visual_player) || in_range(p,n,visual_clip,sizeof visual_clip) ||
-           in_range(p,n,visual_name,sizeof visual_name);
+           in_range(p,n,visual_name,sizeof visual_name) || in_range(p,n,body_mesh,sizeof body_mesh) ||
+           in_range(p,n,body_resource,sizeof body_resource) || in_range(p,n,body_palette,sizeof body_palette);
 }
 int plat_mem_read(uint64_t p, void *out, size_t n) {
     guest_reads++;
+    if (switch_body_palette && p==(uintptr_t)body_palette) {
+        memset(body_resource+8,0,8); switch_body_palette=0;
+    }
     if (switch_visual_clip && p==(uintptr_t)visual_name+2) {
         memset(visual_player+0x80,0,8); switch_visual_clip=0;
     }
@@ -197,6 +205,25 @@ static void visual_capture_checks(void) {
     assert(snapshot.sample.flags & COOP_SAMPLE_ANIMATION);
     assert(!strcmp(snapshot.sample.animation,"Synthetic_Walk"));
     assert(!memcmp(before,actor,sizeof actor)); // capture never writes actor state
+    ptr(visual_model+0x3e0,(uintptr_t)body_mesh); ptr(body_mesh+0x458,(uintptr_t)body_resource);
+    ptr(body_resource+8,(uintptr_t)body_palette);
+    for(unsigned b=0;b<COOP_BODY_PALETTE;b++) {
+        body_palette[b*12]=body_palette[b*12+5]=body_palette[b*12+10]=1;
+        body_palette[b*12+7]=1; // render origin (100,20,30), hips one metre above actor
+    }
+    coop_adapter_observe(NULL); coop_adapter_snapshot(&snapshot);
+    assert(snapshot.sample.flags & COOP_SAMPLE_BODY);
+    assert(snapshot.sample.body.q[0][3]==1 && snapshot.sample.body.t[0][1]==1);
+    assert(!memcmp(before,actor,sizeof actor));
+    switch_body_palette=1; coop_adapter_observe(NULL); coop_adapter_snapshot(&snapshot);
+    assert(!(snapshot.sample.flags & COOP_SAMPLE_BODY) && snapshot.sample.body.q[0][3]==0);
+    ptr(body_resource+8,(uintptr_t)body_palette); body_palette[0]=NAN;
+    coop_adapter_observe(NULL); coop_adapter_snapshot(&snapshot);
+    assert(!(snapshot.sample.flags & COOP_SAMPLE_BODY) && snapshot.sample.body.q[0][3]==0);
+    body_palette[0]=1; body_palette[3]=1000; // unrelated palette fails the origin gate
+    coop_adapter_observe(NULL); coop_adapter_snapshot(&snapshot);
+    assert(!(snapshot.sample.flags & COOP_SAMPLE_BODY));
+    body_palette[3]=0;
     ptr(actor+0x238,0); coop_adapter_observe(NULL); coop_adapter_snapshot(&snapshot);
     assert(!(snapshot.sample.flags & COOP_SAMPLE_ANIMATION) && !snapshot.sample.animation[0]);
     assert(snapshot.sample.animation_frame==0);

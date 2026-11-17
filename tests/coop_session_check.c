@@ -81,7 +81,68 @@ static void visual_protocol_checks(void) {
     assert(!strcmp(visual.animation,b.animation) && visual.rotation[3]==-1);
 }
 
+static void body_protocol_checks(void) {
+    float palette[COOP_BODY_PALETTE*12]={0};
+    for(unsigned i=0;i<COOP_BODY_PALETTE;i++) palette[12*i]=palette[12*i+5]=palette[12*i+10]=1;
+    palette[3]=1.234f; palette[12*65+7]=-2.5f;
+    CoopBody body, decoded, unchanged;
+    memset(&unchanged,0x55,sizeof unchanged); decoded=unchanged;
+    assert(!coop_body_from_palette(palette,COOP_BODY_PALETTE-1,&decoded));
+    assert(!memcmp(&decoded,&unchanged,sizeof decoded));
+    assert(coop_body_from_palette(palette,COOP_BODY_PALETTE,&body));
+    uint8_t bytes[COOP_WIRE_MAX], bad[COOP_WIRE_MAX];
+    assert(coop_body_encode(bytes,&body));
+    assert(bytes[6]==255 && bytes[7]==127 && bytes[464]==0xd2 && bytes[465]==4);
+    assert(coop_body_decode(&decoded,bytes,COOP_BODY_BYTES));
+    assert(fabsf(decoded.t[0][0]-1.234f)<.0001f && decoded.q[57][3]==1);
+    for(size_t n=0;n<COOP_BODY_BYTES;n++) assert(!coop_body_decode(&decoded,bytes,n));
+    assert(!coop_body_decode(&decoded,bytes,COOP_BODY_BYTES+1));
+    memcpy(bad,bytes,COOP_BODY_BYTES); memset(bad,0,8);
+    decoded=unchanged; assert(!coop_body_decode(&decoded,bad,COOP_BODY_BYTES));
+    assert(!memcmp(&decoded,&unchanged,sizeof decoded));
+    memcpy(bad,bytes,COOP_BODY_BYTES); bad[0]=0; bad[1]=128;
+    assert(!coop_body_decode(&decoded,bad,COOP_BODY_BYTES));
+    body.q[0][0]=NAN; assert(!coop_body_encode(bytes,&body)); body.q[0][0]=0;
+    body.t[0][0]=33; assert(!coop_body_encode(bytes,&body)); body.t[0][0]=1.234f;
+    palette[0]=-1; assert(!coop_body_from_palette(palette,COOP_BODY_PALETTE,&decoded));
+    palette[0]=1; palette[1]=.5f; assert(!coop_body_from_palette(palette,COOP_BODY_PALETTE,&decoded));
+    palette[1]=0; palette[0]=NAN; assert(!coop_body_from_palette(palette,COOP_BODY_PALETTE,&decoded));
+
+    CoopMessage m={.kind=COOP_MSG_STATE,.session=10,.player=20,.generation=1,
+        .sample={.generation=1,.flags=COOP_SAMPLE_PLAYER|COOP_SAMPLE_ROTATION|COOP_SAMPLE_BODY,
+                 .rotation={0,0,0,1},.body=body}}, received;
+    size_t size=coop_wire_encode(bytes,&m); assert(size==628 && size<=COOP_WIRE_MAX);
+    assert(coop_wire_decode(&received,bytes,size) && coop_body_valid(&received.sample.body));
+    for(size_t n=0;n<size;n++) assert(!coop_wire_decode(&received,bytes,n));
+    assert(!coop_wire_decode(&received,bytes,size+1));
+    bytes[4]=3; assert(!coop_wire_decode(&received,bytes,size)); bytes[4]=COOP_PROTOCOL;
+    m.sample.flags &= ~COOP_SAMPLE_BODY; assert(!coop_wire_encode(bad,&m));
+    memset(&m.sample.body,0,sizeof m.sample.body); assert(coop_wire_encode(bad,&m)==152);
+    assert(coop_wire_decode(&received,bad,152) && received.sample.body.q[0][3]==0);
+    m.sample.body=body; m.sample.flags=COOP_SAMPLE_PLAYER|COOP_SAMPLE_BODY;
+    assert(!coop_wire_encode(bad,&m)); // actor-space bones require actor orientation
+
+    CoopSample a={.generation=1,.flags=COOP_SAMPLE_PLAYER|COOP_SAMPLE_BODY|COOP_SAMPLE_ROTATION,
+                  .rotation={0,0,0,1},.body=body}, b=a, visual;
+    b.body.q[1][3]=0; b.body.q[1][2]=1; b.body.t[0][0]=3.234f;
+    CoopInterpolator history={0};
+    coop_interp_push(&history,&a,1000000000); coop_interp_push(&history,&b,1100000000);
+    coop_interp_read(&history,1150000000,&visual);
+    assert(fabsf(visual.body.q[1][2]-.70710678f)<.0001f && fabsf(visual.body.t[0][0]-2.234f)<.0001f);
+    b=a; for(int k=0;k<4;k++) b.body.q[0][k]=-a.body.q[0][k];
+    coop_body_lerp(&a.body,&b.body,.5f,&decoded); assert(decoded.q[0][3]==1);
+    b.flags &= ~COOP_SAMPLE_BODY; memset(&b.body,0,sizeof b.body);
+    history=(CoopInterpolator){0};
+    coop_interp_push(&history,&a,1000000000); coop_interp_push(&history,&b,1100000000);
+    coop_interp_read(&history,1150000000,&visual);
+    assert(!(visual.flags & COOP_SAMPLE_BODY) && visual.body.q[0][3]==0);
+    b.generation=2; coop_interp_push(&history,&b,1200000000);
+    assert(history.count==1); // old skeleton cannot cross local world generations
+    puts("co-op body: bounded LE codec, malformed/truncated poses, protocol4, interpolation and optional clearing passed");
+}
+
 int main(void) {
+    body_protocol_checks();
     visual_protocol_checks();
     CoopSession h,c;
     CoopInterpolator buffer={0}; CoopSample frame={.generation=1,.flags=COOP_SAMPLE_PLAYER,.yaw=170};
@@ -103,13 +164,13 @@ int main(void) {
     coop_session_hello(&c,&m);
     size_t n=coop_wire_encode(bytes,&m); assert(n==72);
     assert(bytes[0]=='C' && bytes[1]=='O' && bytes[2]=='O' && bytes[3]=='P');
-    assert(bytes[4]==3 && bytes[5]==0 && bytes[6]==COOP_MSG_HELLO && bytes[7]==0);
+    assert(bytes[4]==COOP_PROTOCOL && bytes[5]==0 && bytes[6]==COOP_MSG_HELLO && bytes[7]==0);
     assert(bytes[16]==22 && bytes[32]==143);
     assert(coop_wire_decode(&decoded,bytes,n) && decoded.player==22);
     for(size_t i=0;i<n;i++) assert(!coop_wire_decode(&decoded,bytes,i));
     assert(!coop_wire_decode(&decoded,bytes,n+1));
     bytes[4]=1; assert(!coop_wire_decode(&decoded,bytes,n));
-    bytes[4]=2; assert(!coop_wire_decode(&decoded,bytes,n)); bytes[4]=3;
+    bytes[4]=2; assert(!coop_wire_decode(&decoded,bytes,n)); bytes[4]=COOP_PROTOCOL;
     bytes[7]=1; assert(!coop_wire_decode(&decoded,bytes,n)); bytes[7]=0;
 
     CoopSample sample={.generation=1,.flags=COOP_SAMPLE_PLAYER,.pos={1.25f,-4,300},.velocity={1,0,0},

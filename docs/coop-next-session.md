@@ -1,6 +1,6 @@
 # Co-op handover and next character milestone
 
-Checkpoint: 2026-11-14. Read this before resuming implementation, then consult
+Checkpoint: 2026-11-17. Read this before resuming implementation, then consult
 [the public plan](coop-phase2.md), [development commands](coop-development.md) and
 [native evidence](coop-native-research.md). These public documents are authoritative; private diagnostics
 under ignored `build/` supplement them.
@@ -43,7 +43,10 @@ objects. Do not repeat extraction, full generation or shader warm-up merely to r
 
 ## What actually works
 
-- ENet worker and protocol v3; explicit serialization, identities/freshness, reliable notices and 30 Hz poses.
+- ENet worker and protocol v4; explicit serialization, identities/freshness, reliable notices and 30 Hz poses.
+- Final body-pose slice: a copied 1.4.3 palette, 58 bounded actor-space bone rotations and two root translations,
+  explicit 476-byte encoding, interpolation and application to the figure's mapped skeleton. Face/hair children
+  retain local animation; unsupported assets keep clip fallback. Equipment remains absent.
 - An extracted, textured, animated Link figure with black hair. It remains separate from the native NPC.
 - One owned native `Npc_Road_001`, created by the isolated authentic weapon-drop experiment.
 - Mode 6 (`--native-npc-peer-motion`): a loopback ENet peer supplies horizontal velocities. A one-slot bridge
@@ -80,6 +83,20 @@ was not verified. No lifter/CPU-header change occurred in the latest movement co
 Earlier unresolved results remain: exclusive-monitor ABA failures and a full-game shutdown timeout with the
 Vulkan validation layer confirmed loaded. A timeout with zero logged errors is not an acceptance pass.
 
+The November 17 body-pose diagnostic ran one copied-save game for 15 world seconds and a separate game-free
+ENet echo peer: 388 samples, 387 body poses, 242 changed poses, both exits zero, renderer body-pose application
+logged for a 97-entry palette/191-bone figure, and source saves unchanged. Scripted local running/camera and
+two attack inputs passed; `Sword_Blunt_Attack_S1` was observed. This proves transport/application of the final
+pose, not exact attack fidelity, jumping, equipment, native companion collision or independent human play.
+The first attempt started its peer during loading and failed negotiation before the world was available.
+The corrected runner starts on the world-clock marker, with a regression test. No loaded validation-layer
+or heavy-scene performance acceptance is claimed for this new slice.
+
+Body-slice checks passed: adapter/figure/protocol suites, native probe/audit checks, 29 diagnostic parser tests,
+settings documentation, ENet workers at nominal 0/100/200 ms with configured impairment, and current selftest,
+configuration, kernel, texture, shader and Vulkan replay probes. Content/diff checks passed. Linux, exact
+run/jump/attack pose comparison, equipment and two-PC Internet testing remain unrun for this slice.
+
 ## Reference review on 2026-11-14
 
 | Reference | Verified state | Use and limit |
@@ -95,15 +112,16 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 
 ## Ordered work for the next session
 
-1. **Close the pose gap first.** Compare the pinned MIT reference's `frame_rate.c` `game_player_body`,
-   `link_figure.c` `link_body_encode` / `link_figure_pose_body`, and equipment capture with our
-   `coop_adapter.c`, `link_figure.c/.h` and `coop_wire.c/.h`. Our figure has palette mapping fields, but no
-   exposed body-pose encode/apply API; `CoopSample` currently carries clip/frame, not final bones or equipment.
-   Identify the smallest complete capture -> serialization -> receive -> pose application slice. Revalidate
-   live 1.4.3 ownership; keep exact permissive attribution. Do not rebuild asset conversion from scratch.
-2. **Implement and test a bounded pose/equipment path.** Account explicitly for protocol version/packet limits,
-   malformed/nonfinite data, freshness, world changes and clearing stale optional fields. Never transmit pointers
-   or raw C structures. Preserve the verified native movement experiment while extending the visual path.
+1. **Continue with equipment.** The smallest capture -> serialization -> receive -> body-pose application slice
+   now exists in `coop_body.c/.h`, `coop_adapter.c`, `coop_wire.c/.h`, `coop_interp.c` and `link_figure.c`.
+   Reuse it. Inspect the pinned MIT reference's `game_gear.c` and LinkBody equipment/anchor path for the weapon,
+   shield, bow and held-arrow transforms. Our figure currently has no gear bones/models or equipment messages.
+   Keep exact permissive attribution; do not rebuild the base asset conversion from scratch.
+2. **Extend the bounded pose path to equipment.** Account explicitly for protocol version/packet limits,
+   malformed/nonfinite data, ownership, freshness, world changes, unequipping and clearing stale optional fields.
+   Protocol v4 states are 152 bytes without the body or 628 bytes with it (640-byte ceiling). Equipment will need
+   a deliberate size/fragmentation design, not an unchecked append. Never transmit pointers or raw C structures.
+   Preserve the verified native movement experiment. The render-origin search still needs broader live checks.
 3. **Demonstrate original movement and attack poses.** Script the real local Link running, jumping and performing
    a basic weapon attack, then reproduce its captured pose/equipment on the remote representation. A deterministic
    game-free peer can help before a human/two-PC run. Clip-name agreement alone does not prove blended pose or
@@ -130,7 +148,9 @@ Retain permissive source headers and notices; GPL is behavior-only. Before a com
 and the normal hook. Reviewed source publication to the existing fork branch is authorized; do not force-push
 or push upstream. No PR approval or hosted CI result should be invented.
 
-Keep at least 25 GiB free; roughly 30 GiB remained at this checkpoint. Use one game instance, an offline seed
+Keep at least 25 GiB free. Development storage was cleaned and inactive outputs archived; reuse existing packed
+shader caches and incremental objects. Retain the seed and only useful recent copied profiles, with evidence
+separate. Free space changes independently; measure it before large jobs. Use one game instance, an offline seed
 copy, background scripted input and only owned child PIDs. Do not overwrite the original executable or copy
 active saves. Exact local paths, diagnostic commands and original executable hash are in the ignored
 `build/coop-v143/NEXT_SESSION.md` of the active source worktree.

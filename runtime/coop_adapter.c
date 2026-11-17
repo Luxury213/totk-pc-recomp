@@ -1,6 +1,6 @@
 // TotK 1.4.3 read-only adapter. Observation is separate from unverified actor and physics operations.
 // Rotation/animation readers adapted from arnaldolima1/totk-recomp runtime/frame_rate.c
-// game_player_quat and game_player_anim @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c.
+// game_player_quat, game_player_anim and game_player_body @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c.
 // MIT, Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
 #include "coop_adapter.h"
 #include "coop.h"
@@ -227,6 +227,59 @@ static void read_player_visual(uint64_t actor, CoopSample *sample) {
     memcpy(sample->animation, text, sizeof text);
     sample->animation_frame = frame;
     sample->flags |= COOP_SAMPLE_ANIMATION;
+}
+
+// Final render skinning palette, read on the guest observer only. The reference's
+// render-origin search is heuristic; reject anything outside its five-metre gate.
+// Recheck all ownership links and the actor transform before publishing a copy.
+static void read_player_body(uint64_t actor, CoopSample *sample) {
+    if (rt_game_version != 143 || !(sample->flags & COOP_SAMPLE_ROTATION)) return;
+    uint64_t model = guest_pointer(actor + 0x238);
+    uint64_t mesh = model ? guest_pointer(model + 0x3e0) : 0;
+    uint64_t resource = mesh ? guest_pointer(mesh + 0x458) : 0;
+    uint64_t palette = resource ? guest_pointer(resource + 8) : 0;
+    float p[3], r[9], pal[COOP_BODY_PALETTE * 12];
+    if (!palette || !guest_readable(palette, sizeof pal) ||
+        !plat_mem_read(actor + 0x2b4, p, sizeof p) ||
+        !plat_mem_read(actor + 0x2c0, r, sizeof r) || !plat_mem_read(palette, pal, sizeof pal)) return;
+    for (unsigned i = 0; i < sizeof pal / sizeof *pal; i++)
+        if (!isfinite(pal[i]) || fabsf(pal[i]) > 100000) return;
+    for (int i = 0; i < 3; i++) if (!isfinite(p[i]) || fabsf(p[i]) > 1000000) return;
+    // The second rotation must still be the validated rotation from this observation.
+    float x=sample->rotation[0], y=sample->rotation[1], z=sample->rotation[2], w=sample->rotation[3];
+    float expected[9]={1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w),
+                       2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w),
+                       2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y)};
+    for (int i = 0; i < 9; i++) if (!isfinite(r[i]) || fabsf(r[i]-expected[i]) > .03f) return;
+    float best = 1e9f, local[3] = {0};
+    for (int d = 0; d < 27; d++) {
+        float o[3]={floorf(p[0]/10)*10+(d%3-1)*10, floorf(p[1]/10)*10+(d/3%3-1)*10,
+                    floorf(p[2]/10)*10+(d/9-1)*10};
+        float dx=pal[3]+o[0]-p[0], dy=pal[7]+o[1]-p[1], dz=pal[11]+o[2]-p[2];
+        float e=dx*dx+dy*dy+dz*dz;
+        if (e < best) {
+            best=e;
+            for (int i=0;i<3;i++) local[i]=p[i]-o[i];
+        }
+    }
+    if (best > 25) return;
+    for (unsigned k=0;k<COOP_BODY_PALETTE;k++) {
+        float *m=pal+12*k, n[12];
+        for (int i=0;i<3;i++) {
+            for (int j=0;j<3;j++) n[4*i+j]=r[i]*m[j]+r[3+i]*m[4+j]+r[6+i]*m[8+j];
+            n[4*i+3]=r[i]*(m[3]-local[0])+r[3+i]*(m[7]-local[1])+r[6+i]*(m[11]-local[2]);
+        }
+        memcpy(m,n,sizeof n);
+    }
+    CoopBody body;
+    float after_p[3], after_r[9];
+    if (!coop_body_from_palette(pal,COOP_BODY_PALETTE,&body) ||
+        guest_pointer(actor+0x238)!=model || guest_pointer(model+0x3e0)!=mesh ||
+        guest_pointer(mesh+0x458)!=resource || guest_pointer(resource+8)!=palette ||
+        !plat_mem_read(actor+0x2b4,after_p,sizeof after_p) || memcmp(p,after_p,sizeof p) ||
+        !plat_mem_read(actor+0x2c0,after_r,sizeof after_r) || memcmp(r,after_r,sizeof r)) return;
+    sample->body=body;
+    sample->flags |= COOP_SAMPLE_BODY;
 }
 
 // Observation and command diagnostics.
@@ -1307,6 +1360,7 @@ void coop_adapter_observe(const Cpu *cpu) {
     uint32_t actor_id = actor ? (uint32_t)guest_s32(actor + 0x10) : 0;
     if (actor) {
         read_player_visual(actor, &visual);
+        read_player_body(actor, &visual);
         if (player_proc() != actor || (uint32_t)guest_s32(actor + 0x10) != actor_id)
             memset(&visual, 0, sizeof visual);
     }
@@ -1341,6 +1395,9 @@ void coop_adapter_observe(const Cpu *cpu) {
                    world_us / 1000.0, observed.sample.generation,
                    (visual.flags & COOP_SAMPLE_ROTATION) ? "observed" : "absent",
                    (visual.flags & COOP_SAMPLE_ANIMATION) ? visual.animation : "unavailable", visual.animation_frame);
+            rt_log("coop body sample: world ms %.1f, generation %u, body %s; observation only",
+                   world_us / 1000.0, observed.sample.generation,
+                   (visual.flags & COOP_SAMPLE_BODY) ? "observed" : "absent");
             next_local_sample_us = world_us + 250000;
         }
     }
@@ -1704,6 +1761,7 @@ void coop_adapter_observe(const Cpu *cpu) {
     memcpy(observed.sample.rotation, visual.rotation, sizeof visual.rotation);
     memcpy(observed.sample.animation, visual.animation, sizeof visual.animation);
     observed.sample.animation_frame = visual.animation_frame;
+    observed.sample.body = visual.body;
     observed.sample.scene = 0;   // A guest scene address is not a stable network scene identity.
     observed.sample.time_ns = now;
     observed.sample.yaw = yaw; observed.sample.action = (uint32_t)action;

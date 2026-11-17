@@ -12,7 +12,7 @@ def build_peer(cc='C:/msys64/ucrt64/bin/clang.exe'):
     out.parent.mkdir(parents=True, exist_ok=True)
     enet = ROOT / 'runtime/third_party/enet'
     sources = [ROOT / 'tools/coop_velocity_peer.c'] + [ROOT / 'runtime' / name for name in
-               ('coop_net.c', 'coop_wire.c', 'coop_session.c', 'platform/win32.c', 'platform/common.c')]
+               ('coop_net.c', 'coop_body.c', 'coop_wire.c', 'coop_session.c', 'platform/win32.c', 'platform/common.c')]
     sources += [enet / name for name in ('callbacks.c', 'compress.c', 'host.c', 'list.c', 'packet.c',
                                        'peer.c', 'protocol.c', 'win32.c')]
     if out.is_file() and all(p.stat().st_mtime <= out.stat().st_mtime for p in
