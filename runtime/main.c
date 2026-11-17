@@ -31,6 +31,7 @@
 #include "cfg.h"
 #include "coop_adapter.h"
 #include "coop_native_probe.h"
+#include "coop_gear_probe.h"
 #include "host.h"
 #include "layout.h"
 #include "platform/platform.h"
@@ -725,6 +726,7 @@ int main(int argc, char **argv) {
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
         coop_native_probe_init(cfg.profile, cfg.seconds > 0,
                                cfg_bool("TOTK_COOP_TRACE_GUEST") ? cfg_int("TOTK_COOP_NATIVE_PROBE") : 0);
+        coop_gear_probe_init(cfg.profile,cfg.seconds>0 && cfg_bool("TOTK_COOP_TRACE_GUEST"));
         discord_init();   // the Rich Presence thread (discord_rpc.c); it reads totk.ini itself and idles while off
         playtime_init();  // the play time thread (playtime.c): the Game tab's play time across runs
         rt_boot();

@@ -3,6 +3,7 @@
 // game_player_quat, game_player_anim and game_player_body @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c.
 // MIT, Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
 #include "coop_adapter.h"
+#include "coop_gear_probe.h"
 #include "coop.h"
 #include "cfg.h"
 #include "host.h"
@@ -862,6 +863,7 @@ void coop_adapter_actor_bind(const Cpu *cpu) {
         !guest_readable(cpu->x[0], 0x18) ||
         !guest_readable(cpu->x[1], 0x1b0)) return;
     int player_manager = cpu->x[0] == player_manager_link();
+    coop_gear_probe_reference(cpu->x[0],cpu->x[1],cpu->x[30]);
     if (!player_manager && cpu->x[30] != MOD_MAIN_BASE + 0xea5d70ull) return;
     for (unsigned i = 0; i < ACTOR_REQUEST_TRACE_LIMIT; i++) {
         if (!player_manager && (!__atomic_load_n(&actor_request_entries[i].ready, __ATOMIC_ACQUIRE) ||
@@ -1790,6 +1792,7 @@ void coop_adapter_observe(const Cpu *cpu) {
         command_head = (command_head + 1) % 256; command_count--;
     }
     observed.queued = command_count;
+    coop_gear_probe_observe(actor,actor_id,&observed.sample,frame_step_world_us());
     plat_mutex_unlock(&adapter_lock);
 }
 

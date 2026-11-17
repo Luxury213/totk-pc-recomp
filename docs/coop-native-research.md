@@ -1,5 +1,53 @@
 # Co-op native research notes
 
+## Original equipment actor/model observations (November 17, 2026)
+
+`runtime/main.c` `fnprof_hit` already observes the 1.4.3 actor-reference setter at `main+0x14f334`.
+`runtime/coop_adapter.c` `coop_adapter_actor_bind` now forwards a strictly opt-in, bounded observation to
+`coop_gear_probe_reference`. The probe validates actor/metadata backlinks and IDs, exact prepared actor names,
+and deduplicates repeated setter events. It invokes no guest function and writes no guest memory. Native hook
+threads publish bounded identity records; ModelUnit reads occur later in the guest observer.
+
+The first Player-root graph search exhausted 2,048 nodes without finding the equipment. A second search with
+per-component budgets examined 552 nodes and still found none within those limits. These are capped negative
+results, not proof that no path exists. Original setter observations initially filled the record budget with
+repeated identities; deduplication reduced the run to four distinct matching native actors.
+
+The original weapon, shield and bow actors then supplied three named model candidates and 81 copied first
+palette matrices in a 15-world-second copied-save run. Native model discovery starts from each identified
+actor's ModelUnit and checks bounded descendants/embedded model-name fields before reading the palette.
+The observed model subobjects were embedded at +0xc0 for bow/shield and +0x120 for the weapon relative to their
+discovered descendant bases. Do not hardcode these deltas as a general accessor. Names, metadata IDs, model
+paths and world/player/equipment identity remain required guards. Matrices are in render-origin coordinates,
+not ready-to-apply actor space, and additional bow palette entries were not captured.
+
+Exclusive equipment ownership remains unverified. In the observed caller, `main+0x6769c4`, the containing
+routine beginning at `main+0x676910` creates a temporary stack reference before the setter call. The reference
+was no longer live during the sampled model poses; it cannot serve as a persistent owner/binding handle.
+Current actor identity, nearby position and model-name agreement provide research candidates only. A scan
+through readable words can include adjacent objects; object bounds and accessors still need verification.
+The report leaves native attachment binding and exclusive ownership false. No candidate enters network IDs,
+rendering or an actor-mutation command.
+
+## Visual size and ground-contact audit
+
+The visible Link figure still owns no collider and is separate from the native NPC experiment. In the default
+echo diagnostic, adding three metres to X while retaining the source Y can put the figure inside a slope or
+above it. The synthetic bot also lacks terrain contact. Actual two-PC presence uses the other original Link's
+sampled position, but local collision/body binding remains an independent unmet requirement.
+
+A local audit of the prepared geometry using `link_figure_pose` measured `Nml_Wait` frame zero from
+Y=0.000307 to 1.763705 metres (height 1.763398). The tested run/attack first-frame heights were 1.689609 and
+1.554329 metres, respectively: pose extents vary with posture. No uniform shrink factor was found in the
+figure's CPU/world transformation. These measurements describe the prepared model, not the physical collider
+or a confirmed runtime match against the local outfit.
+
+`--pose-echo-offset 0` permits same-origin calibration without inventing a ground height. A 12-world-second
+idle echo passed with 291 body poses and unchanged source saves, while ground contact stayed false. A horse
+occluded much of that comparison, so exact visual size equivalence remains unaccepted. Native body binding,
+feet alignment and terrain tests now precede additional equipment appearance work. No arbitrary scale or Y
+correction was introduced and no collision fix is claimed.
+
 ## Equipped identity observation (November 17, 2026)
 
 The pinned MIT reference's `runtime/game_flags.c` array readers and `runtime/game_gear.c`

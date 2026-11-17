@@ -438,6 +438,57 @@ def equipment_echo_summary(peer_text, exit_code):
                 placement_verified=False,inventory_replication_verified=False)
 
 
+def gear_probe_mapping(manifest):
+    actors=manifest.get('actors')
+    if manifest.get('format')!='LNKA' or manifest.get('version')!=2 or not isinstance(actors,dict):
+        raise ValueError('invalid private equipment manifest')
+    groups=[[],[],[]]
+    for actor,model in actors.items():
+        if not isinstance(actor,str) or len(actor)>=48 or not isinstance(model,str) or len(model)>=64 or \
+            not re.fullmatch(r'[A-Za-z0-9_]+\.[A-Za-z0-9_]+',model):
+            raise ValueError('invalid equipment model mapping')
+        if re.fullmatch(r'Weapon_(?:Sword|Lsword|Spear)_[0-9][A-Za-z0-9_]*',actor): slot=0
+        elif re.fullmatch(r'Weapon_Shield_[0-9][A-Za-z0-9_]*',actor): slot=1
+        elif re.fullmatch(r'Weapon_Bow_[0-9][A-Za-z0-9_]*',actor): slot=2
+        else: raise ValueError('invalid equipment actor mapping')
+        groups[slot].append((actor,model))
+    if any(len(group)>1 for group in groups) or not any(groups):
+        raise ValueError('graph diagnostic requires at most one prepared model per equipment slot')
+    return 'read-only-gear-graph-v1\n'+''.join(f'{i}\t{actor}\t{model}\n'
+        for i,group in enumerate(groups) for actor,model in group)
+
+
+def gear_graph_summary(lines):
+    armed=any('coop gear graph: armed,' in line for line in lines)
+    found=[]; poses=[]; done=[]; references=[]; reference_poses=[]; native_models=[]; captured=0
+    for line in lines:
+        if m:=re.search(r'coop gear native model: slot (\d+), actor (0x[0-9a-f]+), model (0x[0-9a-f]+), depth (\d+), embedded delta (-?\d+);',line):
+            native_models.append(dict(slot=int(m[1]),actor=m[2],model=m[3],depth=int(m[4]),embedded_delta=int(m[5])))
+        if m:=re.search(r'coop gear references: captured (\d+);',line): captured=max(captured,int(m[1]))
+        if m:=re.search(r'coop gear reference candidate: generation (\d+), slot (\d+), actor (0x[0-9a-f]+), metadata id (-?\d+),',line):
+            references.append(dict(generation=int(m[1]),slot=int(m[2]),actor=m[3],metadata_id=int(m[4])))
+        if m:=re.search(r'coop gear reference pose: world us (\d+), generation (\d+), slot (\d+), candidate (\d+), first ([-0-9.]+) ([-0-9.]+) ([-0-9.]+); axes ([-0-9. ]+);',line):
+            try: values=list(map(float,m.group(5,6,7)))+list(map(float,m[8].split()))
+            except ValueError: continue
+            if len(values)==12 and all(map(math.isfinite,values)):
+                reference_poses.append(dict(world_us=int(m[1]),generation=int(m[2]),slot=int(m[3]),candidate=int(m[4]),
+                    render_origin_pos=values[:3],render_origin_axes=values[3:],
+                    reference_live=bool(int(live[1])) if (live:=re.search(r'reference live ([01]);',line)) else None))
+        if m:=re.search(r'coop gear graph candidate: generation (\d+), slot (\d+), path (actor(?:->0x[0-9a-f]+)+),',line):
+            found.append(dict(generation=int(m[1]),slot=int(m[2]),path=m[3]))
+        if m:=re.search(r'coop gear graph done: generation (\d+), nodes (\d+), candidates (\d+), capped ([01]);',line):
+            done.append(dict(generation=int(m[1]),nodes=int(m[2]),candidates=int(m[3]),capped=bool(int(m[4]))))
+        if m:=re.search(r'coop gear graph pose: world us (\d+), generation (\d+), candidate (\d+), slot (\d+), first (-?[0-9.]+) (-?[0-9.]+) (-?[0-9.]+);',line):
+            try: p=list(map(float,m.group(5,6,7)))
+            except ValueError: continue
+            if all(map(math.isfinite,p)):
+                poses.append(dict(world_us=int(m[1]),generation=int(m[2]),candidate=int(m[3]),slot=int(m[4]),render_origin_pos=p))
+    ran=armed and bool(done) and all(1<=d['nodes']<=2048 and d['candidates']<=24 for d in done)
+    return dict(armed=armed,search_completed=ran,searches=done,candidates=found,poses=poses,
+                reference_events=captured,reference_candidates=references,reference_poses=reference_poses,native_models=native_models,
+                native_attachment_binding_verified=False,exclusive_ownership_verified=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -453,6 +504,8 @@ def main():
     ap.add_argument('--require-resource', action='store_true', help='also require the same probe retaining its queued resource until cleanup')
     ap.add_argument('--require-animation', action='store_true', help='require captured rotation and advancing native animation frames')
     ap.add_argument('--require-equipment', action='store_true', help='require equipped identities received by the pose echo peer; no gear placement claim')
+    ap.add_argument('--equipment-graph', action='store_true', help='bounded read-only search for prepared models reachable from local Link; no attachment binding')
+    ap.add_argument('--pose-echo-offset',type=float,help='diagnostic world-X offset in metres; default 3, zero compares both origins; no ground solver')
     ap.add_argument('--require-figure', action='store_true', help='require a loaded model and a diagnostic G-buffer figure submission')
     ap.add_argument('--without-figure', action='store_true', help='omit the optional figure asset for a baseline comparison')
     spawn = ap.add_mutually_exclusive_group()
@@ -481,6 +534,9 @@ def main():
         ap.error('--pose-echo requires the figure to verify received-pose application')
     if args.require_equipment and not args.pose_echo:
         ap.error('--require-equipment requires --pose-echo')
+    if args.pose_echo_offset is not None and (not args.pose_echo or not math.isfinite(args.pose_echo_offset) or abs(args.pose_echo_offset)>10):
+        ap.error('--pose-echo-offset requires --pose-echo and a finite value within ten metres')
+    args.pose_echo_offset=3 if args.pose_echo_offset is None else args.pose_echo_offset
     args.seconds = args.seconds if args.seconds is not None else {'idle': 5, 'controls': 15, 'reload': 45, 'object': 24}[args.scenario]
     if not math.isfinite(args.seconds) or args.seconds <= 0 or not math.isfinite(args.timeout) or args.timeout <= 0:
         ap.error('--seconds and --timeout must be finite and positive')
@@ -505,6 +561,8 @@ def main():
                                   args.require_spawn_retirement or args.require_spawn_fall):
         ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
                  f'{minimum} world seconds; no pickup/fall acceptance')
+    if args.equipment_graph and (spawning or args.seconds<12):
+        ap.error('--equipment-graph requires at least 12 world seconds and no native mutation experiment')
     if args.require_spawn_retirement and not spawning:
         ap.error('--require-spawn-retirement requires a native weapon experiment')
     if args.require_spawn_fall and not args.native_owned_weapon:
@@ -543,6 +601,13 @@ def main():
         shutil.copy2(seed / 'account.uid', profile / 'account.uid')
     if before != save_hashes(profile / 'save') or before != save_hashes(seed / 'save'):
         raise SystemExit(f'The source save changed during copying; diagnostic not launched. Copy retained at {folder}')
+    if args.equipment_graph:
+        library=output/'assets/link-gear.bin'
+        manifest=json.loads(library.with_suffix('.json').read_text(encoding='utf-8'))
+        with library.open('rb') as stream:
+            if hashlib.file_digest(stream,'sha256').hexdigest()!=manifest.get('sha256'):
+                raise SystemExit('Private equipment library differs from its manifest')
+        (profile/'coop-gear-probe.tsv').write_bytes(gear_probe_mapping(manifest).encode('ascii'))
     if spawning:
         marker = ('isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
                   'isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
@@ -574,7 +639,7 @@ def main():
         peer_profile.mkdir()
         peer_command = [str(peer_exe), str(port), content, str(peer_profile)]
         if args.pose_echo:
-            peer_command.append('--pose-echo')
+            peer_command.extend(['--pose-echo',str(args.pose_echo_offset)])
         env.update(TOTK_COOP_MODE='host', TOTK_COOP_IP='127.0.0.1', TOTK_COOP_PORT=str(port))
     # Explicit game assets from the verified build manifest; only the new profile is writable.
     command = [str(exe), '--exefs', info['exefs'], '--romfs', info['romfs'], '--profile', str(profile),
@@ -728,10 +793,15 @@ def main():
     if args.pose_echo:
         peer_text=(folder / 'peer.log').read_text(encoding='utf-8',errors='replace')
         report['pose_echo'] = pose_echo_summary(peer_text,lines,peer_result)
+        report['pose_echo']['offset_metres']=args.pose_echo_offset
+        report['pose_echo']['ground_contact_verified']=False
         report['acceptance_checks']['pose_echo'] = report['pose_echo']['acceptance_passed']
         report['equipment_echo'] = equipment_echo_summary(peer_text,peer_result)
         if args.require_equipment:
             report['acceptance_checks']['equipment_echo'] = report['equipment_echo']['acceptance_passed']
+    if args.equipment_graph:
+        report['equipment_graph']=gear_graph_summary(lines)
+        report['acceptance_checks']['equipment_graph_ran']=report['equipment_graph']['search_completed']
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))

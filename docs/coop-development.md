@@ -18,6 +18,7 @@ The public plan is authoritative for resuming development; private notes under i
 | Protocol | Version 5, explicit serialization, game/content checks, session/player identities, freshness and deduplication | Older peers must rebuild; no gameplay-command decoder |
 | Pose | Position, velocity, yaw, optional unit quaternion, FSKA clip/frame and final 58-bone body pose | No native animation controller |
 | Equipped identities | Optional base weapon, shield and bow actor names, read from validated pouch arrays and carried in copied snapshots | No item ownership, native attachment transforms, fused additions or gear rendering |
+| Native gear research | Opt-in original actor-reference observation and bounded ModelUnit discovery; copied first model matrices for three equipped base actors | No exclusive ownership, persistent attachment reference, rendering or mutation capability |
 | Presentation | Interpolated animated Link, black hair, scene depth, lighting and shadows; silhouette fallback | No native body, collision, input, inventory or combat |
 | Native diagnostics | Scoped request/task/actor/resource/reference/retirement observations | Observation does not establish an unrestricted calling contract |
 | Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
@@ -167,6 +168,12 @@ Add `--require-equipment` to require at least ten received equipment snapshots w
 The `equipment_echo` report separately leaves `placement_verified` and `inventory_replication_verified` false.
 Synthetic checks cover item changes/unequip; a steady live echo does not prove those interactions in the game.
 
+For a scale/origin comparison, `--pose-echo-offset 0` removes the synthetic side offset. The default echo adds
+three metres along world X and preserves the sender's Y: it has no destination ground query. On slopes the
+test figure can intersect terrain/grass or float. The visual figure has no collider and remains separate from
+the native NPC. A matching sampled origin does not establish ground contact or native physics. This option
+only changes the game-free diagnostic peer; it does not move the local Link or add a scale correction.
+
 The peer starts after the world-clock marker, echoes fresh captured samples three metres along X and never
 creates a native actor. The runner requires at least ten body samples, changing bones, renderer application,
 both successful exits and unchanged source saves. This gate proves the copied-pose path, not jump/attack
@@ -174,6 +181,9 @@ fidelity, independent human input, equipment, collision or cooperative combat. `
 exclusive with native creation/movement options and requires the figure. Diagnostic results and images stay private.
 
 ## Prepare selected equipment assets
+
+Ground contact and native body binding now take priority over additional equipment appearance work; see
+`docs/coop-next-session.md`. The native-gear probe below supplies research evidence for later attachment binding.
 
 `tools/prepare_coop_gear.py` prepares only the requested one to sixteen base actors, reusing the pinned MIT
 BFRES/texture converter and a small attributed BYML reader. It avoids converting all armor, the base Link,
@@ -191,6 +201,27 @@ remain separate gates. Never distribute the library or decoder outputs.
 
 The bot follows a synthetic trajectory and estimates height from the local player. It has no terrain collision.
 A successful local-reader check, pose packet or submitted draw does not prove a playable remote character.
+
+## Inspect original equipment transforms
+
+Add `--equipment-graph` to a timed diagnostic of at least 12 world seconds after preparing at most one model
+per equipment slot. This is mutually exclusive with native mutation experiments. The runner verifies the private
+library hash and writes `coop-gear-probe.tsv` only into its isolated profile. Normal untimed launches cannot arm it.
+The observer bounds Player graph work to 2,048 nodes, depth six and sixteen node expansions per tick, with branch
+quotas. It also records up to 64 distinct actor/metadata identities at the existing original reference-setter
+hook and searches their ModelUnit descendants (64 nodes per actor, depth three, a shared sixteen-node budget
+per 500 ms sample, at most four expansions for one actor). The log is bounded; no full-heap search is performed.
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --pose-echo --require-equipment --equipment-graph --scenario controls --require-animation --require-figure --seconds 15 --shots 3
+```
+
+`equipment_graph.search_completed` means the bounded diagnostic ran. Its separate native model/pose records
+do not enable ownership, rendering, collision or gameplay. Player/world/equipment identity loss revokes the
+probe; changed metadata IDs and changed model paths reject reused storage. Native reference setters can use
+temporary stack references, so reference liveness is reported separately from actor identity. First model
+matrices remain in each model's render-origin coordinates; no native hand/back binding or bow-string palette
+is claimed. No guest actor is created, moved or destroyed by this diagnostic.
 
 ## Explicit native weapon experiments
 
@@ -340,6 +371,7 @@ Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or
 .venv/Scripts/python.exe tests/coop_figure_check.py
 .venv/Scripts/python.exe tests/coop_equipment_check.py
 .venv/Scripts/python.exe tests/coop_gear_prepare_check.py
+.venv/Scripts/python.exe tests/coop_gear_probe_check.py
 .venv/Scripts/python.exe tests/coop_native_audit_check.py
 .venv/Scripts/python.exe tests/coop_native_probe_check.py
 .venv/Scripts/python.exe tools/build_coop_velocity_peer.py

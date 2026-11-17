@@ -7,6 +7,11 @@ This public plan is the resumption reference; it does not depend on private note
 See [the development guide](coop-development.md) for commands, [native research](coop-native-research.md) for
 engine evidence and [the campaign design](coop.md) for the agreed final behavior.
 
+Priority update after the visual-grounding report: verify the visible figure's binding to a native body and
+its feet/terrain relationship before further equipment appearance work. The visible figure has no collider;
+the separate native NPC experiment does not give it ground contact. The test echo's horizontal offset reuses
+the sender's Y and can misplace it on slopes. An origin calibration or scale adjustment cannot complete this gate.
+
 **Resume here:** [the next-session handover](coop-next-session.md) records the tested source/build checkpoint,
 the November 14 reference review and the ordered work toward original Link movement and attacks. The next
 character milestone includes final blended pose and equipment replication, original run/jump/attack evidence,
@@ -21,6 +26,7 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 | Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
 | Phase 2: final body pose | 58-bone capture/encoding/interpolation/application; one-game ENet echo passed with 387 body samples and unchanged source saves | Equipment, full run/jump/attack fidelity and binding to a native body remain pending |
 | Phase 2: equipped identities | Bounded pouch observation and optional weapon/shield/bow names; live echo received 394 equipped snapshots; selected models prepared privately | No gear placement/rendering, fused additions, bow-string replication or inventory transaction |
+| Phase 2: native equipment research | Original reference-setter identities and bounded ModelUnit discovery; three models and 81 raw first-palette matrices observed | Persistent ownership, coordinate conversion and hand/back attachment binding remain unverified |
 | Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
 | Phase 2: native experiment | One independent weapon request falls, rests and is collected; strict checks passed with/without the visual figure | Still one-shot and triggered by an authentic weapon drop; not companion spawning |
 | Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Removal and reusable session ownership are still unverified |

@@ -7,7 +7,7 @@
 typedef struct {
     int anim, prev_anim;
     float frame, prev_frame, fps, blend;
-    float feet[3], vel[3], yaw;
+    float feet[3], vel[3], yaw; // sampled actor origin; no collision or terrain query
     float rot[9];
     const void *fig;
     float hair[3];

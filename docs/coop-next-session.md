@@ -36,6 +36,8 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `a708ac5` | Guarded native NPC body/velocity diagnosis; early update requests queued but did not move it |
 | `59e668e` | Consumer-entry native velocity reapplication; two bounded forward/reverse/rest runs passed |
 | `2c65804` | A separate game-free ENet peer drives the native NPC, with expiry stops and same-epoch recovery |
+| `2bc6e7d` | Capture, encode, interpolate and apply the original Link's final body pose |
+| `c4d6345` | Observe and replicate equipped identities; prepare selected models privately |
 
 The current integration targets port 0.4.0 and game 1.4.3. It is experimental; the preserved port 0.3.11 build
 remains available. Reuse the installed ExeFS/indexed RomFS, generated sources, shader preparation and existing
@@ -115,6 +117,23 @@ and structurally validated on the user's local content; all generated files rema
 attachment, inventory transaction, exact attack/jump fidelity, heavy-scene performance or Internet acceptance
 is claimed. Linux remains untested. Earlier loaded-validation-layer and ABA limitations remain open.
 
+The native-equipment diagnostic subsequently observed three original model candidates and 81 first-palette
+matrices in a 15-world-second copied-save run (`run-680b347778`). All processes exited zero and the source
+saves were unchanged. The existing original-reference setter supplies actor identities, but its observed
+caller creates a temporary stack reference. Neither nearby position nor matching names establish persistent
+exclusive ownership. The bounded search is read-only, opt-in and diagnostic-only; it grants no native capability.
+The capped Player-root searches were unproductive. Reuse the original actor/ModelUnit route instead.
+
+The visible figure still has no terrain collider. Prepared idle geometry measures about 1.763 metres tall,
+and no uniform shrink factor was found; runtime size equivalence remains unverified. The echo's default
+three-metre X offset preserves source Y and can sink into a slope. A zero-offset 12-world-second audit
+(`run-c42b09a872`) passed with 291 body poses and unchanged source saves, but a horse occluded the comparison.
+This is a calibration aid, not a scale or collision fix. Native body/feet binding is now the first priority.
+
+Checks for this diagnostic slice: bounded synthetic graph/reference/model lifetime checks, adapter and native
+probe/audit suites, 34 report-parser tests, all six runtime probes and full/staged content checks. No lifter or
+wire-format change was made. Linux, loaded-layer gameplay, performance and Internet acceptance remain unrun.
+
 ## Reference review on 2026-11-14
 
 | Reference | Verified state | Use and limit |
@@ -130,27 +149,31 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 
 ## Ordered work for the next session
 
-1. **Continue with equipment placement.** The smallest capture -> serialization -> receive -> body-pose application slice
-   now exists in `coop_body.c/.h`, `coop_adapter.c`, `coop_wire.c/.h`, `coop_interp.c` and `link_figure.c`.
-   Reuse it. Inspect the pinned MIT reference's `game_gear.c` and LinkBody equipment/anchor path for the weapon,
-   shield, bow and held-arrow transforms. Equipped identities now exist in `coop_equipment.c/.h` and its separate
-   read-only guest reader. `prepare_coop_gear.py` prepares a small selected LNKA2 model library. The renderer still
-   has no gear bones/model cache or verified native attachment poses. Do not present the prepared library as drawn gear.
-   Keep exact permissive attribution; do not rebuild the base asset conversion from scratch.
-2. **Extend the bounded pose path to equipment.** Account explicitly for protocol version/packet limits,
-   malformed/nonfinite data, ownership, freshness, world changes, unequipping and clearing stale optional fields.
-   Protocol v5 states are 152 bytes without optional data, 628 with body, 296 with equipment identities, or 772
-   with both (896-byte ceiling). Animated attachment palettes need a deliberate size/fragmentation design,
-   not an unchecked append. Never transmit pointers or raw C structures.
-   Preserve the verified native movement experiment. The render-origin search still needs broader live checks.
-3. **Demonstrate original movement and attack poses.** Script the real local Link running, jumping and performing
+1. **Prioritize native body binding and ground contact.** The visible figure has no collider. The user reported
+   apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
+   the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship
+   on flat ground, slopes and steps, then associate the visible model with an independently owned native body
+   through verified engine operations. Preserve the tested native movement guards and original camera/input.
+   Evaluate a Player-derived puppet where its ownership can be verified; do not copy Player singleton references.
+   Safe repeated creation/removal across scene changes/reconnect is part of this contract. Use
+   `--pose-echo-offset 0` only for origin calibration, not as a ground-contact or physics acceptance pass.
+2. **Reuse the original equipment actors and matrices.** `coop_gear_probe.c` now observes the verified original
+   actor-reference setter through `coop_adapter_actor_bind`, deduplicates native actor/metadata IDs and searches
+   only their bounded ModelUnit references for exact prepared model names. Three native models and 81 first
+   palette matrices were observed. Exclusive ownership remains unverified; the recorded setter can refer to a
+   temporary stack object. Validate a persistent owner relation and hand/back transforms before binding.
+   Broad Player graph searches were capped and unproductive; do not expand them or restart a full-heap scan.
+3. **Integrate validated body/pose/equipment data into rendering.** Reuse `coop_body.c/.h`, `coop_equipment.c/.h`,
+   the selected LNKA2 library, native matrices and the original animation data. The renderer still has no gear
+   model cache or verified native attachment binding. Keep native/render ownership separate and retire GPU
+   resources safely. Account for malformed data, freshness, world changes, unequipping and clearing optional
+   fields. Protocol v5 states are 152 bytes base, 628 with body, 296 with identities, or 772 with both (896-byte
+   ceiling). Animated attachment palettes require an explicit size/fragmentation design. Never transmit pointers
+   or raw C structures. Retain permissive attribution; no base asset/animation conversion restart is needed.
+4. **Demonstrate original movement and attack poses.** Script the real local Link running, jumping and performing
    a basic weapon attack, then reproduce its captured pose/equipment on the remote representation. A deterministic
    game-free peer can help before a human/two-PC run. Clip-name agreement alone does not prove blended pose or
    attack fidelity. Keep visual acceptance separate from native gameplay acceptance.
-4. **Resolve the native companion contract.** Compare an independently owned remote body with a Player-derived
-   puppet/controller if needed. Verify model binding/replacement, safe removal, asynchronous completion and
-   repeated creation across load/leave/reconnect. Do not assume a mesh replacement inherits the Player action
-   graph, or force a second Player into the local manager. Preserve original local input/camera ownership.
 5. **Prove one real cooperative combat outcome.** Inspect the MIT hit-hook research as a starting point, then
    verify the native enemy damage route, stable enemy/attack IDs, host authority and deduplication. The existing
    local-Link PvP damage hook is not an enemy-combat adapter. Animation, a health-memory write or a notification
@@ -158,7 +181,8 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 6. **Complete the Phase 2 lifecycle and Internet gates**, then proceed through campaign stages in `coop.md`.
    Two actual PCs, a private VPN and a 30-minute session with reconnect/save/reload are still required.
 
-Steps 1-3 improve original-Link fidelity; steps 4-6 remain mandatory for calling it a playable native companion.
+These steps reuse the original game's behavior. The native body/lifecycle and Internet gates remain mandatory
+for calling the result a playable companion. Ground contact now precedes further visual equipment work.
 Report each result at its actual level. Neither successful rendering nor a native NPC stream completes Phase 2.
 
 ## Working constraints

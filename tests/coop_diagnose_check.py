@@ -36,6 +36,46 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_native_model_matrices_do_not_prove_reference_lifetime_or_ownership(self):
+        lines=['coop gear native model: slot 0, actor 0x10000, model 0x20000, depth 1, embedded delta 288;',
+               'coop gear references: captured 4;',
+               'coop gear reference candidate: generation 3, slot 0, actor 0x10000, metadata id 17, caller 0x30000;',
+               'coop gear reference pose: world us 1000000, generation 3, slot 0, candidate 0, first 1.0 2.0 3.0; axes 1 0 0 0 1 0 0 0 1; reference live 0; native model render origin']
+        summary=diagnose.gear_graph_summary(lines)
+        self.assertEqual(summary['reference_events'],4)
+        self.assertEqual(summary['native_models'][0]['embedded_delta'],288)
+        self.assertEqual(summary['reference_candidates'][0]['metadata_id'],17)
+        self.assertEqual(summary['reference_poses'][0]['render_origin_pos'],[1,2,3])
+        self.assertFalse(summary['reference_poses'][0]['reference_live'])
+        self.assertFalse(summary['exclusive_ownership_verified'])
+        self.assertFalse(summary['native_attachment_binding_verified'])
+
+    def test_malformed_gear_matrices_are_ignored(self):
+        graph='coop gear graph pose: world us 1000000, generation 3, candidate 0, slot 0, first 1..2 2 3;'
+        reference='coop gear reference pose: world us 1000000, generation 3, slot 0, candidate 0, first 1..2 2 3; axes 1 0 0 0 1 0 0 0 1;'
+        summary=diagnose.gear_graph_summary([graph,reference,reference.replace('1..2','1').replace('axes 1 0 0','axes 1 0')])
+        self.assertEqual(summary['poses'],[])
+        self.assertEqual(summary['reference_poses'],[])
+
+    def test_gear_graph_search_is_not_attachment_ownership(self):
+        lines=['coop gear graph: armed, node limit 2048, depth limit 6, per tick 16;',
+               'coop gear graph done: generation 3, nodes 2048, candidates 0, capped 1; reachability only']
+        summary=diagnose.gear_graph_summary(lines)
+        self.assertTrue(summary['search_completed']); self.assertEqual(summary['candidates'],[])
+        self.assertFalse(summary['native_attachment_binding_verified'])
+        self.assertFalse(summary['exclusive_ownership_verified'])
+        self.assertFalse(diagnose.gear_graph_summary(lines[1:])['search_completed'])
+        self.assertFalse(diagnose.gear_graph_summary([lines[0],lines[1].replace('2048','9999')])['search_completed'])
+
+    def test_gear_probe_requires_valid_slot_and_exact_model_alias(self):
+        manifest=dict(format='LNKA',version=2,actors={'Weapon_Sword_101':'Alias.Blade','Weapon_Shield_005':'Alias.Shield'})
+        text=diagnose.gear_probe_mapping(manifest)
+        self.assertIn('0\tWeapon_Sword_101\tAlias.Blade\n',text)
+        self.assertIn('1\tWeapon_Shield_005\tAlias.Shield\n',text)
+        for actors in ({'Weapon_Sword_101':'../bad'}, {'../actor':'Alias.Blade'},
+                       {'Weapon_Sword_101':'Alias.Blade','Weapon_Sword_102':'Alias.Blade'}, {}):
+            with self.assertRaises(ValueError): diagnose.gear_probe_mapping(dict(format='LNKA',version=2,actors=actors))
+
     def test_equipment_echo_requires_real_received_items(self):
         text='peer: equipment echo completed: samples 30, equipped 25, changes 1'
         result=diagnose.equipment_echo_summary(text,0)

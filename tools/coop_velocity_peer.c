@@ -4,10 +4,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 // Round-trip real captured poses through a separate ENet worker. Position is offset
 // for inspection only; this tool never creates or controls a guest actor.
-static int pose_echo(CoopNet *net) {
+static int pose_echo(CoopNet *net, float offset) {
     uint64_t begin=plat_now_ns(), last_capture=0, session=0;
     uint32_t generation=0;
     unsigned samples=0, bodies=0, changed=0, equipment=0, equipped=0, equipment_changes=0;
@@ -36,7 +37,7 @@ static int pose_echo(CoopNet *net) {
                 if (bodies && memcmp(&previous,&sample.body,sizeof previous)) changed++;
                 previous=sample.body; bodies++;
             }
-            sample.pos[0]+=3; sample.time_ns=plat_now_ns();
+            sample.pos[0]+=offset; sample.time_ns=plat_now_ns();
             coop_net_publish(net,&sample);
             if (samples==1 || samples%30==0) {
                 printf("peer: pose echo: samples %u, bodies %u, changed %u, animation %s\n",
@@ -54,9 +55,14 @@ static int pose_echo(CoopNet *net) {
 }
 
 int main(int argc, char **argv) {
-    int echo=argc==5 && !strcmp(argv[4],"--pose-echo");
+    int echo=(argc==5 || argc==6) && !strcmp(argv[4],"--pose-echo");
     if ((argc != 4 && !echo) || strlen(argv[2]) != 64) return 2;
     char *end;
+    float offset=3;
+    if (echo && argc==6) {
+        offset=strtof(argv[5],&end);
+        if (!argv[5][0] || *end || !isfinite(offset) || fabsf(offset)>10) return 2;
+    }
     unsigned long port = strtoul(argv[1], &end, 10);
     if (*end || port < 1024 || port > 65535) return 2;
     CoopNetConfig config = {.mode=2,.port=(uint16_t)port,.game_version=143,.capabilities=COOP_CAP_PRESENCE};
@@ -72,7 +78,7 @@ int main(int argc, char **argv) {
     if (!net) return 2;
     coop_net_configure(net,&config);
     if (echo) {
-        int result=pose_echo(net);
+        int result=pose_echo(net,offset);
         coop_net_destroy(net);
         return result;
     }
