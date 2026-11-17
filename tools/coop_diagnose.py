@@ -430,6 +430,14 @@ def pose_echo_summary(peer_text, lines, exit_code):
                 renderer_body_applied=body_applied, acceptance_passed=passed, native_companion_verified=False)
 
 
+def equipment_echo_summary(peer_text, exit_code):
+    match=re.search(r'peer: equipment echo completed: samples (\d+), equipped (\d+), changes (\d+)',peer_text)
+    samples, equipped, changes=tuple(map(int,match.groups())) if match else (0,0,0)
+    passed=exit_code==0 and samples>=10 and 0<equipped<=samples and changes<samples
+    return dict(samples=samples,equipped_samples=equipped,changes=changes,acceptance_passed=passed,
+                placement_verified=False,inventory_replication_verified=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -444,6 +452,7 @@ def main():
     ap.add_argument('--require-allocator', action='store_true', help='also require the same probe reaching its native allocator handoff')
     ap.add_argument('--require-resource', action='store_true', help='also require the same probe retaining its queued resource until cleanup')
     ap.add_argument('--require-animation', action='store_true', help='require captured rotation and advancing native animation frames')
+    ap.add_argument('--require-equipment', action='store_true', help='require equipped identities received by the pose echo peer; no gear placement claim')
     ap.add_argument('--require-figure', action='store_true', help='require a loaded model and a diagnostic G-buffer figure submission')
     ap.add_argument('--without-figure', action='store_true', help='omit the optional figure asset for a baseline comparison')
     spawn = ap.add_mutually_exclusive_group()
@@ -470,6 +479,8 @@ def main():
         ap.error('--require-figure and --without-figure are mutually exclusive')
     if args.pose_echo and args.without_figure:
         ap.error('--pose-echo requires the figure to verify received-pose application')
+    if args.require_equipment and not args.pose_echo:
+        ap.error('--require-equipment requires --pose-echo')
     args.seconds = args.seconds if args.seconds is not None else {'idle': 5, 'controls': 15, 'reload': 45, 'object': 24}[args.scenario]
     if not math.isfinite(args.seconds) or args.seconds <= 0 or not math.isfinite(args.timeout) or args.timeout <= 0:
         ap.error('--seconds and --timeout must be finite and positive')
@@ -718,6 +729,9 @@ def main():
         peer_text=(folder / 'peer.log').read_text(encoding='utf-8',errors='replace')
         report['pose_echo'] = pose_echo_summary(peer_text,lines,peer_result)
         report['acceptance_checks']['pose_echo'] = report['pose_echo']['acceptance_passed']
+        report['equipment_echo'] = equipment_echo_summary(peer_text,peer_result)
+        if args.require_equipment:
+            report['acceptance_checks']['equipment_echo'] = report['equipment_echo']['acceptance_passed']
     report['diagnostic_passed'] = all(report['acceptance_checks'].values())
     (folder / 'report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report, indent=2))

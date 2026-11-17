@@ -15,21 +15,30 @@ The public plan is authoritative for resuming development; private notes under i
 | --- | --- | --- |
 | Build | Separate runtime/executable folders, verified 1.4.3 modules, explicit paths, isolated profiles | Each participant builds locally from their own content |
 | Session | ENet 1.3.18 worker, direct VPN IPv4, reliable labels and 30 Hz presence | Labels are not gameplay transactions; Internet acceptance is pending |
-| Protocol | Version 4, explicit serialization, game/content checks, session/player identities, freshness and deduplication | Older peers must rebuild; no gameplay-command decoder |
-| Pose | Position, velocity, yaw, optional unit quaternion, FSKA clip/frame and final 58-bone body pose | No equipment replication or native animation controller |
+| Protocol | Version 5, explicit serialization, game/content checks, session/player identities, freshness and deduplication | Older peers must rebuild; no gameplay-command decoder |
+| Pose | Position, velocity, yaw, optional unit quaternion, FSKA clip/frame and final 58-bone body pose | No native animation controller |
+| Equipped identities | Optional base weapon, shield and bow actor names, read from validated pouch arrays and carried in copied snapshots | No item ownership, native attachment transforms, fused additions or gear rendering |
 | Presentation | Interpolated animated Link, black hair, scene depth, lighting and shadows; silhouette fallback | No native body, collision, input, inventory or combat |
 | Native diagnostics | Scoped request/task/actor/resource/reference/retirement observations | Observation does not establish an unrestricted calling contract |
 | Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
 | Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Fixed synthetic pulse; Link binding and removal API remain unverified |
 | Native ENet diagnostic | One scoped NPC consumes a loopback peer's leased horizontal velocities and stops/restarts across publication gaps | Scripted peer; no human/Internet, Link binding or complete lifecycle acceptance |
 
-State packets are 152 bytes without a body pose and 628 bytes with one (640-byte protocol ceiling).
+State packets are 152 bytes without optional body/equipment data, 628 with the body, 296 with equipment
+identities, and 772 with both (896-byte protocol ceiling; no larger fragmented equipment-pose packet).
 The body adds 58 signed little-endian int16 quaternions and two three-axis translations in millimetres,
 476 bytes total. Each optional field has an explicit presence flag. Malformed/nonfinite transforms,
 non-unit quaternions, out-of-range translations and noncanonical strings are rejected. Body poses require
 actor rotation. Stale observations clear optional data; a missing body in an interpolation bracket clears
 the earlier skeleton. Quaternion blending uses the shortest path. Clip changes and loop restarts hold the
-earlier frame until the next sample. Equipment and character audio remain deferred.
+earlier frame until the next sample. Equipment placement and character audio remain deferred.
+
+Equipment adds three zero-padded 48-byte ASCII actor names. Names are validated by slot; weapon names cannot
+occupy the shield or bow slot. Explicit empty names mean unequipped, while a missing flag means unavailable
+observation. Changes are discrete; interpolation, stale-observation handling, generation changes and disconnect
+clear old optional identities. A second pouch read and descriptor/root rechecks reject unstable snapshots.
+Hash-map lookups have a 64-probe bound. Guest reads occur only in the observer: no render/network memory search,
+heap scan, guest mutation or inventory transaction is added.
 
 The guest observer copies the 1.4.3 final skinning palette through the pinned MIT reference's model path,
 validates transforms and the render-origin proximity, and rechecks model links, actor identity and transform.
@@ -154,11 +163,31 @@ For final-body capture -> ENet -> interpolation -> rendering, using one game and
 .venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --pose-echo --scenario controls --require-animation --require-figure --seconds 15 --shots 3
 ```
 
+Add `--require-equipment` to require at least ten received equipment snapshots with an equipped item.
+The `equipment_echo` report separately leaves `placement_verified` and `inventory_replication_verified` false.
+Synthetic checks cover item changes/unequip; a steady live echo does not prove those interactions in the game.
+
 The peer starts after the world-clock marker, echoes fresh captured samples three metres along X and never
 creates a native actor. The runner requires at least ten body samples, changing bones, renderer application,
 both successful exits and unchanged source saves. This gate proves the copied-pose path, not jump/attack
 fidelity, independent human input, equipment, collision or cooperative combat. `--pose-echo` is mutually
 exclusive with native creation/movement options and requires the figure. Diagnostic results and images stay private.
+
+## Prepare selected equipment assets
+
+`tools/prepare_coop_gear.py` prepares only the requested one to sixteen base actors, reusing the pinned MIT
+BFRES/texture converter and a small attributed BYML reader. It avoids converting all armor, the base Link,
+animations or shader caches. Model aliases in the actor's ModelInfo are retained. For example:
+
+```powershell
+.venv-py314/Scripts/python.exe tools/prepare_coop_gear.py --romfs "<indexed RomFS directory>" --mcsharp "<mcsharp-cli.exe>" --actor Weapon_Sword_103 --actor Weapon_Shield_005 --actor Weapon_Bow_004
+```
+
+The default private output is `build/coop-v143/assets/link-gear.bin` (LNKA2) with a hash manifest. Work paths
+and outputs must remain below ignored `build/` or `generated/`; at least 25 GiB free is required before work.
+Only requested models are decoded. This library is not installed into live profiles or drawn yet. Native
+hand/back anchors, their poses, a bounded rendering asset cache, bow-string deformation and fused additions
+remain separate gates. Never distribute the library or decoder outputs.
 
 The bot follows a synthetic trajectory and estimates height from the local player. It has no terrain collision.
 A successful local-reader check, pose packet or submitted draw does not prove a playable remote character.
@@ -309,6 +338,8 @@ Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or
 .venv/Scripts/python.exe tests/coop_check.py --cc C:/msys64/ucrt64/bin/clang.exe --deps C:/msys64/ucrt64/include
 .venv/Scripts/python.exe tests/coop_network_check.py --cc C:/msys64/ucrt64/bin/clang.exe
 .venv/Scripts/python.exe tests/coop_figure_check.py
+.venv/Scripts/python.exe tests/coop_equipment_check.py
+.venv/Scripts/python.exe tests/coop_gear_prepare_check.py
 .venv/Scripts/python.exe tests/coop_native_audit_check.py
 .venv/Scripts/python.exe tests/coop_native_probe_check.py
 .venv/Scripts/python.exe tools/build_coop_velocity_peer.py

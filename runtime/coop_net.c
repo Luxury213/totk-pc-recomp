@@ -102,6 +102,7 @@ static void worker(void *arg) {
             memset(local.animation, 0, sizeof local.animation);
             local.animation_frame = 0;
             memset(&local.body, 0, sizeof local.body);
+            memset(&local.equipment, 0, sizeof local.equipment);
         }
         coop_session_sample(&session, &local);
         if (host) {

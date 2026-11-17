@@ -84,7 +84,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='coop-network-', dir=output) as tmp:
         folder = Path(tmp)
         common = [args.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'runtime')]
-        protocol = [str(ROOT / 'runtime' / name) for name in ('coop_body.c', 'coop_wire.c', 'coop_session.c', 'coop_interp.c')]
+        protocol = [str(ROOT / 'runtime' / name) for name in ('coop_body.c', 'coop_equipment.c', 'coop_wire.c', 'coop_session.c', 'coop_interp.c')]
         exe = folder / 'protocol.exe'
         subprocess.run([*common, str(ROOT / 'tests' / 'coop_session_check.c'), *protocol, '-o', str(exe)],
                        check=True, env=env)

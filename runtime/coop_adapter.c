@@ -1361,6 +1361,7 @@ void coop_adapter_observe(const Cpu *cpu) {
     if (actor) {
         read_player_visual(actor, &visual);
         read_player_body(actor, &visual);
+        if (coop_equipment_observe(&visual.equipment)) visual.flags |= COOP_SAMPLE_EQUIPMENT;
         if (player_proc() != actor || (uint32_t)guest_s32(actor + 0x10) != actor_id)
             memset(&visual, 0, sizeof visual);
     }
@@ -1398,6 +1399,10 @@ void coop_adapter_observe(const Cpu *cpu) {
             rt_log("coop body sample: world ms %.1f, generation %u, body %s; observation only",
                    world_us / 1000.0, observed.sample.generation,
                    (visual.flags & COOP_SAMPLE_BODY) ? "observed" : "absent");
+            rt_log("coop equipment sample: world ms %.1f, generation %u, equipment %s, weapon %s, shield %s, bow %s; identities only",
+                   world_us / 1000.0, observed.sample.generation,
+                   (visual.flags & COOP_SAMPLE_EQUIPMENT) ? "observed" : "absent",
+                   visual.equipment.actor[0],visual.equipment.actor[1],visual.equipment.actor[2]);
             next_local_sample_us = world_us + 250000;
         }
     }
@@ -1762,6 +1767,7 @@ void coop_adapter_observe(const Cpu *cpu) {
     memcpy(observed.sample.animation, visual.animation, sizeof visual.animation);
     observed.sample.animation_frame = visual.animation_frame;
     observed.sample.body = visual.body;
+    observed.sample.equipment = visual.equipment;
     observed.sample.scene = 0;   // A guest scene address is not a stable network scene identity.
     observed.sample.time_ns = now;
     observed.sample.yaw = yaw; observed.sample.action = (uint32_t)action;

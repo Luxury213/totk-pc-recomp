@@ -1,5 +1,32 @@
 # Co-op native research notes
 
+## Equipped identity observation (November 17, 2026)
+
+The pinned MIT reference's `runtime/game_flags.c` array readers and `runtime/game_gear.c`
+`game_player_gear` supply the pouch layout. Our `coop_equipment_guest.c` is a bounded read-only adaptation,
+called only from the validated local-player observer on 1.4.3. It validates the bool-table vtable at
+`main+0x39403d0` through the manager slot at `main+0x3ad66b0`, reads the int-array table three 0x60-byte records
+after the bool table and the String64-array table seventeen records after it. Int-array entries are 64 bytes
+with count/pointer at +0x20/+0x28; String64 entries are 144 bytes with count/pointer at +0x70/+0x78, 0x50-byte
+elements with their text at +0x0c. Module bases continue to come only from generated layout data.
+
+For weapon, shield and bow, `Pouch.<kind>.EquipIndex[0]` selects `Pouch.<kind>.Content.Name`. A negative-one
+index means unequipped. Other negative/out-of-range indices, unavailable arrays, invalid names or mismatching
+second reads remove the optional observation. Each map lookup stops after at most 64 probes. Manager/table
+descriptors and all values are rechecked before publishing. No raw pointer crosses the network.
+
+A 15-world-second copied-save run received 394 equipment snapshots through a separate ENet echo peer,
+with all three base identities observed, successful process exits and unchanged source saves. Its 394 body
+poses also passed the existing application gate. Synthetic checks cover unequipping, changing items,
+unavailable observations, malformed names, pointer bounds, map corruption and unstable reads.
+
+This identifies the equipped base actors only. The reference's separate model search scans large heap
+ranges and compares nearby render origins modulo ten metres. It has not been adopted as proof of native
+attachment ownership. Hand/back selection, cancellation on world/model changes, unique candidate identity,
+native attachment palettes, fused additions and bowed-string deformation remain unverified here.
+`prepare_coop_gear.py` can prepare a small private LNKA2 library for selected identities; rendering and its
+bounded GPU/resource retirement remain a separate gate. A prepared mesh is not a wielded native weapon.
+
 These notes summarize TotK 1.4.3 observations used by `runtime/coop_adapter.c` and the isolated experiments in
 `runtime/coop_native_probe.c`. They preserve current findings rather than a chronological run log. Native
 companions, direct movement/teleport and shared campaign control remain disabled. See the

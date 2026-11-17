@@ -81,6 +81,49 @@ static void visual_protocol_checks(void) {
     assert(!strcmp(visual.animation,b.animation) && visual.rotation[3]==-1);
 }
 
+static void equipment_protocol_checks(void) {
+    CoopMessage m={.kind=COOP_MSG_STATE,.session=10,.player=20,.generation=1,
+        .sample={.generation=1,.flags=COOP_SAMPLE_PLAYER|COOP_SAMPLE_EQUIPMENT}};
+    strcpy(m.sample.equipment.actor[0],"Weapon_Sword_101");
+    strcpy(m.sample.equipment.actor[1],"Weapon_Shield_040");
+    strcpy(m.sample.equipment.actor[2],"Weapon_Bow_001");
+    uint8_t bytes[COOP_WIRE_MAX]; CoopMessage out;
+    size_t size=coop_wire_encode(bytes,&m);
+    assert(size==296 && coop_wire_decode(&out,bytes,size));
+    assert(!memcmp(&out.sample.equipment,&m.sample.equipment,sizeof m.sample.equipment));
+    for(size_t n=0;n<size;n++) assert(!coop_wire_decode(&out,bytes,n));
+    assert(!coop_wire_decode(&out,bytes,size+1));
+    bytes[4]=4; assert(!coop_wire_decode(&out,bytes,size)); bytes[4]=COOP_PROTOCOL;
+    m.sample.flags|=COOP_SAMPLE_BODY|COOP_SAMPLE_ROTATION; m.sample.rotation[3]=1;
+    for(unsigned i=0;i<COOP_BODY_BONES;i++) m.sample.body.q[i][3]=1;
+    assert(coop_wire_encode(bytes,&m)==772 && 772<=COOP_WIRE_MAX);
+    assert(coop_wire_decode(&out,bytes,772));
+    const char *bad[]={"../Weapon_Sword_101","Weapon_Bow_001","Weapon_Sword_","Weapon_Sword_a","Weapon_Sword_101/"};
+    for(unsigned i=0;i<sizeof bad/sizeof *bad;i++) {
+        memset(m.sample.equipment.actor[0],0,COOP_EQUIP_NAME);
+        strcpy(m.sample.equipment.actor[0],bad[i]); assert(!coop_wire_encode(bytes,&m));
+    }
+    memset(m.sample.equipment.actor[0],'x',COOP_EQUIP_NAME); assert(!coop_wire_encode(bytes,&m));
+    memset(m.sample.equipment.actor[0],0,COOP_EQUIP_NAME);
+    strcpy(m.sample.equipment.actor[0],"Weapon_Sword_101");
+    m.sample.equipment.actor[0][40]='x'; assert(!coop_wire_encode(bytes,&m));
+    m.sample.equipment.actor[0][40]=0;
+    CoopSample a=m.sample,b=a,visual; CoopInterpolator history={0};
+    strcpy(b.equipment.actor[0],"Weapon_Spear_001");
+    coop_interp_push(&history,&a,1000000000); coop_interp_push(&history,&b,1100000000);
+    coop_interp_read(&history,1150000000,&visual); assert(!strcmp(visual.equipment.actor[0],"Weapon_Sword_101"));
+    coop_interp_read(&history,1200000000,&visual); assert(!strcmp(visual.equipment.actor[0],"Weapon_Spear_001"));
+    b.flags&=~COOP_SAMPLE_EQUIPMENT; memset(&b.equipment,0,sizeof b.equipment); history=(CoopInterpolator){0};
+    coop_interp_push(&history,&a,1000000000); coop_interp_push(&history,&b,1100000000);
+    coop_interp_read(&history,1150000000,&visual);
+    assert(!(visual.flags&COOP_SAMPLE_EQUIPMENT) && !visual.equipment.actor[0][0]);
+    m.sample.flags&=~COOP_SAMPLE_EQUIPMENT; assert(!coop_wire_encode(bytes,&m));
+    memset(&m.sample.equipment,0,sizeof m.sample.equipment); assert(coop_wire_encode(bytes,&m)==628);
+    m.sample.flags|=COOP_SAMPLE_EQUIPMENT; assert(coop_wire_encode(bytes,&m)==772);
+    assert(coop_wire_decode(&out,bytes,772) && !out.sample.equipment.actor[1][0]); // explicitly unequipped
+    puts("co-op equipment: bounded identities, slot validation, optional clearing, unequip and discrete changes passed");
+}
+
 static void body_protocol_checks(void) {
     float palette[COOP_BODY_PALETTE*12]={0};
     for(unsigned i=0;i<COOP_BODY_PALETTE;i++) palette[12*i]=palette[12*i+5]=palette[12*i+10]=1;
@@ -138,10 +181,11 @@ static void body_protocol_checks(void) {
     assert(!(visual.flags & COOP_SAMPLE_BODY) && visual.body.q[0][3]==0);
     b.generation=2; coop_interp_push(&history,&b,1200000000);
     assert(history.count==1); // old skeleton cannot cross local world generations
-    puts("co-op body: bounded LE codec, malformed/truncated poses, protocol4, interpolation and optional clearing passed");
+    printf("co-op body: bounded LE codec, malformed/truncated poses, protocol%u, interpolation and optional clearing passed\n",COOP_PROTOCOL);
 }
 
 int main(void) {
+    equipment_protocol_checks();
     body_protocol_checks();
     visual_protocol_checks();
     CoopSession h,c;

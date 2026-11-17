@@ -508,7 +508,7 @@ def groups_of(doc):
 def body_groups(romfs, dicts):
     """The material groups of Link's own model (the Player's EquipmentUserParam): G_Upper the chest's skin, G_Belt_A
     a belt, G_Head the hair and so on, which the armor he wears hides by name."""
-    from achievements import read_byml
+    from coop_byml import read_byml
     for k, v in sarc_members(unzstd_file(romfs, dicts, 'Pack/Actor/Player.pack.zs')).items():
         if '/EquipmentUserParam/' in k:
             return groups_of(read_byml(v))
@@ -518,7 +518,7 @@ def body_groups(romfs, dicts):
 def armor_params(romfs, dicts):
     """{actor: (hides, groups)} of every armor piece: the groups it hides (HideMaterialGroupNameList) and the groups of
     its own model's materials (HiddenMaterialGroupList), from its pack's ArmorParam."""
-    from achievements import read_byml
+    from coop_byml import read_byml
     out = {}
     for path in sorted(romfs.idx):
         m = re.match(r'Pack/Actor/(Armor_[A-Za-z0-9]+_(Head|Upper|Lower))\.pack\.zs$', path)
@@ -535,7 +535,7 @@ def armor_actors(romfs, dicts):
     """{actor: model file name} of every armor piece (Pack/Actor/Armor_*_{Head,Upper,Lower}): its pack's ModelInfo
     (the one of its own name, else one of its part; a dyed piece points at the model it dyes) names the model as
     ModelProjectName.FmdbName."""
-    from achievements import read_byml
+    from coop_byml import read_byml
     out = {}
     for path in sorted(romfs.idx):
         m = re.match(r'Pack/Actor/(Armor_[A-Za-z0-9]+_(Head|Upper|Lower))\.pack\.zs$', path)
@@ -557,7 +557,7 @@ WEAPON_ACTOR = r'Pack/Actor/(Weapon_(?:Sword|Lsword|Spear|Shield|Bow)_\d+[A-Za-z
 def weapon_actors(romfs, dicts):
     """{actor: model file name} of every weapon, shield and bow (Pack/Actor/Weapon_{Sword,...,Bow}_*) and the arrow (NormalArrow): its
     pack's ModelInfo, as for armor (Weapon_Sword_168, the Wooden Stick, shows Weapon_Sword_103.Weapon_Sword_103)."""
-    from achievements import read_byml
+    from coop_byml import read_byml
     out = {}
     for path in sorted(romfs.idx):
         m = re.match(WEAPON_ACTOR, path)
@@ -584,11 +584,11 @@ def pgroups(groups):
     return bytes(out)
 
 
-def build_armor(models, romfs, skel, actors, out_path, params=None, body=()):
+def build_armor(models, romfs, skel, actors, out_path, params=None, body=(), include_body=True):
     """Writes the armor library: the body (BODY) and each model actors name, skinned to the figure's skeleton by bone
     name (a bone the figure lacks, a cape's or a tassel's, moves with its nearest ancestor the figure has)."""
     from compression import zstd
-    entries = [('Link_Body', BODY)] + [(n, [(n, None)]) for n in sorted(set(actors.values()))]
+    entries = ([('Link_Body', BODY)] if include_body else []) + [(n, [(n, None)]) for n in sorted(set(actors.values()))]
     weapon_models = {model for actor, model in actors.items() if actor.startswith(('Weapon_', 'NormalArrow'))}
     blobs, index = [], {}
     for name, parts in entries:

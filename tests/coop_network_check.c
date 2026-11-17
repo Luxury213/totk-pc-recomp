@@ -14,8 +14,12 @@ static void publish(CoopNet *h,CoopNet *c) {
     a.flags |= COOP_SAMPLE_BODY;
     for(unsigned i=0;i<COOP_BODY_BONES;i++) a.body.q[i][3]=1;
     a.body.t[0][0]=1.25f;
+    a.flags |= COOP_SAMPLE_EQUIPMENT;
+    strcpy(a.equipment.actor[0],"Weapon_Sword_101");
+    strcpy(a.equipment.actor[1],"Weapon_Shield_040");
     coop_net_publish(h,&a);
     a.pos[0]=40; a.rotation[3]=0; a.rotation[0]=1;
+    strcpy(a.equipment.actor[0],"Weapon_Spear_001");
     strcpy(a.animation,"Sword_Synthetic"); a.animation_frame=17.25f; coop_net_publish(c,&a);
 }
 static void connected(CoopNet *h,CoopNet *c) {
@@ -28,6 +32,9 @@ static void connected(CoopNet *h,CoopNet *c) {
             assert(!strcmp(a.remote.animation,"Sword_Synthetic") && a.remote.animation_frame==17.25f);
             assert(!strcmp(b.remote.animation,"Nml_Wait") && b.remote.animation_frame==7.5f);
             assert(a.remote.rotation[0]==1 && b.remote.rotation[3]==1);
+            assert((a.remote.flags & b.remote.flags & COOP_SAMPLE_EQUIPMENT) &&
+                   !strcmp(a.remote.equipment.actor[0],"Weapon_Spear_001") &&
+                   !strcmp(b.remote.equipment.actor[0],"Weapon_Sword_101"));
             assert((a.remote.flags & b.remote.flags & COOP_SAMPLE_BODY) &&
                    a.remote.body.q[57][3]==1 && b.remote.body.t[0][0]==1.25f);
             assert(a.state==COOP_SESSION_LOADING && b.state==COOP_SESSION_LOADING);

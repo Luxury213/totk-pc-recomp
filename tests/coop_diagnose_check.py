@@ -36,6 +36,16 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_equipment_echo_requires_real_received_items(self):
+        text='peer: equipment echo completed: samples 30, equipped 25, changes 1'
+        result=diagnose.equipment_echo_summary(text,0)
+        self.assertTrue(result['acceptance_passed'])
+        self.assertFalse(result['placement_verified'])
+        self.assertFalse(result['inventory_replication_verified'])
+        for log,code in (('',0),(text,1),(text.replace('equipped 25','equipped 0'),0),
+                         (text.replace('equipped 25','equipped 35'),0)):
+            self.assertFalse(diagnose.equipment_echo_summary(log,code)['acceptance_passed'])
+
     def test_pose_echo_waits_for_world_and_requires_live_applied_bones(self):
         self.assertFalse(diagnose.peer_start_ready(True,'boot: first NVN call'))
         self.assertFalse(diagnose.peer_start_ready(True,'coop native npc peer velocity: step 1,'))

@@ -10,8 +10,9 @@
 static int pose_echo(CoopNet *net) {
     uint64_t begin=plat_now_ns(), last_capture=0, session=0;
     uint32_t generation=0;
-    unsigned samples=0, bodies=0, changed=0;
+    unsigned samples=0, bodies=0, changed=0, equipment=0, equipped=0, equipment_changes=0;
     CoopBody previous={0};
+    CoopEquipment previous_equipment={0};
     while (plat_now_ns()-begin < 90000000000ull) {
         CoopNetSnapshot view; coop_net_snapshot(net,&view);
         if (samples && (!view.negotiated || view.session!=session)) break;
@@ -20,6 +21,17 @@ static int pose_echo(CoopNet *net) {
             CoopSample sample=view.remote;
             session=view.session; last_capture=sample.time_ns; generation=sample.generation;
             samples++;
+            if (sample.flags & COOP_SAMPLE_EQUIPMENT) {
+                int different=memcmp(&previous_equipment,&sample.equipment,sizeof previous_equipment)!=0;
+                if (equipment && different) equipment_changes++;
+                if (!equipment || different) {
+                    printf("peer: equipment echo: weapon %s, shield %s, bow %s\n",
+                           sample.equipment.actor[0],sample.equipment.actor[1],sample.equipment.actor[2]);
+                    fflush(stdout);
+                }
+                previous_equipment=sample.equipment; equipment++;
+                equipped+=sample.equipment.actor[0][0] || sample.equipment.actor[1][0] || sample.equipment.actor[2][0];
+            }
             if (sample.flags & COOP_SAMPLE_BODY) {
                 if (bodies && memcmp(&previous,&sample.body,sizeof previous)) changed++;
                 previous=sample.body; bodies++;
@@ -37,6 +49,7 @@ static int pose_echo(CoopNet *net) {
     int ok=bodies>=10 && changed>0;
     printf("peer: pose echo %s: samples %u, bodies %u, changed %u\n",
            ok ? "completed" : "failed",samples,bodies,changed);
+    printf("peer: equipment echo completed: samples %u, equipped %u, changes %u\n",equipment,equipped,equipment_changes);
     return ok ? 0 : 1;
 }
 

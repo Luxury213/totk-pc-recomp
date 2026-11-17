@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 HARNESS = r'''
 #include <assert.h>
 #include "coop_body.c"
+#include "coop_equipment.c"
+#include "coop_equipment_guest.c"
 #include "coop_adapter.c"
 #include "coop_interp.c"
 #include "coop.c"

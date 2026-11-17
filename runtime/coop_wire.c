@@ -27,11 +27,17 @@ static int valid(const CoopMessage *m) {
     if (!m->session) return 0;
     if (m->kind == COOP_MSG_STATE) {
         const CoopSample *s = &m->sample;
-        if (m->generation != s->generation || (s->flags & ~31u) || s->action > 2 ||
+        if (m->generation != s->generation || (s->flags & ~63u) || s->action > 2 ||
             !isfinite(s->yaw) || fabsf(s->yaw) > 360) return 0;
         if ((s->flags & COOP_SAMPLE_PLAYER) && !s->generation) return 0;
         if ((s->flags & (COOP_SAMPLE_ROTATION | COOP_SAMPLE_ANIMATION)) && !(s->flags & COOP_SAMPLE_PLAYER)) return 0;
         if ((s->flags & COOP_SAMPLE_WORLD_READY) && (!(s->flags & COOP_SAMPLE_PLAYER) || !s->scene)) return 0;
+        if (s->flags & COOP_SAMPLE_EQUIPMENT) {
+            if (!(s->flags & COOP_SAMPLE_PLAYER) || !coop_equipment_valid(&s->equipment)) return 0;
+        } else {
+            for (unsigned i=0;i<COOP_EQUIP_SLOTS;i++) for (unsigned k=0;k<COOP_EQUIP_NAME;k++)
+                if (s->equipment.actor[i][k]) return 0;
+        }
         if ((s->flags & COOP_SAMPLE_BODY) &&
             (!(s->flags & COOP_SAMPLE_ROTATION) || !coop_body_valid(&s->body))) return 0;
         if (!(s->flags & COOP_SAMPLE_BODY)) {
@@ -87,11 +93,16 @@ size_t coop_wire_encode(uint8_t out[COOP_WIRE_MAX], const CoopMessage *m) {
         for (int i = 0; i < 4; i++) put_float(p + 52 + i * 4, m->sample.rotation[i]);
         put_float(p + 68, m->sample.animation_frame);
         memcpy(p + 72, m->sample.animation, sizeof m->sample.animation);
+        size_t size=HEADER+120;
         if (m->sample.flags & COOP_SAMPLE_BODY) {
             if (!coop_body_encode(p + 120, &m->sample.body)) return 0;
-            return HEADER + 120 + COOP_BODY_BYTES;
+            size+=COOP_BODY_BYTES;
         }
-        return HEADER + 120;
+        if (m->sample.flags & COOP_SAMPLE_EQUIPMENT) {
+            memcpy(out+size,m->sample.equipment.actor,COOP_EQUIP_BYTES);
+            size+=COOP_EQUIP_BYTES;
+        }
+        return size;
     }
     size_t n = strlen(m->label);
     put(p, m->event_id, 8); put(p + 8, n, 2); memcpy(p + 10, m->label, n);
@@ -112,10 +123,15 @@ int coop_wire_decode(CoopMessage *m, const uint8_t *b, size_t n) {
     } else if (v.kind == COOP_MSG_STATE) {
         if (n < HEADER + 120) return 0;
         v.sample.generation = v.generation; v.sample.scene = get(p, 8); v.sample.flags = (uint32_t)get(p + 8, 4);
+        size_t expected=HEADER+120;
+        if (v.sample.flags & COOP_SAMPLE_BODY) expected+=COOP_BODY_BYTES;
+        if (v.sample.flags & COOP_SAMPLE_EQUIPMENT) expected+=COOP_EQUIP_BYTES;
+        if (n!=expected) return 0;
         if (v.sample.flags & COOP_SAMPLE_BODY) {
-            if (n != HEADER + 120 + COOP_BODY_BYTES ||
-                !coop_body_decode(&v.sample.body, p + 120, COOP_BODY_BYTES)) return 0;
-        } else if (n != HEADER + 120) return 0;
+            if (!coop_body_decode(&v.sample.body, p + 120, COOP_BODY_BYTES)) return 0;
+        }
+        if (v.sample.flags & COOP_SAMPLE_EQUIPMENT)
+            memcpy(v.sample.equipment.actor,b+expected-COOP_EQUIP_BYTES,COOP_EQUIP_BYTES);
         for (int i = 0; i < 3; i++) {
             v.sample.pos[i] = get_float(p + 12 + i * 4); v.sample.velocity[i] = get_float(p + 24 + i * 4);
         }

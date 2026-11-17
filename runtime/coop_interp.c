@@ -6,6 +6,12 @@
 // runtime/net_mp.c place_on @ 7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c (MIT).
 // Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
 static void blend_visual(const CoopSample *a, const CoopSample *b, float t, CoopSample *out) {
+    // Equipped objects change discretely. Missing observation clears the old names
+    // immediately; interpolation must never invent an intermediate item identity.
+    if (!(a->flags & b->flags & COOP_SAMPLE_EQUIPMENT)) {
+        out->flags &= ~COOP_SAMPLE_EQUIPMENT;
+        memset(&out->equipment,0,sizeof out->equipment);
+    }
     if (a->flags & b->flags & COOP_SAMPLE_BODY) coop_body_lerp(&a->body, &b->body, t, &out->body);
     else {
         // Optional data is cleared as soon as a bracketing sample loses it. Never

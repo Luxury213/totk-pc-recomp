@@ -43,10 +43,14 @@ objects. Do not repeat extraction, full generation or shader warm-up merely to r
 
 ## What actually works
 
-- ENet worker and protocol v4; explicit serialization, identities/freshness, reliable notices and 30 Hz poses.
+- ENet worker and protocol v5; explicit serialization, identities/freshness, reliable notices and 30 Hz poses.
 - Final body-pose slice: a copied 1.4.3 palette, 58 bounded actor-space bone rotations and two root translations,
   explicit 476-byte encoding, interpolation and application to the figure's mapped skeleton. Face/hair children
-  retain local animation; unsupported assets keep clip fallback. Equipment remains absent.
+  retain local animation; unsupported assets keep clip fallback. Equipment placement remains absent.
+- Optional base weapon/shield/bow identities from bounded, double-read pouch arrays. Protocol v5 uses a
+  slot-validated 144-byte extension and clears stale/unavailable equipment. No inventory mutation is added.
+- Selective local preparation of one to sixteen equipment models using the pinned MIT converter; the tested
+  weapon/shield/bow library is 203,876 bytes. It is private and not yet loaded into rendering profiles.
 - An extracted, textured, animated Link figure with black hair. It remains separate from the native NPC.
 - One owned native `Npc_Road_001`, created by the isolated authentic weapon-drop experiment.
 - Mode 6 (`--native-npc-peer-motion`): a loopback ENet peer supplies horizontal velocities. A one-slot bridge
@@ -97,6 +101,20 @@ settings documentation, ENet workers at nominal 0/100/200 ms with configured imp
 configuration, kernel, texture, shader and Vulkan replay probes. Content/diff checks passed. Linux, exact
 run/jump/attack pose comparison, equipment and two-PC Internet testing remain unrun for this slice.
 
+The equipment-identity slice then passed a 15-world-second copied-save echo: 394 equipment snapshots with
+nonempty equipped identities, 394 body poses, 243 changed poses, both game/peer exits zero and unchanged source
+saves. Base weapon/shield/bow names were received; hand/back placement, fused additions and bow-string poses
+are not implemented. Item changes and unequip passed synthetic checks; the live equipped identities stayed
+constant. One native profile copy sufficed; the shader cache and base figure were reused.
+
+Equipment-slice checks passed: stable/unstable synthetic pouch reads, wire/slot validation, explicit unequip,
+discrete identity changes and clearing, both worker directions under the existing 0/100/200 ms impairment
+scenarios, four authored BYML/asset-selection tests, 30 diagnostic parser tests, adapter/figure/native probe
+suites, settings documentation and all six runtime probes. The selected three-model library was converted
+and structurally validated on the user's local content; all generated files remain ignored. No renderer
+attachment, inventory transaction, exact attack/jump fidelity, heavy-scene performance or Internet acceptance
+is claimed. Linux remains untested. Earlier loaded-validation-layer and ABA limitations remain open.
+
 ## Reference review on 2026-11-14
 
 | Reference | Verified state | Use and limit |
@@ -112,15 +130,18 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 
 ## Ordered work for the next session
 
-1. **Continue with equipment.** The smallest capture -> serialization -> receive -> body-pose application slice
+1. **Continue with equipment placement.** The smallest capture -> serialization -> receive -> body-pose application slice
    now exists in `coop_body.c/.h`, `coop_adapter.c`, `coop_wire.c/.h`, `coop_interp.c` and `link_figure.c`.
    Reuse it. Inspect the pinned MIT reference's `game_gear.c` and LinkBody equipment/anchor path for the weapon,
-   shield, bow and held-arrow transforms. Our figure currently has no gear bones/models or equipment messages.
+   shield, bow and held-arrow transforms. Equipped identities now exist in `coop_equipment.c/.h` and its separate
+   read-only guest reader. `prepare_coop_gear.py` prepares a small selected LNKA2 model library. The renderer still
+   has no gear bones/model cache or verified native attachment poses. Do not present the prepared library as drawn gear.
    Keep exact permissive attribution; do not rebuild the base asset conversion from scratch.
 2. **Extend the bounded pose path to equipment.** Account explicitly for protocol version/packet limits,
    malformed/nonfinite data, ownership, freshness, world changes, unequipping and clearing stale optional fields.
-   Protocol v4 states are 152 bytes without the body or 628 bytes with it (640-byte ceiling). Equipment will need
-   a deliberate size/fragmentation design, not an unchecked append. Never transmit pointers or raw C structures.
+   Protocol v5 states are 152 bytes without optional data, 628 with body, 296 with equipment identities, or 772
+   with both (896-byte ceiling). Animated attachment palettes need a deliberate size/fragmentation design,
+   not an unchecked append. Never transmit pointers or raw C structures.
    Preserve the verified native movement experiment. The render-origin search still needs broader live checks.
 3. **Demonstrate original movement and attack poses.** Script the real local Link running, jumping and performing
    a basic weapon attack, then reproduce its captured pose/equipment on the remote representation. A deterministic
