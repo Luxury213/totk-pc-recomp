@@ -4,6 +4,7 @@
 // MIT, Copyright (c) 2026 Valiantsin Dzerakh; runtime/third_party/licenses/totk-recomp.txt.
 #include "coop_adapter.h"
 #include "coop_gear_probe.h"
+#include "coop_native_probe.h"
 #include "coop.h"
 #include "cfg.h"
 #include "host.h"
@@ -551,6 +552,28 @@ int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *genera
     return 1;
 }
 
+static void npc_figure_observe(CoopNativeBody *out) {
+    memset(out,0,sizeof *out);
+    if (!coop_native_probe_figure_enabled()) return;
+    uint64_t actor=__atomic_load_n(&probe_motion_actor,__ATOMIC_ACQUIRE), body, again;
+    uint32_t generation, rechecked; int64_t observed_us;
+    if (!actor || !coop_adapter_npc_probe_body(actor,&body,&generation,&observed_us) ||
+        (uint32_t)guest_s32(actor+0x24)-7u<5u) return;
+    CoopNativeBody copy={.time_ns=plat_now_ns(),.world_us=frame_step_world_us(),.generation=generation,
+        .request=probe_entries[probe_motion_index].request,.actor_id=probe_entries[probe_motion_index].id};
+    if (!guest_readable(actor+0x2b4,sizeof copy.pos) || !plat_mem_read(actor+0x2b4,copy.pos,sizeof copy.pos) ||
+        !guest_readable(body+0xa0,0x28) || !plat_mem_read(body+0xa4,&copy.body_pos[0],4) ||
+        !plat_mem_read(body+0xb4,&copy.body_pos[1],4) || !plat_mem_read(body+0xc4,&copy.body_pos[2],4) ||
+        !guest_readable(body+0xf8,sizeof copy.velocity) || !plat_mem_read(body+0xf8,copy.velocity,sizeof copy.velocity)) return;
+    for (unsigned k=0;k<3;k++) if (!isfinite(copy.pos[k]) || fabsf(copy.pos[k])>100000 ||
+        !isfinite(copy.body_pos[k]) || fabsf(copy.body_pos[k])>100000 ||
+        !isfinite(copy.velocity[k]) || fabsf(copy.velocity[k])>50) return;
+    if (copy.world_us<observed_us || !coop_adapter_npc_probe_body(actor,&again,&rechecked,&observed_us) ||
+        again!=body || rechecked!=generation) return;
+    // Actor origin is the native model origin; a rigid-body centre is not a foot location.
+    *out=copy;
+}
+
 static void npc_velocity_capture(uint64_t entry, uint64_t caller, uint32_t generation,
                                  uint32_t flags, const float velocity[3], int backend) {
     unsigned slot = __atomic_fetch_add(&npc_velocity_claimed, 1, __ATOMIC_RELAXED);
@@ -748,7 +771,7 @@ void coop_adapter_actor_request(const Cpu *cpu) {
     char prefix[6];
     if (!name_at || !plat_mem_read(name_at, prefix, sizeof prefix)) return;
     int npc = !memcmp(prefix, "Npc_Ro", sizeof prefix) && cpu->x[30] == RT_RET_HOST &&
-              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 6);
+              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 7);
     int probe = !memcmp(prefix, "Weapon", sizeof prefix) || npc;
     if (memcmp(prefix, "Player", sizeof prefix) && !probe) return;
     if (probe && (frame_step_world_us() < 6000000 ||
@@ -1792,6 +1815,7 @@ void coop_adapter_observe(const Cpu *cpu) {
         command_head = (command_head + 1) % 256; command_count--;
     }
     observed.queued = command_count;
+    npc_figure_observe(&observed.native_body);
     coop_gear_probe_observe(actor,actor_id,&observed.sample,frame_step_world_us());
     plat_mutex_unlock(&adapter_lock);
 }

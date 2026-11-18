@@ -489,6 +489,31 @@ def gear_graph_summary(lines):
                 native_attachment_binding_verified=False,exclusive_ownership_verified=False)
 
 
+def native_figure_summary(lines):
+    captured={}; submitted=[]; invalid=0
+    number=r'(-?\d+(?:\.\d+)?)'
+    for line in lines:
+        if m:=re.search(r'coop native figure capture: sample (\d+), world us (\d+), generation (\d+), actor id (-?\d+), pos '+number+' '+number+' '+number+r', body pos '+number+' '+number+' '+number+';',line):
+            values=list(map(float,m.group(5,6,7,8,9,10)))
+            if all(map(math.isfinite,values)):
+                captured[(int(m[1]),int(m[3]),int(m[4]))]=dict(world_us=int(m[2]),pos=values[:3],body_pos=values[3:])
+    # Capture and rendering log from different threads; file order need not reflect publication order.
+    for line in lines:
+        if m:=re.search(r'coop native figure submitted: sample (\d+), generation (\d+), actor id (-?\d+), pos '+number+' '+number+' '+number+';',line):
+            key=tuple(map(int,m.group(1,2,3))); pos=list(map(float,m.group(4,5,6)))
+            original=captured.get(key)
+            if not original or not all(map(math.isfinite,pos)): invalid+=1; continue
+            submitted.append(dict(sample_ns=key[0],generation=key[1],actor_id=key[2],world_us=original['world_us'],
+                pos=pos,body_pos=original['body_pos'],error=math.dist(pos,original['pos'])))
+    keys={(p['generation'],p['actor_id']) for p in submitted}
+    ordered=all(b['sample_ns']>a['sample_ns'] for a,b in zip(submitted,submitted[1:]))
+    error=max((p['error'] for p in submitted),default=None)
+    passed=len(submitted)>=10 and len(keys)==1 and ordered and not invalid and error is not None and error<=.0001
+    return dict(acceptance_passed=passed,captured=len(captured),submitted=len(submitted),unmatched=invalid,
+        maximum_origin_error=error,samples=submitted,native_appearance_suppressed=False,
+        ground_contact_verified=False,lifecycle_verified=False,human_peer_verified=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -523,11 +548,17 @@ def main():
                        help='test a separate NPC pulse reapplied through the native API at its request-consumer entry')
     spawn.add_argument('--native-npc-peer-motion', action='store_true',
                        help='test bounded ENet loopback velocities, lease-expiry stops and same-session recovery')
+    ap.add_argument('--native-npc-figure',action='store_true',
+                    help='use the scoped native NPC origin for the Link figure; requires --native-npc-peer-motion')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
                     help='require gradual native descent from the owned origin and subsequent positional rest')
     args = ap.parse_args()
+    if args.native_npc_figure:
+        if not args.native_npc_peer_motion or args.without_figure:
+            ap.error('--native-npc-figure requires --native-npc-peer-motion and the figure asset')
+        args.require_figure=True
     if args.require_figure and args.without_figure:
         ap.error('--require-figure and --without-figure are mutually exclusive')
     if args.pose_echo and args.without_figure:
@@ -609,7 +640,8 @@ def main():
                 raise SystemExit('Private equipment library differs from its manifest')
         (profile/'coop-gear-probe.tsv').write_bytes(gear_probe_mapping(manifest).encode('ascii'))
     if spawning:
-        marker = ('isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
+        marker = ('isolated-npc-body-figure-v1\n' if args.native_npc_figure else
+                  'isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
                   'isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
                   'isolated-npc-velocity-v1\n' if args.native_npc_motion else 'isolated-npc-road-001-v1\n' if npc else
                   'isolated-physics-owned-v1\n' if args.native_owned_weapon else 'isolated-physics-probe-v1\n')
@@ -618,7 +650,7 @@ def main():
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -799,6 +831,9 @@ def main():
         report['equipment_echo'] = equipment_echo_summary(peer_text,peer_result)
         if args.require_equipment:
             report['acceptance_checks']['equipment_echo'] = report['equipment_echo']['acceptance_passed']
+    if args.native_npc_figure:
+        report['native_body_figure']=native_figure_summary(lines)
+        report['acceptance_checks']['native_figure_origin']=report['native_body_figure']['acceptance_passed']
     if args.equipment_graph:
         report['equipment_graph']=gear_graph_summary(lines)
         report['acceptance_checks']['equipment_graph_ran']=report['equipment_graph']['search_completed']

@@ -1,6 +1,7 @@
 // Feed copied session state into the diagnostic 3D figure. Never reads or writes guest actors.
 #include "figure.h"
 #include "link_figure.h"
+#include "host.h"
 #include "platform/platform.h"
 #include <math.h>
 #include <string.h>
@@ -49,4 +50,12 @@ void coop_figure_publish(const CoopSnapshot *snapshot) {
     }
     link_figure_orient(q, figure.has_body ? 0 : link_figure_root_yaw(model, figure.anim, figure.frame), figure.rot);
     gfx_figures_set(&figure, 1);
+    static uint64_t logged_sample;
+    static unsigned native_logs;
+    if (snapshot->peer_native_body && snapshot->peer_native_sample_ns!=logged_sample && native_logs<512) {
+        logged_sample=snapshot->peer_native_sample_ns; native_logs++;
+        rt_log("coop native figure submitted: sample %llu, generation %u, actor id %d, pos %.6f %.6f %.6f; copied position, native appearance retained",
+            (unsigned long long)snapshot->peer_native_sample_ns,snapshot->peer_native_generation,
+            snapshot->peer_native_actor_id,figure.feet[0],figure.feet[1],figure.feet[2]);
+    }
 }

@@ -3,8 +3,18 @@
 #include "coop_wire.h"
 #include "cpu.h"
 
+// Observer-owned copy for the isolated body/figure experiment. No pointer reaches rendering or the wire.
+typedef struct {
+    uint64_t time_ns;
+    int64_t world_us;
+    uint32_t generation, request;
+    int32_t actor_id;
+    float pos[3], body_pos[3], velocity[3];
+} CoopNativeBody;
+
 typedef struct {
     CoopSample sample;
+    CoopNativeBody native_body;
     uint64_t actor, scene_address, observations;
     uint32_t commands_rejected, commands_stale, queued;
     uint32_t native_trace_count;

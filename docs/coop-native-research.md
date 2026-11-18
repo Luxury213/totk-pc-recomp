@@ -1,5 +1,36 @@
 # Co-op native research notes
 
+## Native actor origin to Link figure (November 17, 2026)
+
+Mode 7 is armed only by `isolated-npc-body-figure-v1` in a timed copied profile. It reuses mode 6's authentic
+NPC creation, verified velocity request/consumer path, receive-time lease and call/duration limits. The first
+run created the NPC but made no velocity calls because the public update wrapper omitted the new mode. That
+run failed; the wrapper now uses the common peer-mode predicate, and a regression test executes mode 7 calls.
+
+`coop_adapter.c` `npc_figure_observe` copies actor +0x2b4, the identified body's +0xa4/+0xb4/+0xc4 translation
+and +0xf8 velocity. Existing probe metadata, retirement, component/controller/body links and world-generation
+checks run before and after the reads. These read-only observations do not establish a general native locking
+contract. `coop.c` `coop_guest_observe` correlates the copy with the bound peer/session and generations;
+`native_figure_ready` rejects missing, future or older-than-250-ms copies and title/loading peer samples.
+Rendering receives values only. The actor origin is used directly, without assuming a collider-centre offset.
+
+The corrected 28-world-second controlled run passed native forward/reverse/diagonal movement, two lease-expiry
+rests and recovery, normal exits, source-save preservation and 194 exact captured/submitted origin matches.
+Its forward segment rose approximately 0.427 m and reverse descended approximately 0.437 m. This is native
+movement over the tested slope, not a host-computed terrain correction. During these samples actor and body
+translation agreed, but that does not prove they always share an origin or that Link's feet fit the NPC collider.
+
+The NPC's original mesh/behavior remains. Link drawing can overlap it; local camera movement put the companion
+outside the view for much of the controlled run. No appearance suppression, terrain-wide grounding, native
+retirement, reusable creation/reconnect or independently controlled human Link is accepted. Ordinary capabilities
+remain presence-only. A verified model/visibility owner relation and native lifecycle are the next requirements.
+
+A second 28-world-second run kept the camera stationary after the normal drop and passed with 189 exact
+origin matches, native movement/rest/recovery and unchanged source saves. Full-size images show Link sharing
+the NPC origin and overlapping its mesh while connected; after the peer exits, Link presentation disappears
+while the NPC remains. Grass hides the feet, so visual terrain-contact acceptance is still open. This is evidence
+for native-origin association and presentation cancellation only, not native removal or appearance replacement.
+
 ## Original equipment actor/model observations (November 17, 2026)
 
 `runtime/main.c` `fnprof_hit` already observes the 1.4.3 actor-reference setter at `main+0x14f334`.

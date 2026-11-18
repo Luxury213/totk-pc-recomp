@@ -58,6 +58,11 @@ int main(int argc,char **argv) {
         .peer_rotation={0,.70710678f,0,.70710678f},.peer_animation="Synthetic_Move",.peer_animation_frame=15};
     coop_figure_publish(&snapshot); assert(count==1 && sent.frame==15 && sent.feet[0]==10);
     assert(fabsf(sent.rot[2]-1)<.001f && fabsf(sent.rot[6]+1)<.001f);
+    snapshot.peer_native_body=1; snapshot.peer_native_sample_ns=1000;
+    snapshot.peer_native_generation=3; snapshot.peer_native_actor_id=17;
+    coop_figure_publish(&snapshot);
+    assert(sent.feet[0]==10 && sent.feet[1]==20 && sent.feet[2]==30); // no diagnostic height/scale correction
+    snapshot.peer_native_body=0;
     snapshot.has_peer_pos=0; coop_figure_publish(&snapshot); assert(count==0);
     snapshot.has_peer_pos=1; snapshot.peer_visual_flags=0;
     coop_figure_publish(&snapshot); float before=sent.frame;

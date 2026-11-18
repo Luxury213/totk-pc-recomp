@@ -24,6 +24,7 @@ The public plan is authoritative for resuming development; private notes under i
 | Native experiment | One additional weapon with borrowed or independently prepared arguments; observed fall and pickup retirement | Copied-profile, one-shot probe triggered by an authentic weapon drop |
 | Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Fixed synthetic pulse; Link binding and removal API remain unverified |
 | Native ENet diagnostic | One scoped NPC consumes a loopback peer's leased horizontal velocities and stops/restarts across publication gaps | Scripted peer; no human/Internet, Link binding or complete lifecycle acceptance |
+| Native-origin figure diagnostic | Separately armed mode 7 draws Link at the scoped NPC's copied actor origin; two runs passed capture/submission agreement and native movement checks | Original NPC mesh remains visible; no complete appearance replacement, terrain/feet acceptance, retirement or human control |
 
 State packets are 152 bytes without optional body/equipment data, 628 with the body, 296 with equipment
 identities, and 772 with both (896-byte protocol ceiling; no larger fragmented equipment-pose packet).
@@ -336,6 +337,30 @@ reverse and (0.776, 0.808) m diagonally; local horizontal travel during world se
 Both rested during each publication gap and after the final stop, exited normally and preserved source-save
 hashes. These sampled segment distances exclude transition margins. Full camera/input independence and varied
 terrain behavior are still acceptance gates, not conclusions from the input script alone.
+
+### Bind the diagnostic figure to the native origin
+
+Add `--native-npc-figure` to the ENet command above and omit `--without-figure`. This separate mode 7 requires
+its own `isolated-npc-body-figure-v1` marker; the mode 6 marker cannot arm it. It retains the same native
+creation and movement restrictions and requires the prepared figure asset. The original NPC appearance is
+retained, so this is an origin-binding experiment with overlapping models, not a completed appearance replacement.
+
+`coop_adapter.c` `npc_figure_observe` copies the owned NPC's actor origin, body translation and velocity after
+validating live body links, metadata ID, retirement stage and local generation. It rechecks identity after the
+reads. The actor origin drives the figure; the body transform origin is recorded for comparison, never converted into feet
+using a guessed height. No scale, terrain query or physics write is added to rendering.
+
+Only a matching negotiated session/player/remote generation may publish that copy. The UI requires the local
+generation to match and the observation to be at most 250 ms old. A missing/stale observation hides the figure
+instead of falling back to the test peer's arbitrary coordinates. Velocity expiry still stops the body under
+the existing 200 ms lease. Rendering receives copied values and no guest pointers. This diagnostic uses clip
+fallback driven by native horizontal velocity; it does not establish Player's original action/controller behavior.
+
+The `native_body_figure` report compares submitted figure origins to the separately logged native captures by
+timestamp, generation and actor ID. At least ten ordered submissions must agree within 0.1 mm. Its appearance
+suppression, terrain contact, native retirement and human-peer fields remain false. Disappearing presentation
+after disconnect does not prove native actor removal. Check both the existing native movement gates and this
+origin gate; neither completes the companion lifecycle.
 
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,

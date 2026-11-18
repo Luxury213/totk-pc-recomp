@@ -36,6 +36,21 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_native_figure_requires_exact_copied_actor_origin(self):
+        lines=[]
+        for n in range(12):
+            lines.extend([f'coop native figure capture: sample {1000000000+n}, world us {1000000+n}, generation 3, actor id 17, pos 1 2 3, body pos 1 2.8 3;',
+                          f'coop native figure submitted: sample {1000000000+n}, generation 3, actor id 17, pos 1 2 3;'])
+        report=diagnose.native_figure_summary(lines)
+        self.assertTrue(report['acceptance_passed']); self.assertEqual(report['maximum_origin_error'],0)
+        self.assertFalse(report['ground_contact_verified']); self.assertFalse(report['lifecycle_verified'])
+        self.assertFalse(report['native_appearance_suppressed'])
+        self.assertTrue(diagnose.native_figure_summary(lines[1:2]+lines[:1]+lines[2:])['acceptance_passed'])
+        for changed in (lines[:18], lines[::2], [s.replace('submitted: sample 1000000000','submitted: sample 999') for s in lines],
+                        [s.replace('pos 1 2 3;','pos 1 2.8 3;') if 'submitted' in s else s for s in lines],
+                        [s.replace('actor id 17','actor id 18') if 'submitted' in s else s for s in lines]):
+            self.assertFalse(diagnose.native_figure_summary(changed)['acceptance_passed'])
+
     def test_native_model_matrices_do_not_prove_reference_lifetime_or_ownership(self):
         lines=['coop gear native model: slot 0, actor 0x10000, model 0x20000, depth 1, embedded delta 288;',
                'coop gear references: captured 4;',

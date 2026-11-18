@@ -307,6 +307,31 @@ int main(int argc, char **argv) {
     assert(npc_motion.consumer_calls==256 && npc_motion.finished && requested_velocity[0]==0);
     before_consume=velocity_calls; world_us+=33333;
     coop_native_probe_npc_consume(&consumer); assert(velocity_calls==before_consume); // no call past the final stop budget
+    // Figure mode has a distinct marker and retains the same native velocity limits.
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_FIGURE); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-body-figure-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_FIGURE);
+    assert(coop_native_probe_figure_enabled() && coop_native_probe_peer_enabled());
+    memset(&npc_motion,0,sizeof npc_motion); memset(&npc_peer,0,sizeof npc_peer);
+    attempted=1; c.x[0]=0xabc0; world_us=10000000; target_generation=3; target_valid=1;
+    memcpy(npc_body+0xfc,&expected_vertical,4); original=c;
+    before_consume=velocity_calls; coop_native_probe_npc_update(&c);
+    assert(npc_motion.calls==1 && velocity_calls==before_consume+1 && requested_velocity[0]==0);
+    peer=(CoopNetSnapshot){.negotiated=1,.has_remote=1,.session=11,.peer_player=22,.state_received_ns=host_ns,
+        .remote={.generation=1,.flags=COOP_SAMPLE_PLAYER,.time_ns=500,.velocity={2,0,0}}};
+    assert(coop_native_probe_peer_offer(&peer,3,host_ns));
+    world_us+=33333; coop_native_probe_npc_update(&c);
+    assert(npc_motion.calls==2 && requested_velocity[0]==2);
+    npc_peer=(typeof(npc_peer)){.bound=1,.session=11,.player=22,.generation=1};
+    npc_motion.generation=3;
+    assert(coop_native_probe_peer_matches(11,22,1,3));
+    assert(!coop_native_probe_peer_matches(12,22,1,3));
+    assert(!coop_native_probe_peer_matches(11,23,1,3));
+    assert(!coop_native_probe_peer_matches(11,22,2,3));
+    assert(!coop_native_probe_peer_matches(11,22,1,4));
+    npc_peer.revoked=1; assert(!coop_native_probe_peer_matches(11,22,1,3));
+    npc_peer.revoked=0; npc_motion_busy=1; assert(!coop_native_probe_peer_matches(11,22,1,3));
+    npc_motion_busy=0; armed=6; assert(!coop_native_probe_figure_enabled());
     puts("native probes: scoped creation/velocity guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }

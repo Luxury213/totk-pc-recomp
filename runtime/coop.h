@@ -47,6 +47,10 @@ typedef struct {
     float vp[16];           // 4x4 row-major View-Projection matrix for 3D-to-2D rendering
     int has_peer_pos;       // 1 when peer position is valid
     float peer_pos[3];      // remote partner 3D world position (X, Y, Z in meters)
+    int peer_native_body;   // opt-in diagnostic: position copied from the owned native NPC, not the peer's coordinates
+    uint64_t peer_native_sample_ns;
+    uint32_t peer_native_generation;
+    int32_t peer_native_actor_id;
     float peer_yaw;         // partner facing angle in degrees (0 = +Z, 90 = +X)
     float peer_speed;       // partner horizontal movement speed in m/s (drives 3D walk animation)
     float peer_anim_phase;  // continuous walk-cycle phase in radians

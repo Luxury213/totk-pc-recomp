@@ -58,6 +58,7 @@ const char *cfg_value(const char *key) {
     return !strcmp(key, "TOTK_COOP_MODE") ? mode : "127.0.0.1";
 }
 static int native_probe_mode;
+static int native_figure_mode;
 int cfg_int(const char *key) { return !strcmp(key,"TOTK_COOP_NATIVE_PROBE") ? native_probe_mode : 7777; }
 int cfg_bool(const char *key) { return !strcmp(key, "TOTK_COOP_TRACE_GUEST"); }
 void plat_mutex_lock(PlatMutex *m) { (void)m; }
@@ -169,6 +170,10 @@ int coop_native_probe_peer_offer(const CoopNetSnapshot *p, uint32_t generation, 
     (void)p; (void)generation; (void)ns; return 0;
 }
 int coop_native_probe_peer_enabled(void) { return 0; }
+int coop_native_probe_figure_enabled(void) { return native_figure_mode; }
+int coop_native_probe_peer_matches(uint64_t session,uint64_t player,uint32_t remote,uint32_t local) {
+    (void)session;(void)player;(void)remote;(void)local; return 0;
+}
 int coop_net_player_id(const char *s, uint64_t *id) { (void)s; *id=42; return 1; }
 void rt_sha256(const void *p, size_t n, uint8_t out[32]) { (void)p; (void)n; memset(out,0,32); }
 const RtFileHash rt_exefs_sha256[] = {{"main","synthetic"}};
@@ -660,6 +665,33 @@ int main(void) {
     ptr(npc_set+0x150,(uintptr_t)npc_body);
     assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
     assert(scoped_body==(uintptr_t)npc_body && scoped_generation==trace_generation && scoped_time==world_us);
+    CoopNativeBody body_copy;
+    npc_figure_observe(&body_copy); assert(!body_copy.time_ns); // exact opt-in required
+    native_figure_mode=1;
+    scalar(probe_actor+0x2b4,4); scalar(probe_actor+0x2b8,5); scalar(probe_actor+0x2bc,6);
+    scalar(npc_body+0xa4,4); scalar(npc_body+0xb4,5.8f); scalar(npc_body+0xc4,6);
+    scalar(npc_body+0xf8,2);
+    npc_figure_observe(&body_copy);
+    assert(body_copy.time_ns==now && body_copy.generation==trace_generation);
+    assert(body_copy.pos[1]==5 && body_copy.body_pos[1]==5.8f && body_copy.velocity[0]==2);
+    C.native_body=body_copy; C.native_session=11; C.native_player=22; C.native_remote_generation=1;
+    CoopNetSnapshot body_peer={.negotiated=1,.has_remote=1,.session=11,.peer_player=22,
+        .remote={.generation=1,.flags=COOP_SAMPLE_PLAYER}};
+    assert(native_figure_ready(&body_peer,trace_generation,now));
+    assert(!native_figure_ready(&body_peer,trace_generation,now+250000001));
+    assert(!native_figure_ready(&body_peer,trace_generation,now-1));
+    assert(!native_figure_ready(&body_peer,trace_generation+1,now));
+    body_peer.session++; assert(!native_figure_ready(&body_peer,trace_generation,now)); body_peer.session--;
+    body_peer.peer_player++; assert(!native_figure_ready(&body_peer,trace_generation,now)); body_peer.peer_player--;
+    body_peer.remote.generation++; assert(!native_figure_ready(&body_peer,trace_generation,now)); body_peer.remote.generation--;
+    body_peer.has_remote=0; assert(!native_figure_ready(&body_peer,trace_generation,now));
+    body_peer.has_remote=1; body_peer.remote.flags=0; assert(!native_figure_ready(&body_peer,trace_generation,now));
+    // The renderer receives the actor origin, never a guessed body-centre-to-feet offset.
+    probe_entries[0].stages=1; npc_figure_observe(&body_copy); assert(!body_copy.time_ns);
+    probe_entries[0].stages=0;
+    scalar(probe_actor+0x2b8,NAN); npc_figure_observe(&body_copy); assert(!body_copy.time_ns);
+    scalar(probe_actor+0x2b8,5);
+    native_figure_mode=0;
     ptr(npc_body+0x70,(uintptr_t)npc_sdk); ptr(npc_sdk+8,0x1234);
     memcpy(npc_change+0x44,npc_velocity,12);
     uint32_t change_flags=0x80; memcpy(npc_change+0xd4,&change_flags,4);

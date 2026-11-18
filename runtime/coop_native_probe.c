@@ -49,7 +49,8 @@ static const char *owned_name = "Weapon_Sword_101";
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION ? "isolated-npc-enet-velocity-v1\n" :
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC_FIGURE ? "isolated-npc-body-figure-v1\n" :
+                         mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION ? "isolated-npc-enet-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION ? "isolated-npc-consumer-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_MOTION ? "isolated-npc-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC ? "isolated-npc-road-001-v1\n" :
@@ -58,7 +59,8 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (rt_game_version != 143 || !timed_run || !profile ||
         (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED &&
          mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION &&
-         mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && mode != COOP_NATIVE_PROBE_NPC_PEER_MOTION)) goto denied;
+         mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && mode != COOP_NATIVE_PROBE_NPC_PEER_MOTION &&
+         mode != COOP_NATIVE_PROBE_NPC_FIGURE)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -209,7 +211,24 @@ static int npc_peer_offer_locked(const CoopNetSnapshot *peer, uint32_t generatio
 }
 
 int coop_native_probe_peer_enabled(void) {
-    return __atomic_load_n(&armed, __ATOMIC_ACQUIRE) == COOP_NATIVE_PROBE_NPC_PEER_MOTION;
+    unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
+    return mode==COOP_NATIVE_PROBE_NPC_PEER_MOTION || mode==COOP_NATIVE_PROBE_NPC_FIGURE;
+}
+
+int coop_native_probe_figure_enabled(void) {
+    return __atomic_load_n(&armed, __ATOMIC_ACQUIRE)==COOP_NATIVE_PROBE_NPC_FIGURE;
+}
+
+int coop_native_probe_peer_matches(uint64_t session, uint64_t player, uint32_t remote_generation,
+                                   uint32_t local_generation) {
+    if (!coop_native_probe_figure_enabled()) return 0;
+    unsigned zero=0;
+    if (!__atomic_compare_exchange_n(&npc_motion_busy,&zero,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)) return 0;
+    int matches=npc_peer.bound && !npc_peer.revoked && session && player && remote_generation &&
+        npc_peer.session==session && npc_peer.player==player && npc_peer.generation==remote_generation &&
+        npc_motion.generation==local_generation;
+    __atomic_store_n(&npc_motion_busy,0,__ATOMIC_RELEASE);
+    return matches;
 }
 
 int coop_native_probe_peer_offer(const CoopNetSnapshot *peer, uint32_t generation, uint64_t now) {
@@ -240,7 +259,7 @@ static int probe_code_matches(uint64_t entry, const uint8_t expected[32]) {
 
 static void npc_probe_update_locked(Cpu *c) {
     unsigned mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE);
-    int peer_mode = mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION;
+    int peer_mode = coop_native_probe_peer_enabled();
     if (!c || inside || rt_game_version != 143 || npc_motion.finished ||
         (mode != COOP_NATIVE_PROBE_NPC_MOTION && mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && !peer_mode) ||
         !__atomic_load_n(&attempted, __ATOMIC_ACQUIRE)) return;
@@ -327,7 +346,7 @@ static void npc_probe_update_locked(Cpu *c) {
 void coop_native_probe_npc_update(Cpu *c) {
     if (!c || inside || (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_MOTION &&
                         __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION &&
-                        __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_PEER_MOTION)) return;
+                        !coop_native_probe_peer_enabled())) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     npc_probe_update_locked(c);
@@ -335,7 +354,7 @@ void coop_native_probe_npc_update(Cpu *c) {
 }
 
 static void npc_probe_consume_locked(Cpu *c) {
-    int peer_mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE) == COOP_NATIVE_PROBE_NPC_PEER_MOTION;
+    int peer_mode = coop_native_probe_peer_enabled();
     if (!npc_motion.calls || (npc_motion.finished && (!peer_mode || !npc_motion.stop_pending)) ||
         npc_motion.consumer_calls >= (peer_mode ? 256u : 96u) ||
         c->x[30] != MOD_MAIN_BASE + 0x1824f8ull || c->x[1] != npc_motion.body) return;
@@ -392,7 +411,7 @@ static void npc_probe_consume_locked(Cpu *c) {
 void coop_native_probe_npc_consume(Cpu *c) {
     if (!c || inside || rt_game_version != 143 ||
         (__atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION &&
-         __atomic_load_n(&armed, __ATOMIC_ACQUIRE) != COOP_NATIVE_PROBE_NPC_PEER_MOTION)) return;
+         !coop_native_probe_peer_enabled())) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     npc_probe_consume_locked(c);

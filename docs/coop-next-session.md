@@ -124,7 +124,7 @@ caller creates a temporary stack reference. Neither nearby position nor matching
 exclusive ownership. The bounded search is read-only, opt-in and diagnostic-only; it grants no native capability.
 The capped Player-root searches were unproductive. Reuse the original actor/ModelUnit route instead.
 
-The visible figure still has no terrain collider. Prepared idle geometry measures about 1.763 metres tall,
+The ordinary presence figure still has no terrain collider. Prepared idle geometry measures about 1.763 metres tall,
 and no uniform shrink factor was found; runtime size equivalence remains unverified. The echo's default
 three-metre X offset preserves source Y and can sink into a slope. A zero-offset 12-world-second audit
 (`run-c42b09a872`) passed with 291 body poses and unchanged source saves, but a horse occluded the comparison.
@@ -133,6 +133,31 @@ This is a calibration aid, not a scale or collision fix. Native body/feet bindin
 Checks for this diagnostic slice: bounded synthetic graph/reference/model lifetime checks, adapter and native
 probe/audit suites, 34 report-parser tests, all six runtime probes and full/staged content checks. No lifter or
 wire-format change was made. Linux, loaded-layer gameplay, performance and Internet acceptance remain unrun.
+
+The separate mode 7 now publishes the owned native NPC's actor origin to the Link figure. In the controlled
+28-world-second run `run-41013c678c`, all 194 submitted origins matched captured native positions exactly;
+forward/reverse/diagonal travel, expiry stops, consumer correlation and peer/game exits passed, with unchanged
+source saves. The forward segment rose about 0.427 m and reverse descended about 0.437 m on the tested slope.
+The figure receives native actor Y without a manual offset; the sampled body translation agreed there too.
+The camera/input script moved the local player, placing the companion outside the view for much of that run;
+position agreement does not establish visual feet alignment. Original NPC appearance remains and overlaps
+the Link figure when visible. This opt-in experiment does not enable normal native commands or gameplay readiness.
+
+Mode 7 requires a distinct copied-profile marker, matching peer/session and local/remote generations, and a
+native observation no older than 250 ms. Missing observations hide the figure instead of reusing peer absolute
+coordinates. Tests cover marker isolation, actual mode 7 native calls, identity mismatches, retirement, invalid
+positions, stale copies and title/loading peer samples. Native removal and reusable creation remain unverified.
+
+The second corrected run (`run-553fbda54a`) retained a stationary local camera after the recorded drop. Its
+189 submitted origins also matched exactly, native movement gates and all process exits passed, and source
+saves were unchanged. Full-size frames show the black-haired Link superimposed on the original NPC while
+the peer is active, then only the NPC after peer shutdown. Tall grass obscures the feet. This confirms the
+visible origin association and presentation clearing, while also demonstrating the unresolved native mesh
+replacement and retirement requirements; it is not a clean two-Link appearance or terrain-contact acceptance.
+
+Body-origin slice checks passed: adapter and figure suites, native probe suite, 35 diagnostic report tests,
+settings documentation, all six runtime probes and full/staged content checks. Protocol v5 is unchanged.
+Linux, loaded-layer gameplay, heavy-scene performance and two-PC Internet acceptance remain unrun.
 
 ## Reference review on 2026-11-14
 
@@ -149,11 +174,13 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 
 ## Ordered work for the next session
 
-1. **Prioritize native body binding and ground contact.** The visible figure has no collider. The user reported
+1. **Complete native body/appearance binding and ground contact.** Ordinary presence has no collider; isolated
+   mode 7 now follows the validated NPC's native origin, but retains its overlapping original appearance.
+   Verify an ownership-scoped native visibility/model operation before suppressing that appearance. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship
-   on flat ground, slopes and steps, then associate the visible model with an independently owned native body
-   through verified engine operations. Preserve the tested native movement guards and original camera/input.
+   on flat ground, slopes and steps, extending the new copied-origin association through verified engine
+   operations. Preserve the tested native movement guards and original camera/input.
    Evaluate a Player-derived puppet where its ownership can be verified; do not copy Player singleton references.
    Safe repeated creation/removal across scene changes/reconnect is part of this contract. Use
    `--pose-echo-offset 0` only for origin calibration, not as a ground-contact or physics acceptance pass.

@@ -55,6 +55,9 @@ static struct {
     float peer_speed;
     float peer_anim_phase;
     CoopSample peer_visual;
+    CoopNativeBody native_body;
+    uint64_t native_session, native_player;
+    uint32_t native_remote_generation;
     int peer_action;
     uint64_t last_rx_ns;
     uint32_t ping_ms;
@@ -158,7 +161,7 @@ void coop_guest_observe(const Cpu *cpu) {
     CoopAdapterSnapshot adapter;
     coop_adapter_snapshot(&adapter);
     int peer_probe = coop_native_probe_peer_enabled();
-    CoopNetSnapshot peer;
+    CoopNetSnapshot peer={0};
     plat_mutex_lock(&C_lock);
     coop_net_publish(C.net, &adapter.sample);
     if (peer_probe) coop_net_snapshot(C.net, &peer);
@@ -167,6 +170,22 @@ void coop_guest_observe(const Cpu *cpu) {
         plat_mutex_lock(&C_lock);
         coop_net_notice(C.net, "npc-velocity-ready-v1");
         plat_mutex_unlock(&C_lock);
+    }
+    if (coop_native_probe_figure_enabled()) {
+        int bound=peer_probe && peer.negotiated && peer.has_remote && (peer.remote.flags&COOP_SAMPLE_PLAYER) &&
+            adapter.native_body.time_ns &&
+            coop_native_probe_peer_matches(peer.session,peer.peer_player,peer.remote.generation,adapter.sample.generation);
+        plat_mutex_lock(&C_lock);
+        C.native_body=bound ? adapter.native_body : (CoopNativeBody){0};
+        C.native_session=peer.session; C.native_player=peer.peer_player;
+        C.native_remote_generation=peer.remote.generation;
+        plat_mutex_unlock(&C_lock);
+        static unsigned logs;
+        if (bound && __atomic_fetch_add(&logs,1,__ATOMIC_RELAXED)<512) rt_log("coop native figure capture: sample %llu, world us %lld, generation %u, actor id %d, pos %.6f %.6f %.6f, body pos %.6f %.6f %.6f; copied native origin",
+            (unsigned long long)adapter.native_body.time_ns,(long long)adapter.native_body.world_us,
+            adapter.native_body.generation,adapter.native_body.actor_id,
+            adapter.native_body.pos[0],adapter.native_body.pos[1],adapter.native_body.pos[2],
+            adapter.native_body.body_pos[0],adapter.native_body.body_pos[1],adapter.native_body.body_pos[2]);
     }
 }
 
@@ -298,6 +317,14 @@ static int project_3d(const float vp[16], const float p[3], float w, float h, fl
     return 0;
 }
 
+static int native_figure_ready(const CoopNetSnapshot *network, uint32_t generation, uint64_t now) {
+    return network->negotiated && network->has_remote && (network->remote.flags&COOP_SAMPLE_PLAYER) &&
+        C.native_body.time_ns && now>=C.native_body.time_ns &&
+        now-C.native_body.time_ns<=250000000ull && C.native_body.generation==generation &&
+        C.native_session==network->session && C.native_player==network->peer_player &&
+        C.native_remote_generation==network->remote.generation;
+}
+
 void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
     memset(out, 0, sizeof *out);
     uint64_t now = plat_now_ns();
@@ -365,6 +392,18 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
             C.last_rx_ns = now;
         } else {
             C.last_rx_ns = 0; C.peer_speed = 0; C.interpolation.count = 0; C.received_ns = 0;
+        }
+        if (coop_native_probe_figure_enabled()) {
+            // Do not fall back to the peer's artificial absolute position after a lost native observation.
+            C.has_peer=C.has_peer && native_figure_ready(&network,adapter.sample.generation,now);
+            if (C.has_peer) {
+                memcpy(C.peer_pos,C.native_body.pos,sizeof C.peer_pos);
+                C.peer_speed=hypotf(C.native_body.velocity[0],C.native_body.velocity[2]);
+                if (C.peer_speed>.15f) C.peer_yaw=atan2f(C.native_body.velocity[0],C.native_body.velocity[2])*57.2957795131f;
+                C.peer_visual.flags=0; // This peer supplies velocity only; use local clip fallback.
+                out->peer_native_body=1; out->peer_native_sample_ns=C.native_body.time_ns;
+                out->peer_native_generation=C.native_body.generation; out->peer_native_actor_id=C.native_body.actor_id;
+            }
         }
         if (network.notices != C.last_notices) {
             if (network.notices > C.last_notices) C.world_syncs += (uint32_t)(network.notices - C.last_notices);
