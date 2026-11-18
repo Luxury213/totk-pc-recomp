@@ -534,6 +534,28 @@ def native_visibility_summary(lines,figure):
         visual_replacement_verified=False,native_retirement_verified=False,human_peer_verified=False)
 
 
+def npc_retirement_summary(lines,spawn,figure):
+    requests=[]
+    for line in lines:
+        if m:=re.search(r'coop native npc retirement request: generation (\d+), actor id (-?\d+), world us (\d+), result (\d+), worker ([012]), rest samples (\d+), rest us (\d+);',line):
+            requests.append(dict(generation=int(m[1]),actor_id=int(m[2]),world_us=int(m[3]),result=int(m[4]),worker=int(m[5]),
+                rest_samples=int(m[6]),rest_us=int(m[7])))
+    lifecycle=probe_summary(lines,'Npc_Road_001',True,True)
+    initialized=spawn.get('initialized',[])
+    owned={(p['generation'],p['actor_id']) for p in figure.get('samples',[])}
+    correlated=[p for p in lifecycle['probes'] if p['acceptance_passed'] and len(initialized)==1 and
+        (p['probe'],p['request'])==(initialized[0]['probe'],initialized[0]['request'])]
+    request=requests[0] if len(requests)==1 else None
+    same=bool(request and request['result']==1 and owned=={(request['generation'],request['actor_id'])} and
+        len(correlated)==1 and correlated[0]['generation']==request['generation'])
+    last=max((p.get('world_us',0) for p in figure.get('samples',[])),default=0)
+    passed=bool(same and spawn.get('acceptance_passed') and figure.get('acceptance_passed') and request['world_us']>=last and
+        request['rest_samples']>=12 and request['rest_us']>=1000000)
+    return dict(acceptance_passed=passed,requests=requests,lifecycle=lifecycle,
+        native_retirement_verified=passed,repeated_lifecycle_verified=False,reconnect_verified=False,
+        native_request_storage_reused=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -572,11 +594,15 @@ def main():
                     help='use the scoped native NPC origin for the Link figure; requires --native-npc-peer-motion')
     ap.add_argument('--native-npc-visibility',action='store_true',
                     help='one guarded native hide/restore pair; requires --native-npc-figure')
+    ap.add_argument('--native-npc-retirement',action='store_true',
+                    help='one native NPC retirement after the completed stop/restore sequence; requires --native-npc-visibility')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
                     help='require gradual native descent from the owned origin and subsequent positional rest')
     args = ap.parse_args()
+    if args.native_npc_retirement and not args.native_npc_visibility:
+        ap.error('--native-npc-retirement requires the scoped --native-npc-visibility experiment')
     if args.native_npc_visibility and not args.native_npc_figure:
         ap.error('--native-npc-visibility requires --native-npc-figure and its scoped ENet experiment')
     if args.native_npc_figure:
@@ -611,7 +637,7 @@ def main():
     spawning = args.native_clone_weapon or args.native_owned_weapon or npc
     if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
-    minimum = 27 if args.native_npc_peer_motion else 20 if motion else 15
+    minimum = 29 if args.native_npc_retirement else 27 if args.native_npc_peer_motion else 20 if motion else 15
     if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < minimum or
                                   args.require_spawn_retirement or args.require_spawn_fall):
         ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
@@ -664,7 +690,8 @@ def main():
                 raise SystemExit('Private equipment library differs from its manifest')
         (profile/'coop-gear-probe.tsv').write_bytes(gear_probe_mapping(manifest).encode('ascii'))
     if spawning:
-        marker = ('isolated-npc-native-visibility-v1\n' if args.native_npc_visibility else
+        marker = ('isolated-npc-native-retirement-v1\n' if args.native_npc_retirement else
+                  'isolated-npc-native-visibility-v1\n' if args.native_npc_visibility else
                   'isolated-npc-body-figure-v1\n' if args.native_npc_figure else
                   'isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
                   'isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
@@ -675,7 +702,7 @@ def main():
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='9' if args.native_npc_retirement else '8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -863,6 +890,10 @@ def main():
         report['native_body_figure'].pop('native_appearance_suppressed',None)
         report['native_model_visibility']=native_visibility_summary(lines,report['native_body_figure'])
         report['acceptance_checks']['native_model_visibility']=report['native_model_visibility']['acceptance_passed']
+    if args.native_npc_retirement:
+        report['native_npc_retirement']=npc_retirement_summary(lines,report['native_spawn_experiment'],report['native_body_figure'])
+        report['acceptance_checks']['native_npc_retirement']=report['native_npc_retirement']['acceptance_passed']
+        report['native_model_visibility']['native_retirement_verified']=report['native_npc_retirement']['native_retirement_verified']
     if args.equipment_graph:
         report['equipment_graph']=gear_graph_summary(lines)
         report['acceptance_checks']['equipment_graph_ran']=report['equipment_graph']['search_completed']

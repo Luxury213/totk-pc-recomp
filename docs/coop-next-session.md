@@ -1,6 +1,6 @@
 # Co-op handover and next character milestone
 
-Checkpoint: 2026-11-17. Read this before resuming implementation, then consult
+Checkpoint: 2026-11-18. Read this before resuming implementation, then consult
 [the public plan](coop-phase2.md), [development commands](coop-development.md) and
 [native evidence](coop-native-research.md). These public documents are authoritative; private diagnostics
 under ignored `build/` supplement them.
@@ -38,6 +38,13 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `2c65804` | A separate game-free ENet peer drives the native NPC, with expiry stops and same-epoch recovery |
 | `2bc6e7d` | Capture, encode, interpolate and apply the original Link's final body pose |
 | `c4d6345` | Observe and replicate equipped identities; prepare selected models privately |
+| `62d1ace` | Bound original equipment actor/model observations and prepare selected models |
+| `3fc1151` | Anchor the separately armed figure to a copied native NPC origin |
+| `53d5067` | Suppress and restore that NPC's original model through its native controller |
+
+The current retirement slice adds mode 9 and a complete copied-save creation/movement/visibility/removal
+diagnostic. Its evidence and limitations below supersede earlier statements that native removal is unverified;
+repeatable lifecycle and general native operations remain unverified.
 
 The current integration targets port 0.4.0 and game 1.4.3. It is experimental; the preserved port 0.3.11 build
 remains available. Reuse the installed ExeFS/indexed RomFS, generated sources, shader preparation and existing
@@ -56,6 +63,8 @@ objects. Do not repeat extraction, full generation or shader warm-up merely to r
 - An extracted, textured, animated Link figure with black hair; ordinary presence remains separate from the NPC.
 - Isolated mode 8 associates that figure with the owned NPC origin and suppresses its original mesh through
   a guarded native controller call; one hide/restore pair passed with native movement and inspected images.
+- Isolated mode 9 adds one asynchronous native retirement in the verified guest worker/current-actor context,
+  after measured native rest. The same actor's request/queue, resource cleanup and allocator handoff passed.
 - One owned native `Npc_Road_001`, created by the isolated authentic weapon-drop experiment.
 - Mode 6 (`--native-npc-peer-motion`): a loopback ENet peer supplies horizontal velocities. A one-slot bridge
   checks session/player and remote/local generations. A 200 ms receive-time lease expires even if the worker
@@ -82,7 +91,7 @@ human/Internet play are not established by these runs. The first failed ENet run
 back into simulation, caused ascent and hit the stale-update stop. The corrected pending-request Y path passed;
 do not remove the stale-update guard to conceal the failure.
 
-Last implementation checks: native/adapter suites; 28 diagnostic parser tests; settings documentation;
+Earlier ENet-slice checks: native/adapter suites; 28 diagnostic parser tests; settings documentation;
 game-free peer compilation; transport workers at nominal 0/100/200 ms with configured loss/jitter/duplication/
 reordering; runtime selftest, cfg, kernel, texture, shader and Vulkan replay probes; staged/full content checks.
 Adverse-network transport checks are not native gameplay tests under those impairments. Hosted CI approval
@@ -175,6 +184,23 @@ probes, settings documentation and full/staged content checks. A changed owner/t
 publication, initially hidden controller or incompatible getter/setter/update code cannot authorize a hide.
 General native capabilities and protocol v5 remain unchanged. No new Internet/performance acceptance.
 
+The November 18 retirement slice passed the complete 32-world-second run `run-29935d2488`: 227 producer
+requests, 120 consumer reapplications, forward/reverse/diagonal displacement, two scheduled lease stops and
+recovery, 174 exact native-origin submissions, a 5.933282-second model hide/restore pair and one retirement.
+The native request at world 25.151521 s followed 31 rest samples spanning 1.031515 s. Actor ID 917/generation 3,
+probe 10/request 15 matched the native queue/resource/allocator sequence. Game/peer exits were zero and
+source-save hashes were unchanged. Images show the black-haired Link, restored NPC and later empty position.
+Grass still hides the feet. Tests cover guest task/TLS/worker/code/ownership guards, measured rest, single-shot
+rejection, full CPU/FP restoration and no guest reads after a request; 37 diagnostic report tests passed,
+alongside native/adapter/figure suites, six runtime probes and content/settings checks.
+
+Retain the failed runs too: `run-ae4482476d` never requested removal because it waited for a fresh velocity
+consumer event from an already-idle body; measured rest now handles that case. `run-a820c571be` passed the
+native retirement gate but failed overall movement acceptance when an extra receive-lease expiry split its
+diagonal segment. The successful repeat changed no code or thresholds. Do not weaken the receive-time lease.
+One retirement per fresh process does not prove repeated in-session creation or permission to reuse static
+creation arguments/blackboard storage. Check completion/rejection/cancellation ownership before adding reuse.
+
 ## Reference review on 2026-11-14
 
 | Reference | Verified state | Use and limit |
@@ -193,7 +219,9 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 1. **Complete native lifecycle and ground-contact acceptance.** Ordinary presence has no collider; mode 7 follows
    the validated NPC's native origin, and mode 8 now suppresses/restores only that NPC's original model through
    the inspected native controller API. Retain its bounded publication lease, identity/code guards and restore
-   fallback. Next verify native retirement and repeatable creation across disconnect/load/reconnect, then
+   fallback. Mode 9 now passes one native retirement with resource/allocator correlation. Next verify
+   creation completion/rejection/cancellation and storage ownership, then repeatable creation across
+   disconnect/load/reconnect, followed by
    unobstructed feet on flat ground, slopes and steps. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship

@@ -26,6 +26,8 @@ static uint64_t host_ns=1000000000ull;
 static float requested_velocity[3];
 static unsigned char npc_model[0xb0], setter_code[36]={5}, getter_code[24]={6};
 static int model_valid=1, visibility_calls;
+static unsigned retirement_calls;
+static int retirement_rest_ready;
 static int bad_setter_hash,bad_getter_hash;
 static int32_t model_actor_id=17;
 static float expected_vertical=-.5f;
@@ -68,6 +70,11 @@ int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *genera
 int coop_adapter_npc_probe_model(uint64_t actor,uint64_t *model,uint32_t *generation) {
     if (!target_valid || !model_valid || actor!=0x1abc0) return 0;
     *model=(uintptr_t)npc_model; *generation=target_generation; return 1;
+}
+int coop_retirement_try(Cpu *c,CoopRetirement *r) {
+    if(r->attempted || !retirement_rest_ready) return 0;
+    assert(c->x[0]==r->actor && r->body==(uintptr_t)npc_body && r->generation==3);
+    retirement_calls++; r->attempted=r->accepted=1; return 1;
 }
 void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_fatal(const char *fmt, ...) { (void)fmt; abort(); }
@@ -413,7 +420,25 @@ int main(int argc, char **argv) {
     assert(visibility_calls==6 && npc_visibility.hidden);
     host_ns+=250000001; coop_native_probe_npc_update(&c);
     assert(visibility_calls==7 && npc_model[0x9c]==1 && npc_visibility.done); // stale publication restores visibility
-    puts("native probes: scoped creation/velocity/visibility guards, bounded requests and CPU/FP restoration passed");
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_RETIREMENT); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-native-retirement-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_RETIREMENT); assert(armed==9);
+    npc_peer.session=11; npc_peer.player=22; npc_peer.generation=1;
+    assert(coop_native_probe_peer_matches(11,22,1,3));
+    coop_native_probe_npc_update(&c); assert(!retirement_calls); // still moving
+    npc_motion.started_us=world_us-8000000;
+    npc_motion.finished=1; npc_motion.stop_pending=1;
+    coop_native_probe_npc_update(&c); assert(!retirement_calls); // retain a bounded final rest before removal
+    world_us+=1000000;
+    coop_native_probe_npc_update(&c); assert(!retirement_calls); // core module must independently measure rest
+    retirement_rest_ready=1;
+    coop_native_probe_npc_update(&c); assert(retirement_calls==1 && npc_retirement.accepted);
+    assert(!coop_native_probe_peer_matches(11,22,1,3));
+    coop_native_probe_npc_update(&c); assert(retirement_calls==1);
+    before_consume=velocity_calls;
+    target_valid=0; coop_native_probe_npc_consume(&consumer);
+    assert(velocity_calls==before_consume); // an old pending stop cannot touch the retired body
+    puts("native probes: scoped creation/velocity/visibility/retirement guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }
 '''

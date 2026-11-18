@@ -26,6 +26,7 @@ The public plan is authoritative for resuming development; private notes under i
 | Native ENet diagnostic | One scoped NPC consumes a loopback peer's leased horizontal velocities and stops/restarts across publication gaps | Scripted peer; no human/Internet, Link binding or complete lifecycle acceptance |
 | Native-origin figure diagnostic | Separately armed mode 7 draws Link at the scoped NPC's copied actor origin; two runs passed capture/submission agreement and native movement checks | Original NPC mesh remains visible; no complete appearance replacement, terrain/feet acceptance, retirement or human control |
 | Native appearance diagnostic | Mode 8 hides the owned NPC model through its native controller API while publishing Link, then restores it; images and movement gates passed | One controlled hide/restore pair; no persistent model-state authority, native retirement or human control |
+| Native retirement diagnostic | Mode 9 requests removal after measured rest in a verified guest worker context; one complete copied-save creation/movement/visibility/cleanup run passed | One request per process; no creation-storage reuse, repeated in-session lifecycle, reconnect or human control |
 
 State packets are 152 bytes without optional body/equipment data, 628 with the body, 296 with equipment
 identities, and 772 with both (896-byte protocol ceiling; no larger fragmented equipment-pose packet).
@@ -394,6 +395,43 @@ from another native subsystem cannot be attributed by this experiment. Persisten
 arbitrary scenes/terrain, safe actor removal and repeated lifecycle remain production requirements.
 First/last-frame transitions around native visibility propagation have not received separate visual acceptance.
 
+### Request native NPC retirement
+
+Add `--native-npc-retirement` to the visibility command and allow at least 29 world seconds (32 is useful
+for observing later frames). Mode 9 requires `isolated-npc-native-retirement-v1`; earlier markers cannot arm it.
+It waits for the eight-second native movement experiment to finish and native visibility to be restored.
+After the final grace period, it requires at least twelve distinct world-time samples spanning one second:
+actor and body origins must remain within one centimetre of their anchors, all cached native velocity
+components at most 0.05 m/s, and observation gaps at most 100 ms. Invalid positions/velocity or drift restart
+this measurement. An already-idle body may produce no fresh velocity-consumer event; that absence alone
+neither proves rest nor authorizes removal. The measured rest gate handles this case.
+
+`coop_retirement.c` `coop_retirement_try` accepts only the owned live NPC body/epoch at the observed native
+update caller. It checks GameActor's exact vtable and callback targets, SDK TLS getter binding/code, task type,
+worker index and the worker's current actor slot. These are guest scheduling identities read through the
+inspected 1.4.3 ABI; a host thread ID is not authorization. Request, queue and update code are independently
+guarded too. An incompatible context refuses without issuing a request.
+
+The original request at `main+0x63baa8` receives that actor and reason zero, handles its own native locking,
+marks removal pending and enqueues asynchronous cleanup. The host never frees the actor. A request is never
+retried, including a rejected result, because native callbacks may have side effects. CPU/host FP state is
+restored and the module performs no guest reads after the call. Existing scoped teardown/resource/allocator
+observers provide later evidence at their actual native callbacks. Their NPC support is limited to the one
+explicitly requested actor name; an unrelated object's cleanup cannot satisfy this gate.
+The figure binding and old velocity-consumer work close after any issued request, even if an earlier final
+stop request still has no consumer acknowledgement.
+
+`native_npc_retirement` requires one accepted request matching the figure's actor ID and generation, and the
+same initialization's ordered request/queue/cleanup with matching resource and allocator handoff. The request
+return alone cannot pass. Repeated creation, reconnect, load/unload and request-storage reuse remain separate
+requirements. All normal native capability bits remain disabled.
+
+The unchanged-build repeat `run-29935d2488` passed the complete 32-world-second diagnostic: native movement,
+lease stops/recovery, 174 exact origin matches, model hide/restore, one retirement with matching cleanup,
+resource and allocator observations, normal exits and unchanged source saves. The first attempted retirement
+never issued a request; the next passed retirement but failed the full movement check after an extra lease
+expiry. These failures and the corrected rest requirement are retained in the native research notes.
+
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,
 owned arguments, fall/rest and retirement separately. Its creation acceptance alone cannot establish the later
@@ -431,6 +469,7 @@ Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or
 .venv/Scripts/python.exe tests/coop_gear_probe_check.py
 .venv/Scripts/python.exe tests/coop_native_audit_check.py
 .venv/Scripts/python.exe tests/coop_native_probe_check.py
+.venv/Scripts/python.exe tests/coop_retirement_check.py
 .venv/Scripts/python.exe tools/build_coop_velocity_peer.py
 .venv/Scripts/python.exe tests/coop_diagnose_check.py
 .venv/Scripts/python.exe tests/settings_doc_check.py

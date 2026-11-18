@@ -4,6 +4,7 @@
 // Original license: runtime/third_party/licenses/totk-recomp.txt. The experiment and guards are ours.
 #include "coop_native_probe.h"
 #include "coop_adapter.h"
+#include "coop_retirement.h"
 #include "host.h"
 #include "layout.h"
 #include "platform/platform.h"
@@ -49,7 +50,8 @@ static const char *owned_name = "Weapon_Sword_101";
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_NPC_VISIBILITY ? "isolated-npc-native-visibility-v1\n" :
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC_RETIREMENT ? "isolated-npc-native-retirement-v1\n" :
+                         mode == COOP_NATIVE_PROBE_NPC_VISIBILITY ? "isolated-npc-native-visibility-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_FIGURE ? "isolated-npc-body-figure-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION ? "isolated-npc-enet-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION ? "isolated-npc-consumer-velocity-v1\n" :
@@ -61,7 +63,8 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
         (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED &&
          mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION &&
          mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && mode != COOP_NATIVE_PROBE_NPC_PEER_MOTION &&
-         mode != COOP_NATIVE_PROBE_NPC_FIGURE && mode != COOP_NATIVE_PROBE_NPC_VISIBILITY)) goto denied;
+         mode != COOP_NATIVE_PROBE_NPC_FIGURE && mode != COOP_NATIVE_PROBE_NPC_VISIBILITY &&
+         mode != COOP_NATIVE_PROBE_NPC_RETIREMENT)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -179,6 +182,7 @@ static struct {
     int32_t actor_id;
     unsigned calls, hidden, done;
 } npc_visibility;
+static CoopRetirement npc_retirement;
 static const uint8_t npc_velocity_hash[32] = {0x98,0x3c,0x1c,0xaf,0xee,0x3d,0xee,0x16,0x34,0xe0,0x57,0xa4,0x79,0x07,0xd9,0xcb,
     0x9e,0xf2,0x66,0x23,0x14,0x62,0xdb,0x66,0xd3,0x62,0x51,0x22,0x73,0x91,0x23,0xa9};
 static const uint8_t npc_update_hash[32] = {0x94,0x53,0x6d,0xb8,0x69,0xd0,0x79,0x8e,0x6a,0xd3,0xd9,0xf1,0xb3,0x6b,0x09,0x23,
@@ -222,16 +226,22 @@ static int npc_peer_offer_locked(const CoopNetSnapshot *peer, uint32_t generatio
 int coop_native_probe_peer_enabled(void) {
     unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
     return mode==COOP_NATIVE_PROBE_NPC_PEER_MOTION || mode==COOP_NATIVE_PROBE_NPC_FIGURE ||
-           mode==COOP_NATIVE_PROBE_NPC_VISIBILITY;
+           mode==COOP_NATIVE_PROBE_NPC_VISIBILITY || mode==COOP_NATIVE_PROBE_NPC_RETIREMENT;
 }
 
 int coop_native_probe_figure_enabled(void) {
     unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
-    return mode==COOP_NATIVE_PROBE_NPC_FIGURE || mode==COOP_NATIVE_PROBE_NPC_VISIBILITY;
+    return mode==COOP_NATIVE_PROBE_NPC_FIGURE || mode==COOP_NATIVE_PROBE_NPC_VISIBILITY ||
+           mode==COOP_NATIVE_PROBE_NPC_RETIREMENT;
+}
+
+static int native_visibility_enabled(void) {
+    unsigned mode=__atomic_load_n(&armed,__ATOMIC_ACQUIRE);
+    return mode==COOP_NATIVE_PROBE_NPC_VISIBILITY || mode==COOP_NATIVE_PROBE_NPC_RETIREMENT;
 }
 
 void coop_native_probe_figure_publish(uint32_t generation, int32_t actor_id, uint64_t sample_ns) {
-    if (__atomic_load_n(&armed,__ATOMIC_ACQUIRE)!=COOP_NATIVE_PROBE_NPC_VISIBILITY) return;
+    if (!native_visibility_enabled()) return;
     unsigned zero=0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy,&zero,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)) return;
     npc_visibility.publication_ns=sample_ns;
@@ -244,7 +254,7 @@ int coop_native_probe_peer_matches(uint64_t session, uint64_t player, uint32_t r
     if (!coop_native_probe_figure_enabled()) return 0;
     unsigned zero=0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy,&zero,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)) return 0;
-    int matches=npc_peer.bound && !npc_peer.revoked && session && player && remote_generation &&
+    int matches=!npc_retirement.attempted && npc_peer.bound && !npc_peer.revoked && session && player && remote_generation &&
         npc_peer.session==session && npc_peer.player==player && npc_peer.generation==remote_generation &&
         npc_motion.generation==local_generation;
     __atomic_store_n(&npc_motion_busy,0,__ATOMIC_RELEASE);
@@ -285,7 +295,7 @@ static int visibility_code_matches(uint64_t entry, size_t size, const uint8_t ex
 }
 
 static void npc_visibility_update_locked(Cpu *c) {
-    if (__atomic_load_n(&armed,__ATOMIC_ACQUIRE)!=COOP_NATIVE_PROBE_NPC_VISIBILITY ||
+    if (!native_visibility_enabled() ||
         npc_visibility.done || npc_visibility.calls>=2 || !npc_motion.actor || c->x[0]!=npc_motion.actor) return;
     uint64_t now=plat_now_ns();
     int wanted=npc_peer.bound && !npc_peer.revoked && npc_visibility.publication_ns &&
@@ -431,11 +441,19 @@ void coop_native_probe_npc_update(Cpu *c) {
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     npc_visibility_update_locked(c);
+    if (__atomic_load_n(&armed,__ATOMIC_ACQUIRE)==COOP_NATIVE_PROBE_NPC_RETIREMENT &&
+        npc_motion.finished && npc_visibility.done && !npc_visibility.hidden &&
+        npc_visibility.calls==2 && frame_step_world_us()>=npc_motion.started_us+9000000) {
+        if (!npc_retirement.actor) npc_retirement=(CoopRetirement){.actor=npc_motion.actor,.body=npc_motion.body,
+            .generation=npc_motion.generation};
+        coop_retirement_try(c,&npc_retirement);
+    }
     npc_probe_update_locked(c);
     __atomic_store_n(&npc_motion_busy, 0, __ATOMIC_RELEASE);
 }
 
 static void npc_probe_consume_locked(Cpu *c) {
+    if (npc_retirement.attempted) return;
     int peer_mode = coop_native_probe_peer_enabled();
     if (!npc_motion.calls || (npc_motion.finished && (!peer_mode || !npc_motion.stop_pending)) ||
         npc_motion.consumer_calls >= (peer_mode ? 256u : 96u) ||

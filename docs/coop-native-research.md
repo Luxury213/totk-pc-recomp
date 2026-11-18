@@ -1,5 +1,52 @@
 # Co-op native research notes
 
+## Owned NPC retirement (November 18, 2026)
+
+`runtime/coop_retirement.c` adds a separately armed, one-shot mode 9 experiment. The original caller at
+`main+0xe2c924` passes its owner actor and reason zero to `main+0x63baa8`. Inspection of the complete
+0x244-byte callee found actor-state/pending checks, native locking and task-context handling, a call to the
+queue at `main+0x3d45e0`, then a native virtual notification. It is an asynchronous removal request, not a
+destructor or permission for the host to free memory. Its complete code and the queue/update prologues are
+hashed before the experiment calls it; no generated body is copied into public source.
+
+The original update dispatcher at `main+0x2f1554` writes its current actor into the selected worker slot
+before the virtual update, returning to `main+0x2f1608`. The experiment checks that return, GameActor's
+exact vtable/callbacks, SDK `GetTlsValue` import binding and getter code, its inspected TLS slot, native task
+type/kind, worker index and current-actor slot. These are guest scheduler identities, not a host thread ID.
+An incompatible context issues no call. Ownership/body/metadata/epoch guards are checked again before use.
+
+Mode 9 retains the earlier movement/visibility limits. Once movement finishes and native visibility is
+restored, actor/body origins and cached velocity must establish one continuous world second of rest.
+At least twelve distinct samples, position drift at most one centimetre, velocity at most 0.05 m/s and
+gaps at most 100 ms are required. The first live experiment, `run-ae4482476d`, never called removal: it
+incorrectly required a fresh final-stop consumer acknowledgement even after the body had become idle.
+Measured rest replaces that dependency; the absence of a consumer event alone is not rest evidence.
+
+An issued request is never retried, even when rejected. Full CPU/host FP state is restored and no guest
+memory is read after the call. Figure binding and pending velocity-consumer work are closed. Existing
+native observers independently correlate the same initialization with its removal request, pending queue,
+resource cleanup and allocator handoff; a request return alone cannot pass the new report gate.
+
+`run-a820c571be` accepted one request at world 25.205635 s, with 30 rest samples spanning 1.017812 s.
+The same NPC (actor ID 916, generation 3, probe 8/request 13) reached native request/queue, resource cleanup
+and allocator handoff. Full-size images show Link, the restored NPC, then neither remote representation.
+Game/peer exits were zero and source saves were unchanged. This run's overall diagnostic failed because
+an extra receive-lease expiry split the diagonal movement segment; native retirement itself passed.
+That failure is retained and the receive-time lease and movement acceptance were not weakened.
+
+An unchanged-build repeat, `run-29935d2488`, passed the full 32-world-second diagnostic. It retained
+227 producer requests, 120 native consumer reapplications, forward/reverse/diagonal displacement, both
+scheduled lease-expiry rests and recovery. All 174 captured/submitted figure origins matched exactly.
+The native hide/restore pair lasted 5.933282 s across 173 figure samples. One retirement at world
+25.151521 s followed 31 rest samples spanning 1.031515 s. Its actor ID 917/generation 3, probe 10/request 15
+matched the native request/queue/resource/allocator sequence. Game and peer exited zero; source saves
+were unchanged. Inspected frames show the black-haired Link, restored NPC and later empty companion
+position. Tall grass still hides the feet, so terrain/feet acceptance remains open.
+
+One retirement does not authorize reuse of process-lifetime creation argument/blackboard storage. Rejection,
+cancellation, repeated creation/removal in one world, disconnect/reconnect and load/unload remain separate
+requirements. Ordinary native capabilities stay disabled; no human-peer or full Player-controller acceptance.
+
 ## Owned NPC model visibility (November 17, 2026)
 
 The original `OneShotSetOnlyModelVisible` action at `main+0x2588c64` obtains its actor through

@@ -69,11 +69,11 @@ RESOURCE_BIND = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]
 RESOURCE_CLEANUP = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), request (\d+), '
                               r'name ([A-Za-z0-9_]+), actor id same, actor resource (same|different), host thread (\d+);')
 PROBE_TEARDOWN = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), '
-                            r'probe (\d+), name (Weapon[A-Za-z0-9_]*), stage (request|queue|cleanup), '
+                            r'probe (\d+), name (Weapon[A-Za-z0-9_]*|Npc_Road_001), stage (request|queue|cleanup), '
                             r'(?:metadata identity same|actor id same), reason (\d+), actor state (\d+), '
                             r'removal pending (yes|no), host thread (\d+)(?:, metadata live (yes|no))?;')
 PROBE_ALLOCATOR = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), '
-                             r'probe (\d+), name (Weapon[A-Za-z0-9_]*), cleanup scope same, actor argument same, '
+                             r'probe (\d+), name (Weapon[A-Za-z0-9_]*|Npc_Road_001), cleanup scope same, actor argument same, '
                              r'host thread (\d+);')
 REQUEST_ABI = re.compile(r'entry main\+(0x[0-9a-fA-F]+), caller (0x[0-9a-fA-F]+), '
                          r'name ([A-Za-z0-9_]+), extra registers nonzero mask (\d+), stack readable (yes|no), '

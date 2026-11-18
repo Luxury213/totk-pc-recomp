@@ -36,6 +36,26 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_npc_retirement_requires_correlated_cleanup_resource_and_allocator(self):
+        events=object_events(probe=4,name='Npc_Road_001',request=10)
+        resources=resource_events(request=10,name='Npc_Road_001')
+        allocator='coop native probe allocator: entry main+0x100, caller 0x1000000020, probe 4, name Npc_Road_001, cleanup scope same, actor argument same, host thread 7;'
+        request='coop native npc retirement request: generation 3, actor id 17, world us 24000000, result 1, worker 0, rest samples 31, rest us 1000000;'
+        lines=[events[0],resources[0],*events[1:],resources[1],allocator,request]
+        spawn=dict(acceptance_passed=True,initialized=[dict(probe=4,request=10)])
+        figure=dict(acceptance_passed=True,samples=[dict(generation=3,actor_id=17,world_us=22000000)])
+        report=diagnose.npc_retirement_summary(lines,spawn,figure)
+        self.assertTrue(report['acceptance_passed']); self.assertTrue(report['native_retirement_verified'])
+        self.assertFalse(report['reconnect_verified']); self.assertFalse(report['native_request_storage_reused'])
+        for index in range(len(lines)):
+            self.assertFalse(diagnose.npc_retirement_summary(lines[:index]+lines[index+1:],spawn,figure)['acceptance_passed'])
+        for changed in (request.replace('result 1','result 0'),request.replace('actor id 17','actor id 18'),
+                        request.replace('generation 3','generation 4'),request.replace('24000000','21000000'),
+                        request.replace('samples 31','samples 1'),request.replace('rest us 1000000','rest us 1000')):
+            self.assertFalse(diagnose.npc_retirement_summary(lines[:-1]+[changed],spawn,figure)['acceptance_passed'])
+        self.assertFalse(diagnose.npc_retirement_summary(lines+[request],spawn,figure)['acceptance_passed'])
+        self.assertFalse(diagnose.npc_retirement_summary(lines,dict(acceptance_passed=True,initialized=[dict(probe=5,request=10)]),figure)['acceptance_passed'])
+
     def test_native_visibility_requires_owned_hide_and_restore_pair(self):
         figure=dict(acceptance_passed=True,samples=[dict(generation=3,actor_id=17,world_us=15000000+n*100000) for n in range(32)])
         hide='coop native model visibility: call 1, phase hide, generation 3, actor id 17, world us 15000000, before 1, requested 0, after 0, owner matched 1;'
