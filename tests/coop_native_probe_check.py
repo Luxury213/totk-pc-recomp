@@ -24,12 +24,18 @@ static uint32_t target_generation=3;
 static int64_t world_us=8000000;
 static uint64_t host_ns=1000000000ull;
 static float requested_velocity[3];
+static unsigned char npc_model[0xb0], setter_code[36]={5}, getter_code[24]={6};
+static int model_valid=1, visibility_calls;
+static int bad_setter_hash,bad_getter_hash;
+static int32_t model_actor_id=17;
 static float expected_vertical=-.5f;
 static Cpu original;
 static int range(uint64_t p, uint64_t n, const void *base, size_t size) {
     return n <= size && p >= (uintptr_t)base && p - (uintptr_t)base <= size - n;
 }
 int mem_guest_readable(uint64_t p, uint64_t n) {
+    if ((p==MOD_MAIN_BASE+0x1b87b50ull && n<=36) || (p==MOD_MAIN_BASE+0x1b9ce0ull && n<=24) ||
+        (p==0x1abd0 && n==4) || range(p,n,npc_model,sizeof npc_model)) return 1;
     return (p == MOD_MAIN_BASE+0x3ad7450ull && n == 8) ||
         (p == MOD_MAIN_BASE+0x599670ull && n == sizeof prologue) ||
         (p == MOD_MAIN_BASE+0x567750ull && n == 28) || (p == MOD_MAIN_BASE+0x2e27b0ull && n == 28) ||
@@ -41,6 +47,9 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
 }
 int plat_mem_read(uint64_t p, void *dst, size_t n) {
     if (!mem_guest_readable(p,n)) return 0;
+    if (p==MOD_MAIN_BASE+0x1b87b50ull) { memcpy(dst,setter_code,n); return 1; }
+    if (p==MOD_MAIN_BASE+0x1b9ce0ull) { memcpy(dst,getter_code,n); return 1; }
+    if (p==0x1abd0) { memcpy(dst,&model_actor_id,n); return 1; }
     if (p == MOD_MAIN_BASE+0x3ad7450ull) memcpy(dst,&manager,n);
     else if (p == MOD_MAIN_BASE+0x599670ull) memcpy(dst,prologue,n);
     else if (p == MOD_MAIN_BASE+0x567750ull) memcpy(dst,velocity_code,n);
@@ -53,13 +62,28 @@ int plat_mem_read(uint64_t p, void *dst, size_t n) {
 int64_t frame_step_world_us(void) { return world_us; }
 uint64_t plat_now_ns(void) { return host_ns; }
 int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us) {
-    if (!target_valid || actor!=0xabc0) return 0;
+    if (!target_valid || (actor!=0xabc0 && actor!=0x1abc0)) return 0;
     *body=(uintptr_t)npc_body; *generation=target_generation; *observed_us=8000000; return 1;
+}
+int coop_adapter_npc_probe_model(uint64_t actor,uint64_t *model,uint32_t *generation) {
+    if (!target_valid || !model_valid || actor!=0x1abc0) return 0;
+    *model=(uintptr_t)npc_model; *generation=target_generation; return 1;
 }
 void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_fatal(const char *fmt, ...) { (void)fmt; abort(); }
 void rt_sha256(const void *p, size_t n, uint8_t out[32]) {
-    (void)p; assert(n == 28);
+    const uint8_t *probe=p;
+    if (n==36 || n==24) {
+        const uint8_t setter[32]={0x57,0x68,0x56,0xdc,0xf0,0x7a,0x2c,0xc0,0x6f,0x32,0xc5,0x55,0x49,0x23,0xd3,0xb8,
+            0x41,0xf0,0xf9,0x12,0x41,0x5e,0x30,0x89,0xec,0xea,0xd2,0xeb,0x00,0x79,0x38,0x9a};
+        const uint8_t getter[32]={0xa4,0x0b,0x1d,0xc1,0x46,0xb2,0x83,0x7e,0x9d,0x5d,0xd9,0x20,0x11,0x27,0x01,0x3c,
+            0x89,0x77,0xc8,0xb3,0x79,0x03,0x53,0x4f,0x41,0x89,0x97,0xd1,0x05,0xe4,0x6f,0x69};
+        assert((n==36 && probe[0]==5) || (n==24 && probe[0]==6));
+        memcpy(out,n==36 ? setter : getter,32);
+        if (bad_hash || (n==36 && bad_setter_hash) || (n==24 && bad_getter_hash)) out[0]^=1;
+        return;
+    }
+    assert(n == 28);
     const uint8_t known[32] = {0xf8,0x23,0x0f,0xd5,0xeb,0xab,0x93,0x91,0x09,0xe4,0x71,0x48,0x55,0x34,0xa3,0x7b,
         0xbb,0xd8,0x60,0x51,0xeb,0xe1,0x80,0xd2,0x64,0x30,0x40,0x9e,0x88,0x31,0x63,0x49};
     const uint8_t velocity_hash[32]={0x98,0x3c,0x1c,0xaf,0xee,0x3d,0xee,0x16,0x34,0xe0,0x57,0xa4,0x79,0x07,0xd9,0xcb,
@@ -80,6 +104,12 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     uint64_t args[8];
     for (int i=0;i<n;i++) args[i]=va_arg(ap,uint64_t);
     va_end(ap);
+    if (fn==MOD_MAIN_BASE+0x1b87b50ull) {
+        assert(n==2 && args[0]==(uintptr_t)npc_model && args[1]<=1 && c->sp==original.sp);
+        npc_model[0x9c]=(unsigned char)args[1]; visibility_calls++;
+        uint32_t dirty=0x100000; memcpy(npc_model+0xac,&dirty,4);
+        memset(c,0x5a,sizeof *c); fesetround(FE_DOWNWARD); return 0;
+    }
     if (fn==MOD_MAIN_BASE+0x567750ull) {
         assert(n==2 && args[0]==(uintptr_t)npc_body && c->sp==original.sp);
         memcpy(requested_velocity,(const void *)(uintptr_t)args[1],sizeof requested_velocity);
@@ -332,7 +362,58 @@ int main(int argc, char **argv) {
     npc_peer.revoked=1; assert(!coop_native_probe_peer_matches(11,22,1,3));
     npc_peer.revoked=0; npc_motion_busy=1; assert(!coop_native_probe_peer_matches(11,22,1,3));
     npc_motion_busy=0; armed=6; assert(!coop_native_probe_figure_enabled());
-    puts("native probes: scoped creation/velocity guards, bounded requests and CPU/FP restoration passed");
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_VISIBILITY); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-native-visibility-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_VISIBILITY); assert(armed==8);
+    npc_motion=(typeof(npc_motion)){.actor=0x1abc0,.body=(uintptr_t)npc_body,.generation=3,.calls=1,.last_us=world_us};
+    npc_peer=(typeof(npc_peer)){.bound=1};
+    memset(&npc_visibility,0,sizeof npc_visibility); npc_model[0x9c]=1;
+    c.x[0]=0x1abc0; original=c; before_consume=velocity_calls;
+    unsigned char original_body[sizeof npc_body]; memcpy(original_body,npc_body,sizeof npc_body);
+    coop_native_probe_figure_publish(3,17,host_ns-250000001);
+    coop_native_probe_npc_update(&c); assert(!visibility_calls); // stale representation cannot hide the native actor
+    coop_native_probe_figure_publish(4,17,host_ns);
+    coop_native_probe_npc_update(&c); assert(!visibility_calls);
+    coop_native_probe_figure_publish(3,18,host_ns);
+    coop_native_probe_npc_update(&c); assert(!visibility_calls);
+    coop_native_probe_figure_publish(3,17,host_ns+1);
+    coop_native_probe_npc_update(&c); assert(!visibility_calls);
+    coop_native_probe_figure_publish(3,17,host_ns);
+    npc_motion_busy=1; coop_native_probe_figure_publish(0,0,0); npc_motion_busy=0;
+    assert(npc_visibility.publication_ns==host_ns); // presentation never waits on a native call
+    bad_hash=1; coop_native_probe_npc_update(&c); assert(!visibility_calls); bad_hash=0;
+    bad_setter_hash=1; coop_native_probe_npc_update(&c); assert(!visibility_calls); bad_setter_hash=0;
+    bad_getter_hash=1; coop_native_probe_npc_update(&c); assert(!visibility_calls); bad_getter_hash=0;
+    model_valid=0; coop_native_probe_npc_update(&c); assert(!visibility_calls); model_valid=1;
+    int saved_round=fegetround();
+    coop_native_probe_npc_update(&c);
+    assert(visibility_calls==1 && !npc_model[0x9c] && npc_visibility.hidden);
+    assert(!memcmp(&c,&original,sizeof c) && fegetround()==saved_round && velocity_calls==before_consume);
+    assert(!memcmp(original_body,npc_body,sizeof npc_body));
+    coop_native_probe_npc_update(&c); assert(visibility_calls==1); // no repeated hide calls
+    coop_native_probe_figure_publish(0,0,0); coop_native_probe_npc_update(&c);
+    assert(visibility_calls==2 && npc_model[0x9c]==1 && npc_visibility.done);
+    coop_native_probe_figure_publish(3,17,host_ns); coop_native_probe_npc_update(&c);
+    assert(visibility_calls==2); // one hide/restore pair only
+    memset(&npc_visibility,0,sizeof npc_visibility);
+    coop_native_probe_figure_publish(3,17,host_ns); coop_native_probe_npc_update(&c);
+    assert(visibility_calls==3 && npc_visibility.hidden);
+    model_valid=0; coop_native_probe_npc_update(&c);
+    assert(visibility_calls==3 && npc_visibility.done); // no restore through a changed owner/body
+    model_valid=1; memset(&npc_visibility,0,sizeof npc_visibility); npc_model[0x9c]=1;
+    coop_native_probe_figure_publish(3,17,host_ns); coop_native_probe_npc_update(&c);
+    assert(visibility_calls==4 && npc_visibility.hidden);
+    npc_peer.revoked=1; coop_native_probe_npc_update(&c);
+    assert(visibility_calls==5 && npc_model[0x9c]==1 && npc_visibility.done); // restore even before UI clears its copy
+    npc_peer.revoked=0; memset(&npc_visibility,0,sizeof npc_visibility); npc_model[0x9c]=0;
+    coop_native_probe_figure_publish(3,17,host_ns); coop_native_probe_npc_update(&c);
+    assert(visibility_calls==5 && npc_visibility.done); // do not take over an initially hidden model
+    memset(&npc_visibility,0,sizeof npc_visibility); npc_model[0x9c]=1;
+    coop_native_probe_figure_publish(3,17,host_ns); coop_native_probe_npc_update(&c);
+    assert(visibility_calls==6 && npc_visibility.hidden);
+    host_ns+=250000001; coop_native_probe_npc_update(&c);
+    assert(visibility_calls==7 && npc_model[0x9c]==1 && npc_visibility.done); // stale publication restores visibility
+    puts("native probes: scoped creation/velocity/visibility guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }
 '''

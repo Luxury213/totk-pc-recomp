@@ -44,6 +44,7 @@ static unsigned char npc_component[0x40], npc_set[0x158], npc_set_child[0x20], n
 static unsigned char npc_character[0x40], npc_set8[0x28], npc_set8_20[0x40];
 static unsigned char npc_body_link[0x30], npc_body_agent[0x40];
 static unsigned char npc_sdk[0x10], npc_change[0xd8];
+static unsigned char npc_models[0x288], npc_model[0xb0];
 static float npc_velocity[4] = {2,0,0,0};
 static unsigned char player_source_ref[0x18];
 static unsigned char visual_model[0x3e8], visual_controller[0x120], visual_player[0x88], visual_clip[0x10];
@@ -77,6 +78,7 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
     if (p == MOD_MAIN_BASE + 0x3969918ull && n <= 8) return 1;
     if (p == MOD_MAIN_BASE + 0x3add238ull && n <= 8) return 1;
     if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x100),sizeof vtable)) return 1;
+    if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x3673b58),0x80)) return 1;
     return in_range(p,n,&mgr,sizeof mgr) || in_range(p,n,root,sizeof root) ||
            in_range(p,n,unit,sizeof unit) || in_range(p,n,actor,sizeof actor) ||
            in_range(p,n,other_actor,sizeof other_actor) ||
@@ -102,6 +104,7 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
            in_range(p,n,npc_set8,sizeof npc_set8) || in_range(p,n,npc_set8_20,sizeof npc_set8_20) ||
            in_range(p,n,npc_body_link,sizeof npc_body_link) || in_range(p,n,npc_body_agent,sizeof npc_body_agent) ||
            in_range(p,n,npc_sdk,sizeof npc_sdk) || in_range(p,n,npc_change,sizeof npc_change) ||
+           in_range(p,n,npc_models,sizeof npc_models) || in_range(p,n,npc_model,sizeof npc_model) ||
            in_range(p,n,npc_velocity,sizeof npc_velocity) ||
            in_range(p,n,visual_player,sizeof visual_player) || in_range(p,n,visual_clip,sizeof visual_clip) ||
            in_range(p,n,visual_name,sizeof visual_name) || in_range(p,n,body_mesh,sizeof body_mesh) ||
@@ -109,6 +112,9 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
 }
 int plat_mem_read(uint64_t p, void *out, size_t n) {
     guest_reads++;
+    if (!fail_reads && in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x3673b58),0x80)) {
+        memcpy(out,vtable+(p-(MOD_MAIN_BASE+0x3673b58)),n); return 1;
+    }
     if (switch_body_palette && p==(uintptr_t)body_palette) {
         memset(body_resource+8,0,8); switch_body_palette=0;
     }
@@ -665,6 +671,16 @@ int main(void) {
     ptr(npc_set+0x150,(uintptr_t)npc_body);
     assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
     assert(scoped_body==(uintptr_t)npc_body && scoped_generation==trace_generation && scoped_time==world_us);
+    ptr(probe_actor+0x228,(uintptr_t)npc_models); ptr(npc_models+0x280,(uintptr_t)npc_model);
+    ptr(npc_model,MOD_MAIN_BASE+0x3673b58); ptr(npc_model+0x18,(uintptr_t)probe_actor); npc_model[0x9c]=1;
+    uint64_t scoped_model; uint32_t model_generation;
+    assert(coop_adapter_npc_probe_model((uintptr_t)probe_actor,&scoped_model,&model_generation));
+    assert(scoped_model==(uintptr_t)npc_model && model_generation==trace_generation);
+    ptr(npc_model+0x18,(uintptr_t)other_actor);
+    assert(!coop_adapter_npc_probe_model((uintptr_t)probe_actor,&scoped_model,&model_generation));
+    ptr(npc_model+0x18,(uintptr_t)probe_actor); ptr(npc_model,MOD_MAIN_BASE+0x100);
+    assert(!coop_adapter_npc_probe_model((uintptr_t)probe_actor,&scoped_model,&model_generation));
+    ptr(npc_model,MOD_MAIN_BASE+0x3673b58);
     CoopNativeBody body_copy;
     npc_figure_observe(&body_copy); assert(!body_copy.time_ns); // exact opt-in required
     native_figure_mode=1;
@@ -688,6 +704,7 @@ int main(void) {
     body_peer.has_remote=1; body_peer.remote.flags=0; assert(!native_figure_ready(&body_peer,trace_generation,now));
     // The renderer receives the actor origin, never a guessed body-centre-to-feet offset.
     probe_entries[0].stages=1; npc_figure_observe(&body_copy); assert(!body_copy.time_ns);
+    assert(!coop_adapter_npc_probe_model((uintptr_t)probe_actor,&scoped_model,&model_generation));
     probe_entries[0].stages=0;
     scalar(probe_actor+0x2b8,NAN); npc_figure_observe(&body_copy); assert(!body_copy.time_ns);
     scalar(probe_actor+0x2b8,5);

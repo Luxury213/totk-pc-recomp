@@ -2,6 +2,7 @@
 #include "figure.h"
 #include "link_figure.h"
 #include "host.h"
+#include "coop_native_probe.h"
 #include "platform/platform.h"
 #include <math.h>
 #include <string.h>
@@ -12,6 +13,7 @@ void coop_figure_publish(const CoopSnapshot *snapshot) {
     static int previous_animation = -1;
     if (!snapshot->has_peer_pos || !snapshot->has_local_pos || !gfx_figures_wanted()) {
         gfx_figures_set(NULL, 0);
+        coop_native_probe_figure_publish(0,0,0);
         previous_ms = 0; previous_animation = -1;
         return;
     }
@@ -50,11 +52,13 @@ void coop_figure_publish(const CoopSnapshot *snapshot) {
     }
     link_figure_orient(q, figure.has_body ? 0 : link_figure_root_yaw(model, figure.anim, figure.frame), figure.rot);
     gfx_figures_set(&figure, 1);
+    coop_native_probe_figure_publish(snapshot->peer_native_body ? snapshot->peer_native_generation : 0,
+        snapshot->peer_native_actor_id,snapshot->peer_native_body ? snapshot->peer_native_sample_ns : 0);
     static uint64_t logged_sample;
     static unsigned native_logs;
     if (snapshot->peer_native_body && snapshot->peer_native_sample_ns!=logged_sample && native_logs<512) {
         logged_sample=snapshot->peer_native_sample_ns; native_logs++;
-        rt_log("coop native figure submitted: sample %llu, generation %u, actor id %d, pos %.6f %.6f %.6f; copied position, native appearance retained",
+        rt_log("coop native figure submitted: sample %llu, generation %u, actor id %d, pos %.6f %.6f %.6f; copied position, native appearance controlled separately",
             (unsigned long long)snapshot->peer_native_sample_ns,snapshot->peer_native_generation,
             snapshot->peer_native_actor_id,figure.feet[0],figure.feet[1],figure.feet[2]);
     }

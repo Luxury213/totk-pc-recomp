@@ -9,8 +9,8 @@ engine evidence and [the campaign design](coop.md) for the agreed final behavior
 
 Priority update after the visual-grounding report: verify the visible figure's binding to a native body and
 its feet/terrain relationship before further equipment appearance work. Ordinary presence has no collider;
-mode 7 now anchors the figure to the tested NPC origin, but retains its original mesh and requires visual
-feet/terrain and native lifecycle acceptance. The test echo's horizontal offset reuses
+mode 7 now anchors the figure to the tested NPC origin, and mode 8 suppresses/restores that NPC's original
+mesh through its native controller. Visual feet/terrain and native lifecycle acceptance remain open. The test echo's horizontal offset reuses
 the sender's Y and can misplace it on slopes. An origin calibration or scale adjustment cannot complete this gate.
 
 **Resume here:** [the next-session handover](coop-next-session.md) records the tested source/build checkpoint,
@@ -35,6 +35,7 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 | Phase 2: isolated NPC movement | Two consumer-entry pulse runs passed: about 2 m forward, 1.9 m reverse and positional rest; normal exits and unchanged source saves | Synthetic commands only; no peer control, verified locomotion animation/grounding contract or Link model binding |
 | Phase 2: ENet NPC diagnostic | A game-free loopback peer drives forward/reverse/diagonal movement; two lease-expiry stops, recovery and final positional rest passed | Scripted peer only; no human/Internet acceptance or complete native companion lifecycle |
 | Phase 2: native-origin figure experiment | Mode 7 copies the owned NPC's actor origin to the Link figure; 194 exact capture/submission matches and native movement gates passed on a slope | The original NPC appearance remains; ground/feet visual acceptance, appearance replacement, retirement and human control are still pending |
+| Phase 2: native appearance experiment | Mode 8 suppresses the owned NPC mesh while publishing Link and restores it after the peer exits; images, origin and native movement gates passed | One controlled hide/restore pair; no native retirement, repeated creation, persistent model-state authority or human control |
 | Phase 2: ordinary native character commands | Disabled; the ordinary command queue rejects mutation and capabilities remain presence-only | Production movement/animation contract, Link binding, removal, shared world identities and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 

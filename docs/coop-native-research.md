@@ -1,5 +1,43 @@
 # Co-op native research notes
 
+## Owned NPC model visibility (November 17, 2026)
+
+The original `OneShotSetOnlyModelVisible` action at `main+0x2588c64` obtains its actor through
+`main+0x9a89c4`, calls the getter at `main+0x1b9ce0`, then passes the requested boolean to
+`main+0x1b87b50`. The getter returns `[actor+0x228]+0x280`. Other original call sites also derive this
+receiver from the actor, and controller methods follow +0x18 back to its owner. The setter changes its +0x9c
+visibility byte and marks a pending model-controller update; it does not touch the rigid body. These are
+locally inspected native paths, not imported offsets from another game version or guessed signatures.
+
+The read-only mode 7 audit found that controller on the owned NPC, with matching owner, initially visible
+and vtable `main+0x3673b58`. The adapter now guards that exact type and checks the owner, component slot,
+actor/metadata ID, body and local epoch again before returning it to a native hook. Ordinary observer/render
+snapshots still contain no such pointer. Getter and full setter hashes are checked independently before use.
+
+Separate mode 8 uses a distinct timed-profile marker. One copied-publication acknowledgement feeds a bounded
+slot under the existing native-probe try-lock. The owned actor-update entry consumes it; neither the renderer
+nor the network calls the model API. A fresh matching publication may request one hide through the original
+setter. Expiry, peer revocation or the bounded experiment's end requests restoration. CPU/FP state is restored
+after both calls. At most two calls are allowed, and changed controller identity never triggers a stale restore.
+An initially hidden controller is not taken over; a competing changed visible value ends the experiment.
+
+In the controlled copied-save run `run-bca5cca87a`, hide and restore values both matched on the same owned
+controller/actor. The hide lasted 6.499937 world seconds covering 195 copied figure samples; 196 figure
+submissions matched native positions exactly. Forward/reverse/diagonal movement, expiry rests/recovery and
+consumer correlation passed, all processes exited zero and source saves were unchanged. Full-size images
+show Link without the NPC mesh while hidden and the NPC restored after peer exit. This proves visual
+suppression/restoration in that one scenario while native body movement continued. Grass hides the feet.
+
+This is not native retirement, repeatable creation, a general scheduling/visibility authority contract or
+human control. A same-value competing request cannot be detected from the visible byte. General native
+capabilities remain disabled. Verify lifecycle and unobstructed feet/terrain before calling this a playable
+companion, and preserve the visibility restoration fallback while investigating native retirement.
+
+An additional inspected original caller at `main+0xe2c924` obtains its owner actor and calls the removal
+request at `main+0x63baa8` with a zero reason after a model-hide branch. This is a research starting point
+for retirement, not authorization to call it externally. Inspect the full callee, task context, asynchronous
+cleanup and request-storage lifetime before adding any removal experiment.
+
 ## Native actor origin to Link figure (November 17, 2026)
 
 Mode 7 is armed only by `isolated-npc-body-figure-v1` in a timed copied profile. It reuses mode 6's authentic

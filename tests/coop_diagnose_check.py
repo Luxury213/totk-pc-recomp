@@ -36,6 +36,23 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_native_visibility_requires_owned_hide_and_restore_pair(self):
+        figure=dict(acceptance_passed=True,samples=[dict(generation=3,actor_id=17,world_us=15000000+n*100000) for n in range(32)])
+        hide='coop native model visibility: call 1, phase hide, generation 3, actor id 17, world us 15000000, before 1, requested 0, after 0, owner matched 1;'
+        restore='coop native model visibility: call 2, phase restore, generation 3, actor id 17, world us 22000000, before 0, requested 1, after 1, owner matched 1;'
+        report=diagnose.native_visibility_summary([hide,restore],figure)
+        self.assertTrue(report['acceptance_passed']); self.assertTrue(report['native_flag_control_verified'])
+        self.assertFalse(report['visual_replacement_verified']); self.assertFalse(report['native_retirement_verified'])
+        self.assertEqual(report['hidden_figure_samples'],32)
+        for lines in ([hide], [restore,hide], [hide,restore,restore],
+                      [hide,restore.replace('after 1','after 0')],
+                      [hide,restore.replace('actor id 17','actor id 18')],
+                      [hide,restore.replace('owner matched 1','owner matched 0')],
+                      [hide,restore,'coop native model visibility: aborted; changed owner']):
+            self.assertFalse(diagnose.native_visibility_summary(lines,figure)['acceptance_passed'])
+        self.assertFalse(diagnose.native_visibility_summary([hide,restore],dict(acceptance_passed=False,samples=figure['samples']))['acceptance_passed'])
+        self.assertFalse(diagnose.native_visibility_summary([hide,restore.replace('22000000','15100000')],figure)['acceptance_passed'])
+
     def test_native_figure_requires_exact_copied_actor_origin(self):
         lines=[]
         for n in range(12):

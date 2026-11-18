@@ -56,6 +56,8 @@ void coop_adapter_trace_enable(int enable);
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument);
 // Diagnostic-only target for the scoped NPC's native actor-update entry. Revalidates live ownership and world.
 int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us);
+// Native hooks only: the model controller reached by the original 1.4.3 getter, with its actor owner rechecked.
+int coop_adapter_npc_probe_model(uint64_t actor, uint64_t *model, uint32_t *generation);
 void coop_adapter_npc_velocity_consume(const Cpu *cpu);
 void coop_adapter_actor_request(const Cpu *cpu);
 void coop_adapter_request_context(const Cpu *cpu);

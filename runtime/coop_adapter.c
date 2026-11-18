@@ -572,6 +572,33 @@ static void npc_figure_observe(CoopNativeBody *out) {
         again!=body || rechecked!=generation) return;
     // Actor origin is the native model origin; a rigid-body centre is not a foot location.
     *out=copy;
+    static unsigned model_logged;
+    uint64_t model; uint32_t model_generation;
+    if (!model_logged && coop_adapter_npc_probe_model(actor,&model,&model_generation) && model_generation==generation) {
+        model_logged=1;
+        uint64_t table=guest_pointer(model);
+        rt_log("coop native model controller: generation %u, actor id %d, vtable main+%#llx, owner same, visible %u; original getter path, read-only",
+            generation,copy.actor_id,(unsigned long long)main_relative(table),
+            (unsigned)(guest_s32(model+0x9c)&255));
+        for (unsigned k=0;k<16;k++) rt_log("coop native model method: slot %#x, entry main+%#llx; read-only",
+            k*8,(unsigned long long)main_relative(guest_pointer(table+k*8)));
+    }
+}
+
+int coop_adapter_npc_probe_model(uint64_t actor, uint64_t *model, uint32_t *generation) {
+    uint64_t body,again; uint32_t rechecked; int64_t observed_us;
+    if (!model || !generation || !coop_adapter_npc_probe_body(actor,&body,generation,&observed_us)) return 0;
+    // main+0x1b9ce0 returns [actor+0x228]+0x280. The original model-controller methods follow +0x18 to the actor.
+    uint64_t components=guest_pointer(actor+0x228), controller=guest_pointer(components+0x280);
+    if (!guest_readable(components,0x288) || !guest_readable(controller,0xb0) ||
+        guest_pointer(controller+0x18)!=actor || guest_pointer(controller)!=MOD_MAIN_BASE+0x3673b58ull ||
+        !guest_readable(guest_pointer(controller),0x80) ||
+        (guest_s32(controller+0x9c)&255)>1 ||
+        guest_pointer(actor+0x228)!=components || guest_pointer(components+0x280)!=controller ||
+        guest_pointer(controller+0x18)!=actor || guest_pointer(controller)!=MOD_MAIN_BASE+0x3673b58ull ||
+        !coop_adapter_npc_probe_body(actor,&again,&rechecked,&observed_us) || again!=body || rechecked!=*generation) return 0;
+    *model=controller;
+    return 1;
 }
 
 static void npc_velocity_capture(uint64_t entry, uint64_t caller, uint32_t generation,
@@ -771,7 +798,7 @@ void coop_adapter_actor_request(const Cpu *cpu) {
     char prefix[6];
     if (!name_at || !plat_mem_read(name_at, prefix, sizeof prefix)) return;
     int npc = !memcmp(prefix, "Npc_Ro", sizeof prefix) && cpu->x[30] == RT_RET_HOST &&
-              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 7);
+              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 8);
     int probe = !memcmp(prefix, "Weapon", sizeof prefix) || npc;
     if (memcmp(prefix, "Player", sizeof prefix) && !probe) return;
     if (probe && (frame_step_world_us() < 6000000 ||

@@ -25,6 +25,7 @@ The public plan is authoritative for resuming development; private notes under i
 | Native NPC movement | Owned humanoid and bounded forward/reverse/stop pulses through a verified native request-consumer entry | Fixed synthetic pulse; Link binding and removal API remain unverified |
 | Native ENet diagnostic | One scoped NPC consumes a loopback peer's leased horizontal velocities and stops/restarts across publication gaps | Scripted peer; no human/Internet, Link binding or complete lifecycle acceptance |
 | Native-origin figure diagnostic | Separately armed mode 7 draws Link at the scoped NPC's copied actor origin; two runs passed capture/submission agreement and native movement checks | Original NPC mesh remains visible; no complete appearance replacement, terrain/feet acceptance, retirement or human control |
+| Native appearance diagnostic | Mode 8 hides the owned NPC model through its native controller API while publishing Link, then restores it; images and movement gates passed | One controlled hide/restore pair; no persistent model-state authority, native retirement or human control |
 
 State packets are 152 bytes without optional body/equipment data, 628 with the body, 296 with equipment
 identities, and 772 with both (896-byte protocol ceiling; no larger fragmented equipment-pose packet).
@@ -361,6 +362,37 @@ timestamp, generation and actor ID. At least ten ordered submissions must agree 
 suppression, terrain contact, native retirement and human-peer fields remain false. Disappearing presentation
 after disconnect does not prove native actor removal. Check both the existing native movement gates and this
 origin gate; neither completes the companion lifecycle.
+
+### Suppress and restore the original NPC appearance
+
+Add `--native-npc-visibility` to the body/figure command. It requires `--native-npc-figure` and its ENet option,
+and writes the distinct `isolated-npc-native-visibility-v1` marker for mode 8. A mode 7 marker cannot arm this
+mutation. Existing speed, receive-time lease, duration and native velocity-call limits remain unchanged.
+
+The original 1.4.3 `OneShotSetOnlyModelVisible` path uses the getter at `main+0x1b9ce0` and setter at
+`main+0x1b87b50`. The controller is at `[actor+0x228]+0x280`, with its actor owner at +0x18 and the observed
+NPC vtable at `main+0x3673b58`. `coop_adapter_npc_probe_model` validates those links, the exact type and the
+existing live actor/body identity before returning a native-hook-only receiver. No pointer enters presentation.
+
+The UI acknowledges copied figure publication through one bounded slot. Only the owned NPC's native update
+hook can consume it. Publication expires after 250 ms; a wrong actor/generation, peer revocation or completion
+cannot maintain the hide. At most one hide and one restore call are allowed. Initially invisible controllers
+are not claimed. Getter, setter and update-entry code hashes, controller identity and CPU/host FP restoration
+guard each invocation. Changing the controller or observing a competing visibility value aborts further calls.
+It never writes a visibility flag directly from the host or changes physics transforms.
+
+The corrected mode 8 run passed 28 world seconds: the model was hidden for 6.499937 world seconds spanning
+195 figure samples, with 196 exact native-origin submissions overall. Native movement, expiry rests/recovery,
+normal exits and source-save preservation passed. Full-size images show only the black-haired Link at the
+companion position while hidden, followed by the original NPC after the peer exits. Grass still obscures feet.
+
+`native_model_visibility` requires the same actor/generation as the figure, an ordered native hide/restore
+pair, matching post-call values, no abort, at least two world seconds and thirty figure samples between calls.
+Its image-verification field remains false because the parser does not inspect pixels; manual image evidence
+is recorded separately. Native retirement and human-peer fields remain false. A same-value visibility request
+from another native subsystem cannot be attributed by this experiment. Persistent model-state authority,
+arbitrary scenes/terrain, safe actor removal and repeated lifecycle remain production requirements.
+First/last-frame transitions around native visibility propagation have not received separate visual acceptance.
 
 Check `diagnostic_passed` and `acceptance_checks`, not just the game's `exit_code`. Unrequested checks evaluate
 true as not applicable; they are not evidence those scenarios ran. `native_spawn_experiment` reports creation,

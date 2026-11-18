@@ -49,7 +49,8 @@ static const char *owned_name = "Weapon_Sword_101";
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_NPC_FIGURE ? "isolated-npc-body-figure-v1\n" :
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC_VISIBILITY ? "isolated-npc-native-visibility-v1\n" :
+                         mode == COOP_NATIVE_PROBE_NPC_FIGURE ? "isolated-npc-body-figure-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_PEER_MOTION ? "isolated-npc-enet-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION ? "isolated-npc-consumer-velocity-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_MOTION ? "isolated-npc-velocity-v1\n" :
@@ -60,7 +61,7 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
         (mode != COOP_NATIVE_PROBE_CLONE && mode != COOP_NATIVE_PROBE_OWNED &&
          mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION &&
          mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && mode != COOP_NATIVE_PROBE_NPC_PEER_MOTION &&
-         mode != COOP_NATIVE_PROBE_NPC_FIGURE)) goto denied;
+         mode != COOP_NATIVE_PROBE_NPC_FIGURE && mode != COOP_NATIVE_PROBE_NPC_VISIBILITY)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -172,8 +173,16 @@ static struct {
     float horizontal[2];
     unsigned bound, valid, revoked, notified;
 } npc_peer;
+static struct {
+    uint64_t publication_ns, controller;
+    uint32_t generation;
+    int32_t actor_id;
+    unsigned calls, hidden, done;
+} npc_visibility;
 static const uint8_t npc_velocity_hash[32] = {0x98,0x3c,0x1c,0xaf,0xee,0x3d,0xee,0x16,0x34,0xe0,0x57,0xa4,0x79,0x07,0xd9,0xcb,
     0x9e,0xf2,0x66,0x23,0x14,0x62,0xdb,0x66,0xd3,0x62,0x51,0x22,0x73,0x91,0x23,0xa9};
+static const uint8_t npc_update_hash[32] = {0x94,0x53,0x6d,0xb8,0x69,0xd0,0x79,0x8e,0x6a,0xd3,0xd9,0xf1,0xb3,0x6b,0x09,0x23,
+    0x96,0xd0,0x0c,0xc7,0x31,0x4d,0xee,0x10,0x59,0x64,0x10,0xbd,0x7c,0xa5,0xa6,0x56};
 
 static int npc_peer_offer_locked(const CoopNetSnapshot *peer, uint32_t generation, uint64_t now) {
     if (!npc_motion.body || npc_motion.finished || npc_peer.revoked) return 0;
@@ -212,11 +221,22 @@ static int npc_peer_offer_locked(const CoopNetSnapshot *peer, uint32_t generatio
 
 int coop_native_probe_peer_enabled(void) {
     unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
-    return mode==COOP_NATIVE_PROBE_NPC_PEER_MOTION || mode==COOP_NATIVE_PROBE_NPC_FIGURE;
+    return mode==COOP_NATIVE_PROBE_NPC_PEER_MOTION || mode==COOP_NATIVE_PROBE_NPC_FIGURE ||
+           mode==COOP_NATIVE_PROBE_NPC_VISIBILITY;
 }
 
 int coop_native_probe_figure_enabled(void) {
-    return __atomic_load_n(&armed, __ATOMIC_ACQUIRE)==COOP_NATIVE_PROBE_NPC_FIGURE;
+    unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
+    return mode==COOP_NATIVE_PROBE_NPC_FIGURE || mode==COOP_NATIVE_PROBE_NPC_VISIBILITY;
+}
+
+void coop_native_probe_figure_publish(uint32_t generation, int32_t actor_id, uint64_t sample_ns) {
+    if (__atomic_load_n(&armed,__ATOMIC_ACQUIRE)!=COOP_NATIVE_PROBE_NPC_VISIBILITY) return;
+    unsigned zero=0;
+    if (!__atomic_compare_exchange_n(&npc_motion_busy,&zero,1,0,__ATOMIC_ACQUIRE,__ATOMIC_RELAXED)) return;
+    npc_visibility.publication_ns=sample_ns;
+    npc_visibility.generation=generation; npc_visibility.actor_id=actor_id;
+    __atomic_store_n(&npc_motion_busy,0,__ATOMIC_RELEASE);
 }
 
 int coop_native_probe_peer_matches(uint64_t session, uint64_t player, uint32_t remote_generation,
@@ -257,6 +277,69 @@ static int probe_code_matches(uint64_t entry, const uint8_t expected[32]) {
     return !memcmp(hash, expected, sizeof hash);
 }
 
+static int visibility_code_matches(uint64_t entry, size_t size, const uint8_t expected[32]) {
+    uint8_t bytes[64], hash[32];
+    if (size>sizeof bytes || !read_guest(entry,bytes,size)) return 0;
+    rt_sha256(bytes,size,hash);
+    return !memcmp(hash,expected,sizeof hash);
+}
+
+static void npc_visibility_update_locked(Cpu *c) {
+    if (__atomic_load_n(&armed,__ATOMIC_ACQUIRE)!=COOP_NATIVE_PROBE_NPC_VISIBILITY ||
+        npc_visibility.done || npc_visibility.calls>=2 || !npc_motion.actor || c->x[0]!=npc_motion.actor) return;
+    uint64_t now=plat_now_ns();
+    int wanted=npc_peer.bound && !npc_peer.revoked && npc_visibility.publication_ns &&
+        now>=npc_visibility.publication_ns && now-npc_visibility.publication_ns<=250000000ull &&
+        npc_visibility.generation==npc_motion.generation && !npc_motion.finished;
+    if (!npc_visibility.hidden && !wanted) return;
+    uint64_t controller; uint32_t generation;
+    if (!coop_adapter_npc_probe_model(npc_motion.actor,&controller,&generation) || generation!=npc_motion.generation ||
+        (npc_visibility.controller && controller!=npc_visibility.controller)) {
+        if (npc_visibility.hidden) {
+            npc_visibility.done=1;
+            rt_log("coop native model visibility: aborted; controller/body identity changed, no stale restore");
+        }
+        return;
+    }
+    int32_t id; uint8_t visible;
+    if (!read_guest(npc_motion.actor+0x10,&id,sizeof id) ||
+        !read_guest(controller+0x9c,&visible,sizeof visible) || visible>1) return;
+    if (wanted && id!=npc_visibility.actor_id) wanted=0;
+    if (!npc_visibility.hidden && !wanted) return;
+    if ((!npc_visibility.hidden && !visible) || (npc_visibility.hidden && visible)) {
+        npc_visibility.done=1;
+        rt_log("coop native model visibility: aborted; original visibility changed, no ownership takeover");
+        return;
+    }
+    if (npc_visibility.hidden && wanted) return;
+    // OneShotSetOnlyModelVisible calls this exact setter with the controller returned by main+0x1b9ce0.
+    // It changes only the model visibility byte/dirty request. Body motion uses its separate native API.
+    static const uint8_t setter_hash[32]={0x57,0x68,0x56,0xdc,0xf0,0x7a,0x2c,0xc0,0x6f,0x32,0xc5,0x55,0x49,0x23,0xd3,0xb8,
+        0x41,0xf0,0xf9,0x12,0x41,0x5e,0x30,0x89,0xec,0xea,0xd2,0xeb,0x00,0x79,0x38,0x9a};
+    static const uint8_t getter_hash[32]={0xa4,0x0b,0x1d,0xc1,0x46,0xb2,0x83,0x7e,0x9d,0x5d,0xd9,0x20,0x11,0x27,0x01,0x3c,
+        0x89,0x77,0xc8,0xb3,0x79,0x03,0x53,0x4f,0x41,0x89,0x97,0xd1,0x05,0xe4,0x6f,0x69};
+    if (!probe_code_matches(MOD_MAIN_BASE+0x2e27b0ull,npc_update_hash) ||
+        !visibility_code_matches(MOD_MAIN_BASE+0x1b87b50ull,36,setter_hash) ||
+        !visibility_code_matches(MOD_MAIN_BASE+0x1b9ce0ull,24,getter_hash)) return;
+    Cpu saved=*c; fenv_t fp;
+    if (fegetenv(&fp)) return;
+    unsigned target=wanted ? 0 : 1;
+    inside=1;
+    rt_call(c,MOD_MAIN_BASE+0x1b87b50ull,2,controller,(uint64_t)target);
+    *c=saved;
+    if (fesetenv(&fp)) rt_fatal("coop native model visibility: cannot restore host floating-point environment");
+    inside=0;
+    uint8_t after=255;
+    uint64_t rechecked; uint32_t same_generation;
+    int matched=coop_adapter_npc_probe_model(npc_motion.actor,&rechecked,&same_generation) && rechecked==controller &&
+        same_generation==generation && read_guest(controller+0x9c,&after,1) && after==target;
+    npc_visibility.calls++; npc_visibility.controller=controller;
+    npc_visibility.hidden=target==0; npc_visibility.done=target!=0 || !matched;
+    rt_log("coop native model visibility: call %u, phase %s, generation %u, actor id %d, world us %lld, before %u, requested %u, after %u, owner matched %u; native API, original CPU restored",
+        npc_visibility.calls,target ? "restore" : "hide",generation,id,(long long)frame_step_world_us(),
+        visible,target,after,matched);
+}
+
 static void npc_probe_update_locked(Cpu *c) {
     unsigned mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE);
     int peer_mode = coop_native_probe_peer_enabled();
@@ -275,10 +358,8 @@ static void npc_probe_update_locked(Cpu *c) {
     }
     // Keep one call in reserve to stop the same live body if timing or the update budget is exceeded.
     int stop_early = npc_motion.calls >= (peer_mode ? 255u : 95u) || (npc_motion.calls && now > npc_motion.last_us + 250000);
-    const uint8_t update_hash[32] = {0x94,0x53,0x6d,0xb8,0x69,0xd0,0x79,0x8e,0x6a,0xd3,0xd9,0xf1,0xb3,0x6b,0x09,0x23,
-        0x96,0xd0,0x0c,0xc7,0x31,0x4d,0xee,0x10,0x59,0x64,0x10,0xbd,0x7c,0xa5,0xa6,0x56};
     if (!probe_code_matches(MOD_MAIN_BASE + 0x567750ull, npc_velocity_hash) ||
-        !probe_code_matches(MOD_MAIN_BASE + 0x2e27b0ull, update_hash)) return;
+        !probe_code_matches(MOD_MAIN_BASE + 0x2e27b0ull, npc_update_hash)) return;
     // Preserve native vertical motion; the experiment requests only bounded horizontal travel.
     float previous[3], velocity[3];
     if (!read_guest(body + 0xf8, previous, sizeof previous)) return;
@@ -349,6 +430,7 @@ void coop_native_probe_npc_update(Cpu *c) {
                         !coop_native_probe_peer_enabled())) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+    npc_visibility_update_locked(c);
     npc_probe_update_locked(c);
     __atomic_store_n(&npc_motion_busy, 0, __ATOMIC_RELEASE);
 }

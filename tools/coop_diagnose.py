@@ -514,6 +514,26 @@ def native_figure_summary(lines):
         ground_contact_verified=False,lifecycle_verified=False,human_peer_verified=False)
 
 
+def native_visibility_summary(lines,figure):
+    events=[]
+    for line in lines:
+        if m:=re.search(r'coop native model visibility: call (\d+), phase (hide|restore), generation (\d+), actor id (-?\d+), world us (\d+), before ([01]), requested ([01]), after (\d+), owner matched ([01]);',line):
+            events.append(dict(call=int(m[1]),phase=m[2],generation=int(m[3]),actor_id=int(m[4]),world_us=int(m[5]),
+                before=int(m[6]),requested=int(m[7]),after=int(m[8]),owner_matched=bool(int(m[9]))))
+    owned={(p['generation'],p['actor_id']) for p in figure.get('samples',[])}
+    aborted=any('coop native model visibility: aborted;' in line for line in lines)
+    pair=len(events)==2 and [e['call'] for e in events]==[1,2] and [e['phase'] for e in events]==['hide','restore']
+    matched=pair and all(e['owner_matched'] and (e['generation'],e['actor_id']) in owned for e in events) and len(owned)==1
+    applied=matched and [(e['before'],e['requested'],e['after']) for e in events]==[(1,0,0),(0,1,1)]
+    ordered=pair and events[0]['world_us']<events[1]['world_us']
+    duration=(events[1]['world_us']-events[0]['world_us'])/1e6 if ordered else 0
+    covered=sum(events[0]['world_us']<=p.get('world_us',-1)<=events[1]['world_us'] for p in figure.get('samples',[])) if ordered else 0
+    return dict(acceptance_passed=bool(figure.get('acceptance_passed') and applied and ordered and not aborted and duration>=2 and covered>=30),
+        events=events,aborted=aborted,native_flag_control_verified=bool(applied and ordered and not aborted),
+        hidden_world_seconds=duration,hidden_figure_samples=covered,
+        visual_replacement_verified=False,native_retirement_verified=False,human_peer_verified=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -550,11 +570,15 @@ def main():
                        help='test bounded ENet loopback velocities, lease-expiry stops and same-session recovery')
     ap.add_argument('--native-npc-figure',action='store_true',
                     help='use the scoped native NPC origin for the Link figure; requires --native-npc-peer-motion')
+    ap.add_argument('--native-npc-visibility',action='store_true',
+                    help='one guarded native hide/restore pair; requires --native-npc-figure')
     ap.add_argument('--require-spawn-retirement', action='store_true',
                     help='require the injected actor itself to retire with its resource and allocator correlation')
     ap.add_argument('--require-spawn-fall', action='store_true',
                     help='require gradual native descent from the owned origin and subsequent positional rest')
     args = ap.parse_args()
+    if args.native_npc_visibility and not args.native_npc_figure:
+        ap.error('--native-npc-visibility requires --native-npc-figure and its scoped ENet experiment')
     if args.native_npc_figure:
         if not args.native_npc_peer_motion or args.without_figure:
             ap.error('--native-npc-figure requires --native-npc-peer-motion and the figure asset')
@@ -640,7 +664,8 @@ def main():
                 raise SystemExit('Private equipment library differs from its manifest')
         (profile/'coop-gear-probe.tsv').write_bytes(gear_probe_mapping(manifest).encode('ascii'))
     if spawning:
-        marker = ('isolated-npc-body-figure-v1\n' if args.native_npc_figure else
+        marker = ('isolated-npc-native-visibility-v1\n' if args.native_npc_visibility else
+                  'isolated-npc-body-figure-v1\n' if args.native_npc_figure else
                   'isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
                   'isolated-npc-consumer-velocity-v1\n' if args.native_npc_consumer_motion else
                   'isolated-npc-velocity-v1\n' if args.native_npc_motion else 'isolated-npc-road-001-v1\n' if npc else
@@ -650,7 +675,7 @@ def main():
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -834,6 +859,10 @@ def main():
     if args.native_npc_figure:
         report['native_body_figure']=native_figure_summary(lines)
         report['acceptance_checks']['native_figure_origin']=report['native_body_figure']['acceptance_passed']
+    if args.native_npc_visibility:
+        report['native_body_figure'].pop('native_appearance_suppressed',None)
+        report['native_model_visibility']=native_visibility_summary(lines,report['native_body_figure'])
+        report['acceptance_checks']['native_model_visibility']=report['native_model_visibility']['acceptance_passed']
     if args.equipment_graph:
         report['equipment_graph']=gear_graph_summary(lines)
         report['acceptance_checks']['equipment_graph_ran']=report['equipment_graph']['search_completed']

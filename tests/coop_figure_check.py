@@ -18,6 +18,9 @@ static uint8_t *bytes;
 static uint64_t size, clock_ms=1000;
 static GfxFigure sent;
 static int count;
+static uint32_t published_generation;
+static int32_t published_actor;
+static uint64_t published_ns;
 const RtConfig *rt_config(void) { static RtConfig cfg={.profile="synthetic"}; return &cfg; }
 void rt_log(const char *fmt,...) { (void)fmt; }
 void plat_mutex_lock(PlatMutex *lock) { (void)lock; }
@@ -32,6 +35,9 @@ void astc_decode_ldr(const uint8_t *blocks,uint32_t w,uint32_t h,uint32_t bw,uin
 }
 int gfx_figures_wanted(void) { return link_figure()!=NULL; }
 void gfx_figures_set(const GfxFigure *figures,int n) { count=n; if(n) sent=figures[0]; }
+void coop_native_probe_figure_publish(uint32_t generation,int32_t actor,uint64_t ns) {
+    published_generation=generation; published_actor=actor; published_ns=ns;
+}
 int main(int argc,char **argv) {
     assert(argc==2); FILE *f=fopen(argv[1],"rb"); assert(f);
     fseek(f,0,SEEK_END); size=(uint64_t)ftell(f); rewind(f); bytes=malloc(size); assert(bytes);
@@ -62,8 +68,10 @@ int main(int argc,char **argv) {
     snapshot.peer_native_generation=3; snapshot.peer_native_actor_id=17;
     coop_figure_publish(&snapshot);
     assert(sent.feet[0]==10 && sent.feet[1]==20 && sent.feet[2]==30); // no diagnostic height/scale correction
+    assert(published_generation==3 && published_actor==17 && published_ns==1000);
     snapshot.peer_native_body=0;
     snapshot.has_peer_pos=0; coop_figure_publish(&snapshot); assert(count==0);
+    assert(!published_generation && !published_ns);
     snapshot.has_peer_pos=1; snapshot.peer_visual_flags=0;
     coop_figure_publish(&snapshot); float before=sent.frame;
     clock_ms+=100; coop_figure_publish(&snapshot); assert(sent.frame>before); // idle clock advances

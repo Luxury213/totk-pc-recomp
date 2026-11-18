@@ -53,7 +53,9 @@ objects. Do not repeat extraction, full generation or shader warm-up merely to r
   slot-validated 144-byte extension and clears stale/unavailable equipment. No inventory mutation is added.
 - Selective local preparation of one to sixteen equipment models using the pinned MIT converter; the tested
   weapon/shield/bow library is 203,876 bytes. It is private and not yet loaded into rendering profiles.
-- An extracted, textured, animated Link figure with black hair. It remains separate from the native NPC.
+- An extracted, textured, animated Link figure with black hair; ordinary presence remains separate from the NPC.
+- Isolated mode 8 associates that figure with the owned NPC origin and suppresses its original mesh through
+  a guarded native controller call; one hide/restore pair passed with native movement and inspected images.
 - One owned native `Npc_Road_001`, created by the isolated authentic weapon-drop experiment.
 - Mode 6 (`--native-npc-peer-motion`): a loopback ENet peer supplies horizontal velocities. A one-slot bridge
   checks session/player and remote/local generations. A 200 ms receive-time lease expires even if the worker
@@ -159,6 +161,20 @@ Body-origin slice checks passed: adapter and figure suites, native probe suite, 
 settings documentation, all six runtime probes and full/staged content checks. Protocol v5 is unchanged.
 Linux, loaded-layer gameplay, heavy-scene performance and two-PC Internet acceptance remain unrun.
 
+The visibility slice then identified the original `OneShotSetOnlyModelVisible` getter/setter path, and a
+read-only copied-save audit matched the owned NPC controller's actor link and vtable `main+0x3673b58`.
+Separate mode 8 passed a 28-world-second run (`run-bca5cca87a`): one native hide and one restore, 6.499937
+world seconds hidden across 195 figure samples, 196 exact native-origin submissions, native movement/
+expiry/rest/recovery gates, zero process exits and unchanged source saves. Inspected full-size images show
+the black-haired Link without the NPC mesh while hidden, followed by the original NPC after peer exit.
+The actor itself remains alive. Grass obscures the feet. The automatic report verifies flags and correlation;
+it deliberately leaves pixel verification and native retirement false. See the native notes for guards/limits.
+
+Visibility-slice checks passed: adapter/figure/native suites, 36 diagnostic report tests, all six runtime
+probes, settings documentation and full/staged content checks. A changed owner/type/epoch, future/stale
+publication, initially hidden controller or incompatible getter/setter/update code cannot authorize a hide.
+General native capabilities and protocol v5 remain unchanged. No new Internet/performance acceptance.
+
 ## Reference review on 2026-11-14
 
 | Reference | Verified state | Use and limit |
@@ -174,9 +190,11 @@ The source/behavior distinctions are intentional. No GPL implementation was inco
 
 ## Ordered work for the next session
 
-1. **Complete native body/appearance binding and ground contact.** Ordinary presence has no collider; isolated
-   mode 7 now follows the validated NPC's native origin, but retains its overlapping original appearance.
-   Verify an ownership-scoped native visibility/model operation before suppressing that appearance. The user reported
+1. **Complete native lifecycle and ground-contact acceptance.** Ordinary presence has no collider; mode 7 follows
+   the validated NPC's native origin, and mode 8 now suppresses/restores only that NPC's original model through
+   the inspected native controller API. Retain its bounded publication lease, identity/code guards and restore
+   fallback. Next verify native retirement and repeatable creation across disconnect/load/reconnect, then
+   unobstructed feet on flat ground, slopes and steps. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship
    on flat ground, slopes and steps, extending the new copied-origin association through verified engine
