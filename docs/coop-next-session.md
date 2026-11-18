@@ -41,6 +41,7 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `62d1ace` | Bound original equipment actor/model observations and prepare selected models |
 | `3fc1151` | Anchor the separately armed figure to a copied native NPC origin |
 | `53d5067` | Suppress and restore that NPC's original model through its native controller |
+| `a41fefc` | Retire the owned NPC in its verified native worker context with resource/allocator correlation |
 
 The current retirement slice adds mode 9 and a complete copied-save creation/movement/visibility/removal
 diagnostic. Its evidence and limitations below supersede earlier statements that native removal is unverified;
@@ -200,6 +201,28 @@ native retirement gate but failed overall movement acceptance when an extra rece
 diagonal segment. The successful repeat changed no code or thresholds. Do not weaken the receive-time lease.
 One retirement per fresh process does not prove repeated in-session creation or permission to reuse static
 creation arguments/blackboard storage. Check completion/rejection/cancellation ownership before adding reuse.
+
+### Network rejection and hosted CI follow-up (November 18)
+
+The co-op workflow for `a41fefc` failed at the content-incompatibility assertion in the 100 ms impairment
+case. Earlier `53d5067` and `3fc1151` runs succeeded. The failed workflow stopped before native retirement
+tests; it does not invalidate the separate copied-save evidence above. An unchanged local rerun passed,
+then repeated and varied-loss diagnostics motivated stronger endpoint/state evidence.
+
+Two reproducible defects were isolated. The UDP test bridge routed responses to the most recent client,
+even when they belonged to an earlier endpoint; a two-client socket fixture failed before the bridge gained
+separate upstream sockets. The runtime also reset an incompatible peer with an unacknowledged immediate
+disconnect. Deliberately dropping that datagram left the guest negotiating; the new regression failed on
+that worker. Rejections now use ENet's acknowledged disconnect, keep the peer for bounded retransmission,
+ignore application traffic while closing and preserve incompatibility after completion/timeout. Explicit
+configuration or a new connection initializes the state again. No protocol/gameplay capabilities changed.
+
+The strengthened suite checks both peers, retains failure counters, and includes forced first-disconnect loss
+for content and old-protocol rejection plus a compatible reconnect. Its proxy endpoint isolation has separate
+socket tests. Five-second rejection/application timeouts and the 200 ms native-motion lease were not enlarged.
+One later hosted success alone should not be described as exhaustive resolution of every intermittent timing
+failure; retain failures and their endpoint diagnostics if they recur. Continue native creation-storage and
+repeated actor lifecycle work after the transport checks.
 
 ## Reference review on 2026-11-14
 

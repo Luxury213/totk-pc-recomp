@@ -24,7 +24,7 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 | Area | Verified result | Remaining gate |
 | --- | --- | --- |
 | Phase 1: isolated build | 1.4.3 module hashes, separate runtime/executable, dedicated profiles, selftest/config probe | Each participant supplies their own local build |
-| Phase 2: transport | ENet worker, protocol v5, reliable labels, 30 Hz pose, compatibility/freshness and local impairment tests | Real two-PC private-VPN validation; gameplay authority is not implemented |
+| Phase 2: transport | ENet worker, protocol v5, reliable labels, 30 Hz pose, compatibility/freshness and local impairment tests; acknowledged incompatibility rejection and isolated proxy client endpoints | Real two-PC private-VPN validation; gameplay authority is not implemented |
 | Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
 | Phase 2: final body pose | 58-bone capture/encoding/interpolation/application; one-game ENet echo passed with 387 body samples and unchanged source saves | Equipment, full run/jump/attack fidelity and binding to a native body remain pending |
 | Phase 2: equipped identities | Bounded pouch observation and optional weapon/shield/bow names; live echo received 394 equipped snapshots; selected models prepared privately | No gear placement/rendering, fused additions, bow-string replication or inventory transaction |

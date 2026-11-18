@@ -112,8 +112,12 @@ static void worker(void *arg) {
             while (budget-- && (serviced = enet_host_service(host, &event, 0)) > 0) {
                 if (event.type == ENET_EVENT_TYPE_CONNECT) {
                     if (config.mode == 1 && event.data != COOP_PROTOCOL) {
-                        enet_peer_disconnect_now(event.peer, 2);
-                        peer = NULL; coop_session_disconnected(&session);
+                        // Keep ENet's peer until the acknowledged disconnect completes, so a lost rejection
+                        // is retransmitted rather than leaving the other UI stuck negotiating.
+                        peer = event.peer; began = now;
+                        enet_peer_timeout(peer, 8, 3000, 5000);
+                        enet_peer_disconnect(peer, 2);
+                        coop_session_disconnected(&session);
                         session.state = COOP_SESSION_INCOMPATIBLE; view.rejected++;
                         snprintf(view.error, sizeof view.error, "Incompatible co-op protocol; rebuild both players");
                         continue;
@@ -138,6 +142,10 @@ static void worker(void *arg) {
                         view.packets_tx += send_message(peer, &hello, 1);
                     }
                 } else if (event.type == ENET_EVENT_TYPE_RECEIVE) {
+                    if (session.state == COOP_SESSION_INCOMPATIBLE) {
+                        enet_packet_destroy(event.packet);
+                        continue;
+                    }
                     CoopMessage m, reply;
                     int decoded = coop_wire_decode(&m, event.packet->data, event.packet->dataLength);
                     int reliable = !!(event.packet->flags & ENET_PACKET_FLAG_RELIABLE);
@@ -152,7 +160,8 @@ static void worker(void *arg) {
                         if (result == COOP_RX_REPLY) view.packets_tx += send_message(peer, &reply, 1);
                         if (result == COOP_RX_REJECT) {
                             snprintf(view.error, sizeof view.error, "Incompatible game, content or capabilities");
-                            enet_peer_disconnect_now(event.peer, 2); peer = NULL;
+                            began = now;
+                            enet_peer_disconnect(event.peer, 2);
                         }
                     }
                     enet_packet_destroy(event.packet);
@@ -167,7 +176,9 @@ static void worker(void *arg) {
             }
             if (peer && ((session.negotiated && now - last_rx > TIMEOUT_NS) ||
                          (!session.negotiated && now - began > TIMEOUT_NS))) {
-                enet_peer_disconnect_now(peer, 3); peer = NULL; coop_session_disconnected(&session);
+                if (session.state == COOP_SESSION_INCOMPATIBLE) enet_peer_reset(peer);
+                else enet_peer_disconnect_now(peer, 3);
+                peer = NULL; coop_session_disconnected(&session);
             }
             if (peer && session.negotiated) {
                 int reliable = sent_generation != local.generation;

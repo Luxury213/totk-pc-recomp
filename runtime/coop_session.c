@@ -87,7 +87,10 @@ int coop_session_notice(CoopSession *s, uint64_t id, const char *text, CoopMessa
 }
 
 void coop_session_disconnected(CoopSession *s) {
+    int incompatible = s->state == COOP_SESSION_INCOMPATIBLE;
     s->negotiated = s->have_remote = s->have_sequence = 0;
     s->peer_generation = 0; s->last_event = 0; s->peer_player = 0;
-    s->state = s->host ? COOP_SESSION_WAITING : COOP_SESSION_DISCONNECTED;
+    // Transport completion/timeout does not erase an incompatibility already shown to the user.
+    // A new connection or explicit configuration initializes the session again.
+    s->state = incompatible ? COOP_SESSION_INCOMPATIBLE : s->host ? COOP_SESSION_WAITING : COOP_SESSION_DISCONNECTED;
 }

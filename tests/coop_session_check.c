@@ -251,6 +251,8 @@ int main(void) {
     negotiate(&h,&c,555,COOP_CAP_PRESENCE);
     coop_session_hello(&c,&m); m.content_id[0]^=1;
     assert(coop_session_receive(&h,&m,&reply)==COOP_RX_REJECT);
+    coop_session_disconnected(&h);
+    assert(h.state==COOP_SESSION_INCOMPATIBLE && !h.negotiated && !h.have_remote && !h.peer_player);
     negotiate(&h,&c,666,COOP_CAP_PRESENCE);
     coop_session_sample(&h,&sample); coop_session_sample(&c,&sample);
     coop_session_state_message(&c,&m); assert(coop_session_receive(&h,&m,&reply)==COOP_RX_ACCEPT);

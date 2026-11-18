@@ -463,6 +463,7 @@ Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or
 ```powershell
 .venv/Scripts/python.exe tests/coop_check.py --cc C:/msys64/ucrt64/bin/clang.exe --deps C:/msys64/ucrt64/include
 .venv/Scripts/python.exe tests/coop_network_check.py --cc C:/msys64/ucrt64/bin/clang.exe
+.venv/Scripts/python.exe tests/coop_network_proxy_check.py
 .venv/Scripts/python.exe tests/coop_figure_check.py
 .venv/Scripts/python.exe tests/coop_equipment_check.py
 .venv/Scripts/python.exe tests/coop_gear_prepare_check.py
@@ -480,8 +481,17 @@ git diff --check
 
 The network suite uses two real workers, 50 reliable labels, stale observation handling, incompatibility and
 reconnect checks. A local UDP proxy repeats it at nominal 100/200 ms RTT with 5% configured random loss, jitter,
-duplication and reordering. Aggregate results stay in `build/tests/coop-network-results.json`; this is not Internet
-acceptance. Native/figure tests use authored fixtures, and diagnostic tests reject false-positive acceptance.
+duplication and reordering. Both UIs must retain content incompatibility after transport completion, and the
+legacy-protocol peer must receive the rejection reason. Two additional 100 ms cases deliberately discard the
+first server disconnect for content/protocol rejection; the content case then reconnects a compatible guest.
+The runtime retains ENet's peer for acknowledged disconnect retransmission, ignores application packets while
+rejecting and bounds that attempt to five seconds. Reconfiguration/new connection clears the retained error.
+
+The proxy keeps a separate upstream UDP endpoint for each client, so replies to a closed/replaced client cannot
+be delivered to the newest one. The socket-only proxy tests reproduce that earlier routing failure and verify
+the deliberate loss. Failed scenarios also write their counters to `build/tests/coop-network-results.json` and
+the CI log before propagating the failure. This is not Internet acceptance. Native/figure tests use authored
+fixtures, and diagnostic tests reject false-positive acceptance.
 The Windows co-op workflow runs synthetic checks; hosted CI evidence requires a push/PR.
 
 Changes to CPU headers or the lifter require the differential checks in [building.md](building.md). Keep native

@@ -45,15 +45,77 @@ static void connected(CoopNet *h,CoopNet *c) {
     fprintf(stderr,"connection timeout: host=%d %s client=%d %s\n",a.state,a.error,b.state,b.error);
     abort();
 }
+static void rejected(CoopNet *h,CoopNet *c) {
+    uint64_t until=plat_now_ns()+5000000000ull;
+    CoopNetSnapshot a,b;
+    do {
+        coop_net_snapshot(h,&a); coop_net_snapshot(c,&b);
+        assert(!a.negotiated && !a.has_remote && !b.negotiated && !b.has_remote);
+        if(a.state==COOP_SESSION_INCOMPATIBLE && b.state==COOP_SESSION_INCOMPATIBLE) break;
+        plat_sleep_ms(10);
+    }while(plat_now_ns()<until);
+    if(a.state!=COOP_SESSION_INCOMPATIBLE || b.state!=COOP_SESSION_INCOMPATIBLE)
+        fprintf(stderr,"content rejection timeout: host state=%d tx=%u rx=%u rejected=%u error=%s; client state=%d tx=%u rx=%u rejected=%u error=%s\n",
+            a.state,a.packets_tx,a.packets_rx,a.rejected,a.error,b.state,b.packets_tx,b.packets_rx,b.rejected,b.error);
+    assert(a.state==COOP_SESSION_INCOMPATIBLE && b.state==COOP_SESSION_INCOMPATIBLE);
+    // A late transport completion must not erase the reason already published to either UI.
+    until=plat_now_ns()+600000000ull;
+    do {
+        coop_net_snapshot(h,&a); coop_net_snapshot(c,&b);
+        assert(a.state==COOP_SESSION_INCOMPATIBLE && b.state==COOP_SESSION_INCOMPATIBLE);
+        assert(!a.negotiated && !a.has_remote && !b.negotiated && !b.has_remote);
+        plat_sleep_ms(10);
+    }while(plat_now_ns()<until);
+}
+static void rejected_protocol(CoopNet *h,uint16_t port) {
+    ENetHost *legacy=enet_host_create(NULL,1,2,0,0); assert(legacy);
+    ENetAddress address={.port=port}; assert(enet_address_set_host_ip(&address,"127.0.0.1")==0);
+    assert(enet_host_connect(legacy,&address,2,COOP_PROTOCOL-1));
+    uint64_t until=plat_now_ns()+5000000000ull;
+    int disconnected=0; CoopNetSnapshot view;
+    do {
+        ENetEvent event;
+        while(enet_host_service(legacy,&event,0)>0) {
+            if(event.type==ENET_EVENT_TYPE_RECEIVE) { enet_packet_destroy(event.packet); assert(!"legacy peer received application state"); }
+            if(event.type==ENET_EVENT_TYPE_DISCONNECT) { assert(event.data==2); disconnected=1; }
+        }
+        enet_host_flush(legacy); coop_net_snapshot(h,&view);
+        if(view.state==COOP_SESSION_INCOMPATIBLE && disconnected) break;
+        plat_sleep_ms(10);
+    }while(plat_now_ns()<until);
+    if(!disconnected || view.state!=COOP_SESSION_INCOMPATIBLE)
+        fprintf(stderr,"protocol rejection timeout: state=%d rejected=%u disconnected=%d error=%s\n",
+            view.state,view.rejected,disconnected,view.error);
+    assert(disconnected && view.state==COOP_SESSION_INCOMPATIBLE && view.rejected && !view.has_remote);
+    assert(strstr(view.error,"protocol")); enet_host_destroy(legacy);
+}
 int main(int argc,char **argv) {
-    assert(argc==3 || argc==4); uint16_t port=(uint16_t)atoi(argv[1]);
+    assert(argc==3 || argc==4 || argc==5); uint16_t port=(uint16_t)atoi(argv[1]);
     uint64_t id1=0,id2=0;
     assert(coop_net_player_id(argv[2],&id1)); assert(coop_net_player_id(argv[2],&id2)); assert(id1 && id1==id2);
     CoopNet *h=coop_net_create(),*c=coop_net_create(); assert(h && c);
     CoopNetConfig a={.mode=1,.port=port,.game_version=143,.player=11,.capabilities=COOP_CAP_PRESENCE};
     a.content_id[0]=99;
     CoopNetConfig b=a; b.mode=2; b.player=22; strcpy(b.ip,"127.0.0.1");
-    if(argc==4) b.port=(uint16_t)atoi(argv[3]);
+    if(argc>=4) b.port=(uint16_t)atoi(argv[3]);
+    if(argc==5) {
+        if(!strcmp(argv[4],"reject-protocol-loss")) {
+            coop_net_configure(h,&a); plat_sleep_ms(100);
+            rejected_protocol(h,b.port);
+            coop_net_destroy(c); coop_net_destroy(h);
+            puts("co-op ENet: old protocol rejection survives a lost disconnect passed");
+            return 0;
+        }
+        assert(!strcmp(argv[4],"reject-loss"));
+        b.content_id[0]^=1;
+        coop_net_configure(h,&a); plat_sleep_ms(100); coop_net_configure(c,&b);
+        rejected(h,c);
+        b.content_id[0]^=1; coop_net_configure(c,&b);
+        connected(h,c); // a valid connection can follow rejection on the still-running host
+        coop_net_destroy(c); coop_net_destroy(h);
+        puts("co-op ENet: both peers retain incompatibility after a lost disconnect, then reconnect passed");
+        return 0;
+    }
     coop_net_configure(h,&a); plat_sleep_ms(100); coop_net_configure(c,&b);
     connected(h,c); CoopNetSnapshot before; coop_net_snapshot(h,&before);
     for(unsigned i=0;i<50;i++) {
@@ -85,26 +147,11 @@ int main(int argc,char **argv) {
     h=coop_net_create(); c=coop_net_create(); assert(h && c);
     b.content_id[0]^=1;
     coop_net_configure(h,&a); plat_sleep_ms(100); coop_net_configure(c,&b);
-    until=plat_now_ns()+5000000000ull;
-    do { coop_net_snapshot(h,&view); if(view.state==COOP_SESSION_INCOMPATIBLE) break; plat_sleep_ms(10); }while(plat_now_ns()<until);
-    assert(view.state==COOP_SESSION_INCOMPATIBLE && !view.has_remote);
+    rejected(h,c);
     coop_net_destroy(c); coop_net_destroy(h);
     // A previous protocol must fail visibly at connection, before any application state is accepted.
     h=coop_net_create(); assert(h); coop_net_configure(h,&a); plat_sleep_ms(100);
-    ENetHost *legacy=enet_host_create(NULL,1,2,0,0); assert(legacy);
-    ENetAddress address={.port=port}; assert(enet_address_set_host_ip(&address,"127.0.0.1")==0);
-    assert(enet_host_connect(legacy,&address,2,COOP_PROTOCOL-1));
-    until=plat_now_ns()+5000000000ull;
-    do {
-        ENetEvent event;
-        while(enet_host_service(legacy,&event,0)>0)
-            if(event.type==ENET_EVENT_TYPE_RECEIVE) enet_packet_destroy(event.packet);
-        enet_host_flush(legacy); coop_net_snapshot(h,&view);
-        if(view.state==COOP_SESSION_INCOMPATIBLE) break;
-        plat_sleep_ms(10);
-    }while(plat_now_ns()<until);
-    assert(view.state==COOP_SESSION_INCOMPATIBLE && view.rejected && !view.has_remote);
-    assert(strstr(view.error,"protocol")); enet_host_destroy(legacy); coop_net_destroy(h);
+    rejected_protocol(h,b.port); coop_net_destroy(h);
     puts("co-op ENet: independent movement/rotation/animation, 50 reliable notices, stale observations, reconnect and incompatible content passed");
     return 0;
 }
