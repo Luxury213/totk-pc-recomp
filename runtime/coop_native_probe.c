@@ -50,12 +50,28 @@ static ProbeBlackboard second_bb;
 static const char *owned_name = "Weapon_Sword_101";
 static unsigned cycle_claim(void);
 static void cycle_release(void);
+static const unsigned char request_hash[32] = {
+    0xf8,0x23,0x0f,0xd5,0xeb,0xab,0x93,0x91,0x09,0xe4,0x71,0x48,0x55,0x34,0xa3,0x7b,
+    0xbb,0xd8,0x60,0x51,0xeb,0xe1,0x80,0xd2,0x64,0x30,0x40,0x9e,0x88,0x31,0x63,0x49
+};
+
+static void prepare_owned(ProbeCreateArg *arg,ProbeBlackboard *bb,const float origin[3]) {
+    memset(arg,0,sizeof *arg); memset(bb,0,sizeof *bb);
+    arg->position[0]=origin[0]+2; arg->position[1]=origin[1]+2; arg->position[2]=origin[2];
+    arg->rotation[0]=arg->rotation[4]=arg->rotation[8]=1;
+    arg->scale[0]=arg->scale[1]=arg->scale[2]=1;
+    arg->name=""; bb->size=32; bb->params=bb->buffer;
+    arg->blackboard=bb; arg->transform_flags=7;
+    rt_log("coop native spawn owned: pos %.6f %.6f %.6f, empty blackboard, actor dependencies absent; process-lifetime request storage",
+           arg->position[0],arg->position[1],arg->position[2]);
+}
 
 // Written only by the diagnostic runner after copying and verifying its isolated profile.
 void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (!mode) return;
     char path[PLAT_PATH_MAX * 3];
-    const char *marker = mode == COOP_NATIVE_PROBE_NPC_CYCLES ? "isolated-npc-two-cycles-v1\n" :
+    const char *marker = mode == COOP_NATIVE_PROBE_NPC_SESSION ? "isolated-npc-session-create-v1\n" :
+                         mode == COOP_NATIVE_PROBE_NPC_CYCLES ? "isolated-npc-two-cycles-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_RETIREMENT ? "isolated-npc-native-retirement-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_VISIBILITY ? "isolated-npc-native-visibility-v1\n" :
                          mode == COOP_NATIVE_PROBE_NPC_FIGURE ? "isolated-npc-body-figure-v1\n" :
@@ -70,7 +86,8 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
          mode != COOP_NATIVE_PROBE_NPC && mode != COOP_NATIVE_PROBE_NPC_MOTION &&
          mode != COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION && mode != COOP_NATIVE_PROBE_NPC_PEER_MOTION &&
          mode != COOP_NATIVE_PROBE_NPC_FIGURE && mode != COOP_NATIVE_PROBE_NPC_VISIBILITY &&
-         mode != COOP_NATIVE_PROBE_NPC_RETIREMENT && mode != COOP_NATIVE_PROBE_NPC_CYCLES)) goto denied;
+         mode != COOP_NATIVE_PROBE_NPC_RETIREMENT && mode != COOP_NATIVE_PROBE_NPC_CYCLES &&
+         mode != COOP_NATIVE_PROBE_NPC_SESSION)) goto denied;
     int length = snprintf(path, sizeof path, "%s/coop-native-probe.txt", profile);
     if (length < 0 || (size_t)length >= sizeof path) goto denied;
     FILE *f = fopen(path, "rb");
@@ -80,7 +97,9 @@ void coop_native_probe_init(const char *profile, int timed_run, int mode) {
     if (n != strlen(marker) || memcmp(content, marker, n)) goto denied;
     owned_name = mode >= COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101";
     __atomic_store_n(&armed, (unsigned)mode, __ATOMIC_RELEASE);
-    rt_log("coop native spawn probe: armed for one authentic weapon drop in the isolated timed profile, arguments %s",
+    rt_log("coop native spawn probe: armed for %s in the isolated timed profile, arguments %s",
+           mode==COOP_NATIVE_PROBE_NPC_SESSION ? "one session-driven creation" :
+           mode==COOP_NATIVE_PROBE_NPC_CYCLES ? "two authentic weapon drops" : "one authentic weapon drop",
            mode == COOP_NATIVE_PROBE_CLONE ? "borrowed" : "owned");
     return;
 denied:
@@ -110,7 +129,7 @@ static int drop_name_matches(uint64_t at,int cycles) {
 void coop_native_probe_request(Cpu *c) {
     unsigned mode = __atomic_load_n(&armed, __ATOMIC_ACQUIRE);
     int cycles = mode == COOP_NATIVE_PROBE_NPC_CYCLES;
-    if (!c || inside || !__atomic_load_n(&armed, __ATOMIC_ACQUIRE) ||
+    if (!c || inside || !mode || mode==COOP_NATIVE_PROBE_NPC_SESSION ||
         (__atomic_load_n(&attempted, __ATOMIC_RELAXED) && !cycles) || rt_game_version != 143 ||
         c->x[30] != MOD_MAIN_BASE + 0x20a57d8ull || frame_step_world_us() < 6000000) return;
     // Match the locally observed drop path, including all three stacked arguments. Never reuse the producer's
@@ -125,12 +144,8 @@ void coop_native_probe_request(Cpu *c) {
         (c->sp & 15) || !read_guest(c->sp, stack, sizeof stack) || (stack[0] & 255) || stack[1] || stack[2] ||
         !read_guest(MOD_MAIN_BASE + 0x599670ull, code, sizeof code)) return;
     // Hash the verified request prologue rather than publishing bytes derived from the game.
-    static const unsigned char expected[32] = {
-        0xf8,0x23,0x0f,0xd5,0xeb,0xab,0x93,0x91,0x09,0xe4,0x71,0x48,0x55,0x34,0xa3,0x7b,
-        0xbb,0xd8,0x60,0x51,0xeb,0xe1,0x80,0xd2,0x64,0x30,0x40,0x9e,0x88,0x31,0x63,0x49
-    };
     rt_sha256(code, sizeof code, hash);
-    if (memcmp(hash, expected, sizeof hash)) return;
+    if (memcmp(hash, request_hash, sizeof hash)) return;
     float origin[3];
     if (mode != COOP_NATIVE_PROBE_CLONE) {
         if (!read_guest(c->x[2], origin, sizeof origin)) return;
@@ -153,22 +168,9 @@ void coop_native_probe_request(Cpu *c) {
     if (mode != COOP_NATIVE_PROBE_CLONE) {
         ProbeCreateArg *arg=cycle==2 ? &second_arg : &owned_arg;
         ProbeBlackboard *bb=cycle==2 ? &second_bb : &owned_bb;
-        memset(arg, 0, sizeof *arg);
-        memset(bb, 0, sizeof *bb);
-        arg->position[0] = origin[0] + 2;
-        arg->position[1] = origin[1] + 2;
-        arg->position[2] = origin[2];
-        arg->rotation[0] = arg->rotation[4] = arg->rotation[8] = 1;
-        arg->scale[0] = arg->scale[1] = arg->scale[2] = 1;
-        arg->name = "";
-        bb->size = 32;
-        bb->params = bb->buffer;
-        arg->blackboard = bb;
-        arg->transform_flags = 7;
+        prepare_owned(arg,bb,origin);
         name_ref = (uintptr_t)&owned_name;
         create_arg = (uintptr_t)arg;
-        rt_log("coop native spawn owned: pos %.6f %.6f %.6f, empty blackboard, actor dependencies absent; process-lifetime request storage",
-               arg->position[0], arg->position[1], arg->position[2]);
     }
     // Execute before the intercepted function caches registers or changes SP. Its existing stack arguments are
     // zero; the native callee owns its frame below SP and synchronously copies/acquires the original argument's
@@ -210,6 +212,39 @@ static struct {
 } npc_visibility;
 static CoopRetirement npc_retirement;
 static int32_t cycle_actor_id=-1;
+// A single copied join candidate. The observer never invokes native code or puts guest pointers here.
+static struct {
+    uint64_t session,player,received_ns,sender_ns;
+    uint32_t local_generation,remote_generation;
+    unsigned present,issued,revoked;
+} npc_session;
+
+static void session_offer_locked(const CoopNetSnapshot *peer,uint32_t generation,uint64_t now) {
+    int valid=peer->negotiated && peer->has_remote && peer->session && peer->peer_player && generation &&
+        peer->remote.generation && (peer->remote.flags&COOP_SAMPLE_PLAYER) && peer->remote.time_ns &&
+        peer->state_received_ns && now>=peer->state_received_ns && now-peer->state_received_ns<=200000000ull;
+    if (npc_session.issued) {
+        if (!valid || peer->session!=npc_session.session || peer->peer_player!=npc_session.player ||
+            generation!=npc_session.local_generation || peer->remote.generation!=npc_session.remote_generation) {
+            // Missing/stale motion is handled by the lease; only ownership changes/disconnection revoke a binding.
+            if (!peer->negotiated || peer->session!=npc_session.session || peer->peer_player!=npc_session.player ||
+                generation!=npc_session.local_generation ||
+                (peer->has_remote && peer->remote.generation!=npc_session.remote_generation)) {
+                npc_session.revoked=1; npc_peer.valid=0; npc_peer.revoked=1;
+            }
+        }
+        return;
+    }
+    if (!valid) { npc_session.present=0; return; }
+    int same=npc_session.session==peer->session && npc_session.player==peer->peer_player &&
+        npc_session.local_generation==generation && npc_session.remote_generation==peer->remote.generation;
+    // Worker retransmissions of one old sender sample cannot keep a pending creation alive either.
+    if (same && (peer->remote.time_ns<=npc_session.sender_ns || peer->state_received_ns<=npc_session.received_ns)) return;
+    npc_session.session=peer->session; npc_session.player=peer->peer_player;
+    npc_session.local_generation=generation; npc_session.remote_generation=peer->remote.generation;
+    npc_session.received_ns=peer->state_received_ns; npc_session.sender_ns=peer->remote.time_ns;
+    npc_session.present=1;
+}
 
 static unsigned cycle_claim(void) {
     unsigned zero=0;
@@ -270,18 +305,20 @@ static int npc_peer_offer_locked(const CoopNetSnapshot *peer, uint32_t generatio
 int coop_native_probe_peer_enabled(void) {
     unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
     return mode==COOP_NATIVE_PROBE_NPC_PEER_MOTION || mode==COOP_NATIVE_PROBE_NPC_FIGURE ||
-           mode==COOP_NATIVE_PROBE_NPC_VISIBILITY || mode==COOP_NATIVE_PROBE_NPC_RETIREMENT;
+           mode==COOP_NATIVE_PROBE_NPC_VISIBILITY || mode==COOP_NATIVE_PROBE_NPC_RETIREMENT ||
+           mode==COOP_NATIVE_PROBE_NPC_SESSION;
 }
 
 int coop_native_probe_figure_enabled(void) {
     unsigned mode=__atomic_load_n(&armed, __ATOMIC_ACQUIRE);
     return mode==COOP_NATIVE_PROBE_NPC_FIGURE || mode==COOP_NATIVE_PROBE_NPC_VISIBILITY ||
-           mode==COOP_NATIVE_PROBE_NPC_RETIREMENT;
+           mode==COOP_NATIVE_PROBE_NPC_RETIREMENT || mode==COOP_NATIVE_PROBE_NPC_SESSION;
 }
 
 static int native_visibility_enabled(void) {
     unsigned mode=__atomic_load_n(&armed,__ATOMIC_ACQUIRE);
-    return mode==COOP_NATIVE_PROBE_NPC_VISIBILITY || mode==COOP_NATIVE_PROBE_NPC_RETIREMENT;
+    return mode==COOP_NATIVE_PROBE_NPC_VISIBILITY || mode==COOP_NATIVE_PROBE_NPC_RETIREMENT ||
+           mode==COOP_NATIVE_PROBE_NPC_SESSION;
 }
 
 void coop_native_probe_figure_publish(uint32_t generation, int32_t actor_id, uint64_t sample_ns) {
@@ -309,6 +346,8 @@ int coop_native_probe_peer_offer(const CoopNetSnapshot *peer, uint32_t generatio
     if (!peer || !coop_native_probe_peer_enabled()) return 0;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return 0;
+    if (__atomic_load_n(&armed,__ATOMIC_RELAXED)==COOP_NATIVE_PROBE_NPC_SESSION)
+        session_offer_locked(peer,generation,now);
     int notify = npc_peer_offer_locked(peer, generation, now);
     __atomic_store_n(&npc_motion_busy, 0, __ATOMIC_RELEASE);
     return notify;
@@ -332,10 +371,61 @@ static int probe_code_matches(uint64_t entry, const uint8_t expected[32]) {
 }
 
 static int visibility_code_matches(uint64_t entry, size_t size, const uint8_t expected[32]) {
-    uint8_t bytes[64], hash[32];
+    uint8_t bytes[0xb4], hash[32];
     if (size>sizeof bytes || !read_guest(entry,bytes,size)) return 0;
     rt_sha256(bytes,size,hash);
     return !memcmp(hash,expected,sizeof hash);
+}
+
+static void session_create_locked(Cpu *c) {
+    if (__atomic_load_n(&armed,__ATOMIC_RELAXED)!=COOP_NATIVE_PROBE_NPC_SESSION || !npc_session.present ||
+        npc_session.issued || npc_session.revoked || __atomic_load_n(&attempted,__ATOMIC_RELAXED) ||
+        frame_step_world_us()<6000000) return;
+    uint64_t now=plat_now_ns();
+    if (now<npc_session.received_ns || now-npc_session.received_ns>200000000ull) return;
+    float position[3]; uint32_t generation;
+    if (!coop_adapter_local_actor(c->x[0],&generation,position) || generation!=npc_session.local_generation) return;
+    unsigned worker=0; uint32_t tag;
+    if (coop_actor_worker_context(c,c->x[0],&worker,&tag)) return;
+    uint64_t vtable,method,manager;
+    if (!read_guest(c->x[0],&vtable,8) || vtable!=MOD_MAIN_BASE+0x3633078ull ||
+        !read_guest(vtable+0x180,&method,8) || method!=MOD_MAIN_BASE+0x2e27b0ull ||
+        !read_guest(MOD_MAIN_BASE+0x3ad7450ull,&manager,8) || !mem_guest_readable(manager,0xe2)) return;
+    // The original worker has installed its current actor, before the virtual update's prologue/locks.
+    // Bind that complete dispatch and the TLS getter, not only a matching return address.
+    static const uint8_t dispatch_hash[32]={0x57,0x6b,0xe9,0x8a,0x75,0xa2,0xaf,0x64,0x38,0xc6,0x1c,0xa4,0xac,0x2a,0x01,0x0d,
+        0xe6,0xd8,0xcc,0x68,0xb6,0x2c,0x54,0xb5,0x47,0xc6,0xaf,0xea,0xe9,0xeb,0x57,0x31};
+    static const uint8_t tls_hash[32]={0xaf,0xbb,0x8e,0xce,0x9b,0x05,0x50,0x20,0x43,0x7c,0x5a,0xbe,0x71,0x07,0xf9,0xba,
+        0xd1,0x0c,0xe6,0x12,0xe3,0xb4,0x03,0xaf,0xbc,0xdc,0x14,0xc4,0x36,0x2e,0x8a,0x86};
+    if (!probe_code_matches(MOD_MAIN_BASE+0x599670ull,request_hash) ||
+        !probe_code_matches(MOD_MAIN_BASE+0x2e27b0ull,npc_update_hash) ||
+        !visibility_code_matches(MOD_MAIN_BASE+0x2f1554ull,0xb4,dispatch_hash) ||
+        !visibility_code_matches(MOD_SDK_BASE+0x143c60ull,20,tls_hash)) return;
+    // AAPCS64 has no red zone. Reserve a private aligned outgoing-argument area below the current SP,
+    // inside its mapped writable Stack region, retaining 64 KiB of committed native call headroom.
+    RtMemoryInfo region;
+    if ((c->sp&15) || c->sp<0x20000 || mem_query(c->sp-0x10020,&region) || region.state!=0xb ||
+        region.perm!=3 || region.base>c->sp-0x10020 || region.size>UINT64_MAX-region.base ||
+        c->sp>region.base+region.size || !mem_guest_readable(c->sp-0x10020,0x10020)) return;
+    if (!coop_adapter_local_actor(c->x[0],&generation,position) || generation!=npc_session.local_generation ||
+        coop_actor_worker_context(c,c->x[0],&worker,&tag)) return;
+    Cpu saved=*c; fenv_t fp;
+    if (fegetenv(&fp)) return;
+    uint8_t stack_saved[32]; memcpy(stack_saved,(const void *)(uintptr_t)(c->sp-32),sizeof stack_saved);
+    __atomic_store_n(&attempted,1,__ATOMIC_RELEASE); npc_session.issued=1;
+    prepare_owned(&owned_arg,&owned_bb,position);
+    c->sp-=32; memset((void *)(uintptr_t)c->sp,0,32);
+    inside=1;
+    uint64_t queued=rt_call(c,MOD_MAIN_BASE+0x599670ull,8,manager,(uint64_t)(uintptr_t)&owned_name,
+        (uint64_t)(uintptr_t)&owned_arg,(uint64_t)0,(uint64_t)0,(uint64_t)0,(uint64_t)0,(uint64_t)0);
+    memcpy((void *)(uintptr_t)(saved.sp-32),stack_saved,sizeof stack_saved); *c=saved;
+    if (fesetenv(&fp)) rt_fatal("coop native session creation: cannot restore host floating-point environment");
+    inside=0;
+    rt_log("coop native session creation: session %llu, player %llu, local generation %u, remote generation %u, world us %lld, worker %u, queued %u; local actor update, owned stack arguments, original CPU restored",
+        (unsigned long long)npc_session.session,(unsigned long long)npc_session.player,generation,npc_session.remote_generation,
+        (long long)frame_step_world_us(),worker,queued==1);
+    rt_log("coop native spawn probe: queued %s, name %s, original CPU restored; actor initialization and physics require separate evidence",
+        queued==1 ? "yes" : "no",owned_name);
 }
 
 static void npc_visibility_update_locked(Cpu *c) {
@@ -405,6 +495,7 @@ static void npc_probe_update_locked(Cpu *c) {
     uint32_t generation;
     int64_t observed_us, now = frame_step_world_us();
     if (!coop_adapter_npc_probe_body(c->x[0], &body, &generation, &observed_us)) return;
+    if (mode==COOP_NATIVE_PROBE_NPC_SESSION && generation!=npc_session.local_generation) return;
     if (now < observed_us + 2000000 || (npc_motion.calls && now < npc_motion.last_us + 30000)) return;
     if (npc_motion.calls && (c->x[0] != npc_motion.actor || body != npc_motion.body || generation != npc_motion.generation)) {
         npc_motion.finished = 1;
@@ -491,10 +582,13 @@ void coop_native_probe_npc_update(Cpu *c) {
                         !coop_native_probe_peer_enabled())) return;
     unsigned zero = 0;
     if (!__atomic_compare_exchange_n(&npc_motion_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+    session_create_locked(c);
     npc_visibility_update_locked(c);
     unsigned mode=__atomic_load_n(&armed,__ATOMIC_ACQUIRE);
-    int retire=mode==COOP_NATIVE_PROBE_NPC_RETIREMENT && npc_visibility.done && !npc_visibility.hidden &&
+    int retire=(mode==COOP_NATIVE_PROBE_NPC_RETIREMENT || mode==COOP_NATIVE_PROBE_NPC_SESSION) && npc_visibility.done && !npc_visibility.hidden &&
         npc_visibility.calls==2 && frame_step_world_us()>=npc_motion.started_us+9000000;
+    if (mode==COOP_NATIVE_PROBE_NPC_SESSION && !npc_visibility.calls && !npc_visibility.hidden)
+        retire=npc_motion.calls && frame_step_world_us()>=npc_motion.started_us+9000000;
     if (mode==COOP_NATIVE_PROBE_NPC_CYCLES)
         retire=npc_motion.calls && frame_step_world_us()>=npc_motion.started_us+3000000;
     if (npc_motion.finished && retire) {

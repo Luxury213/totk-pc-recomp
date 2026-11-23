@@ -37,6 +37,28 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_session_creation_requires_owned_spawn_matching_peer_and_retirement_without_drop(self):
+        creation=('coop native session creation: session 11, player 22, local generation 3, remote generation 1, '
+                  'world us 6000000, worker 1, queued 1; local actor update, owned stack arguments, original CPU restored')
+        binding='coop native npc peer binding: session 11, player 22, remote generation 1, local generation 3;'
+        spawn=dict(acceptance_passed=True,owned_argument_observed=True)
+        retired=dict(acceptance_passed=True,requests=[dict(generation=3,world_us=19000000)])
+        summary=diagnose.session_creation_summary([creation,binding],spawn,retired)
+        self.assertTrue(summary['acceptance_passed']); self.assertFalse(summary['reconnect_verified'])
+        for lines in ([],[creation],[binding],[binding,creation],[creation,creation,binding],
+                      [creation,binding,creation.replace('worker 1','worker malformed')],
+                      [creation,binding.replace('player 22','player 23')],
+                      [creation,binding.replace('generation 1','generation 2')],
+                      [creation.replace('queued 1','queued 0'),binding],
+                      [creation.replace('6000000','5000000'),binding],
+                      [creation,binding,'coop native actor request: caller 0x70020a57d8,']):
+            self.assertFalse(diagnose.session_creation_summary(lines,spawn,retired)['acceptance_passed'])
+        for bad in (dict(acceptance_passed=False),dict(acceptance_passed=True,requests=[]),
+                    dict(acceptance_passed=True,requests=[dict(generation=4,world_us=19000000)]),
+                    dict(acceptance_passed=True,requests=[dict(generation=3,world_us=5000000)])):
+            self.assertFalse(diagnose.session_creation_summary([creation,binding],spawn,bad)['acceptance_passed'])
+        self.assertFalse(diagnose.session_creation_summary([creation,binding],dict(acceptance_passed=True),retired)['acceptance_passed'])
+
     def test_npc_retirement_requires_correlated_cleanup_resource_and_allocator(self):
         events=object_events(probe=4,name='Npc_Road_001',request=10)
         resources=resource_events(request=10,name='Npc_Road_001')

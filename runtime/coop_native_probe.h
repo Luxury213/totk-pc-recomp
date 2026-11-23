@@ -6,7 +6,7 @@
 enum { COOP_NATIVE_PROBE_OFF, COOP_NATIVE_PROBE_CLONE, COOP_NATIVE_PROBE_OWNED, COOP_NATIVE_PROBE_NPC,
        COOP_NATIVE_PROBE_NPC_MOTION, COOP_NATIVE_PROBE_NPC_CONSUMER_MOTION, COOP_NATIVE_PROBE_NPC_PEER_MOTION,
        COOP_NATIVE_PROBE_NPC_FIGURE, COOP_NATIVE_PROBE_NPC_VISIBILITY, COOP_NATIVE_PROBE_NPC_RETIREMENT,
-       COOP_NATIVE_PROBE_NPC_CYCLES };
+       COOP_NATIVE_PROBE_NPC_CYCLES, COOP_NATIVE_PROBE_NPC_SESSION };
 void coop_native_probe_init(const char *profile, int timed_run, int mode);
 void coop_native_probe_request(Cpu *cpu);
 // Called only at the observed native actor-update entry, before its generated prologue.

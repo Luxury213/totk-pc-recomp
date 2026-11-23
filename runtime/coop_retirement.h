@@ -14,3 +14,6 @@ typedef struct {
 
 // Refusal leaves guest state alone. An issued request is never retried; asynchronous cleanup is separate proof.
 int coop_retirement_try(Cpu *cpu, CoopRetirement *request);
+// Read-only verification of the original actor-update dispatch's current task/TLS/worker slot.
+// Zero means the calling worker currently owns this actor; no creation/removal authority is implied.
+int coop_actor_worker_context(const Cpu *cpu, uint64_t actor, unsigned *worker, uint32_t *tag);

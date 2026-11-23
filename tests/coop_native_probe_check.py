@@ -16,6 +16,9 @@ static unsigned char arg[0x98], prologue[28];
 static uint64_t manager, name_pointer, watcher;
 static char name[32] = "Weapon_Sword_101";
 static uint64_t stack[3] __attribute__((aligned(16)));
+static unsigned char session_stack[0x11000] __attribute__((aligned(16))),session_manager[0xe2];
+static unsigned char dispatch_code[0xb4]={8},tls_code[20]={7};
+static int local_valid=1,worker_valid=1,stack_valid=1,bad_dispatch,bad_tls;
 static int calls, bad_hash;
 static unsigned char npc_body[0x160], velocity_code[28] = {1}, update_code[28] = {2};
 static unsigned char npc_request[0xd8], consumer_code[28] = {3}, parent_code[28] = {4};
@@ -37,6 +40,9 @@ static int range(uint64_t p, uint64_t n, const void *base, size_t size) {
     return n <= size && p >= (uintptr_t)base && p - (uintptr_t)base <= size - n;
 }
 int mem_guest_readable(uint64_t p, uint64_t n) {
+    if ((p==0x2abc0 && n==8) || (p==MOD_MAIN_BASE+0x3633078ull+0x180 && n==8) ||
+        (p==MOD_MAIN_BASE+0x2f1554ull && n==0xb4) || (p==MOD_SDK_BASE+0x143c60ull && n==20) ||
+        range(p,n,session_manager,sizeof session_manager) || range(p,n,session_stack,sizeof session_stack)) return 1;
     if ((p==MOD_MAIN_BASE+0x1b87b50ull && n<=36) || (p==MOD_MAIN_BASE+0x1b9ce0ull && n<=24) ||
         (p==0x1abd0 && n==4) || range(p,n,npc_model,sizeof npc_model)) return 1;
     return (p == MOD_MAIN_BASE+0x3ad7450ull && n == 8) ||
@@ -50,6 +56,11 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
 }
 int plat_mem_read(uint64_t p, void *dst, size_t n) {
     if (!mem_guest_readable(p,n)) return 0;
+    if (p==0x2abc0 || p==MOD_MAIN_BASE+0x3633078ull+0x180) {
+        uint64_t v=MOD_MAIN_BASE+(p==0x2abc0 ? 0x3633078ull : 0x2e27b0ull); memcpy(dst,&v,n); return 1;
+    }
+    if (p==MOD_MAIN_BASE+0x2f1554ull) { memcpy(dst,dispatch_code,n); return 1; }
+    if (p==MOD_SDK_BASE+0x143c60ull) { memcpy(dst,tls_code,n); return 1; }
     if (p==MOD_MAIN_BASE+0x1b87b50ull) { memcpy(dst,setter_code,n); return 1; }
     if (p==MOD_MAIN_BASE+0x1b9ce0ull) { memcpy(dst,getter_code,n); return 1; }
     if (p==0x1abd0) { memcpy(dst,&model_actor_id,n); return 1; }
@@ -63,6 +74,19 @@ int plat_mem_read(uint64_t p, void *dst, size_t n) {
     return 1;
 }
 int64_t frame_step_world_us(void) { return world_us; }
+uint32_t mem_query(uint64_t at,RtMemoryInfo *out) {
+    assert(range(at,1,session_stack,sizeof session_stack));
+    *out=(RtMemoryInfo){.base=(uintptr_t)session_stack,.size=sizeof session_stack,
+        .state=stack_valid ? 0xb : 5,.perm=3}; return 0;
+}
+int coop_adapter_local_actor(uint64_t actor,uint32_t *generation,float position[3]) {
+    if(!local_valid || actor!=0x2abc0) return 0;
+    *generation=target_generation; position[0]=10; position[1]=20; position[2]=30; return 1;
+}
+int coop_actor_worker_context(const Cpu *c,uint64_t actor,unsigned *worker,uint32_t *tag) {
+    *worker=1; *tag=0x10;
+    return !worker_valid || actor!=0x2abc0 || c->x[30]!=MOD_MAIN_BASE+0x2f1608;
+}
 uint64_t plat_now_ns(void) { return host_ns; }
 int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us) {
     if (!target_valid || (actor!=0xabc0 && actor!=0x1abc0)) return 0;
@@ -84,6 +108,14 @@ void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_fatal(const char *fmt, ...) { (void)fmt; abort(); }
 void rt_sha256(const void *p, size_t n, uint8_t out[32]) {
     const uint8_t *probe=p;
+    if (n==0xb4 || n==20) {
+        static const uint8_t dispatch[32]={0x57,0x6b,0xe9,0x8a,0x75,0xa2,0xaf,0x64,0x38,0xc6,0x1c,0xa4,0xac,0x2a,0x01,0x0d,
+            0xe6,0xd8,0xcc,0x68,0xb6,0x2c,0x54,0xb5,0x47,0xc6,0xaf,0xea,0xe9,0xeb,0x57,0x31};
+        static const uint8_t tls[32]={0xaf,0xbb,0x8e,0xce,0x9b,0x05,0x50,0x20,0x43,0x7c,0x5a,0xbe,0x71,0x07,0xf9,0xba,
+            0xd1,0x0c,0xe6,0x12,0xe3,0xb4,0x03,0xaf,0xbc,0xdc,0x14,0xc4,0x36,0x2e,0x8a,0x86};
+        assert(probe[0]==(n==0xb4 ? 8 : 7)); memcpy(out,n==0xb4 ? dispatch : tls,32);
+        if(bad_hash || (n==0xb4 && bad_dispatch) || (n==20 && bad_tls)) out[0]^=1; return;
+    }
     if (n==36 || n==24) {
         const uint8_t setter[32]={0x57,0x68,0x56,0xdc,0xf0,0x7a,0x2c,0xc0,0x6f,0x32,0xc5,0x55,0x49,0x23,0xd3,0xb8,
             0x41,0xf0,0xf9,0x12,0x41,0x5e,0x30,0x89,0xec,0xea,0xd2,0xeb,0x00,0x79,0x38,0x9a};
@@ -133,6 +165,10 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     }
     assert(fn == MOD_MAIN_BASE+0x599670ull && n == 8);
     for (int i=0;i<n;i++) {
+        if (armed==COOP_NATIVE_PROBE_NPC_SESSION) {
+            if(i==1 || i==2) continue;
+            assert(args[i]==(i ? 0 : manager)); continue;
+        }
         if (armed >= COOP_NATIVE_PROBE_OWNED && (i==1 || i==2)) continue;
         assert(args[i] == (i == 3 ? 0 : original.x[i]));
     }
@@ -150,7 +186,11 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
                !prepared->creator_rtti && !prepared->instance_heap);
         assert(bb->size==32 && bb->count==0 && bb->params==bb->buffer);
     }
-    assert(c->sp == original.sp && stack[1] == 0 && stack[2] == 0);
+    if(armed==COOP_NATIVE_PROBE_NPC_SESSION) {
+        assert(c->sp==original.sp-32);
+        uint64_t *outgoing=(uint64_t *)(uintptr_t)c->sp;
+        assert(!outgoing[0] && !outgoing[1] && !outgoing[2] && !outgoing[3]);
+    } else assert(c->sp == original.sp && stack[1] == 0 && stack[2] == 0);
     calls++;
     coop_native_probe_request(c); // reentry must not create a second request
     memset(c,0x5a,sizeof *c);
@@ -472,6 +512,54 @@ int main(int argc, char **argv) {
     retirement_rest_ready=1; coop_native_probe_npc_update(&c);
     assert(retirement_calls==prior_retirement_calls+1 && npc_retirement.accepted);
     assert(!memcmp(&c,&original,sizeof c) && fegetround()==saved_round);
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_SESSION); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-session-create-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_SESSION); assert(armed==11);
+    reset(&c); npc_motion=(typeof(npc_motion)){0}; npc_peer=(typeof(npc_peer)){0};
+    npc_session=(typeof(npc_session)){0}; npc_retirement=(CoopRetirement){0}; npc_visibility=(typeof(npc_visibility)){0};
+    coop_native_probe_request(&c); assert(!calls); // mode 11 never accepts an inventory-drop trigger
+    manager=(uintptr_t)session_manager; target_valid=0; target_generation=3;
+    c.x[0]=0x2abc0; c.x[30]=MOD_MAIN_BASE+0x2f1608; c.sp=(uintptr_t)(session_stack+sizeof session_stack);
+    original=c; memset(session_stack,0x4c,sizeof session_stack);
+    unsigned char before_stack[sizeof session_stack]; memcpy(before_stack,session_stack,sizeof session_stack);
+    CoopNetSnapshot join={.negotiated=1,.has_remote=1,.session=11,.peer_player=22,.state_received_ns=host_ns,
+        .remote={.generation=1,.flags=COOP_SAMPLE_PLAYER,.time_ns=42}};
+    coop_native_probe_npc_update(&c); assert(!calls); // no peer, no native request
+    join.negotiated=0; coop_native_probe_peer_offer(&join,3,host_ns);
+    coop_native_probe_npc_update(&c); assert(!calls && !npc_session.present); join.negotiated=1;
+    coop_native_probe_peer_offer(&join,3,host_ns); assert(npc_session.present);
+    host_ns+=200000001; join.state_received_ns=host_ns;
+    coop_native_probe_peer_offer(&join,3,host_ns); // replayed sender sample must not renew creation lease
+    coop_native_probe_npc_update(&c); assert(!calls);
+    join.remote.time_ns++; coop_native_probe_peer_offer(&join,3,host_ns);
+    join.negotiated=0; coop_native_probe_peer_offer(&join,3,host_ns);
+    coop_native_probe_npc_update(&c); assert(!calls && !npc_session.present); // canceled before dispatch
+    join.negotiated=1; coop_native_probe_peer_offer(&join,3,host_ns);
+    coop_native_probe_npc_update(&c); assert(!calls); // cancellation cannot make a replay fresh
+    join.remote.time_ns++; join.state_received_ns=++host_ns; coop_native_probe_peer_offer(&join,3,host_ns);
+    local_valid=0; coop_native_probe_npc_update(&c); assert(!calls); local_valid=1;
+    target_generation=4; coop_native_probe_npc_update(&c); assert(!calls); target_generation=3;
+    worker_valid=0; coop_native_probe_npc_update(&c); assert(!calls); worker_valid=1;
+    stack_valid=0; coop_native_probe_npc_update(&c); assert(!calls); stack_valid=1;
+    bad_hash=1; coop_native_probe_npc_update(&c); assert(!calls); bad_hash=0;
+    bad_dispatch=1; coop_native_probe_npc_update(&c); assert(!calls); bad_dispatch=0;
+    bad_tls=1; coop_native_probe_npc_update(&c); assert(!calls); bad_tls=0;
+    assert(!memcmp(before_stack,session_stack,sizeof session_stack) && !memcmp(&c,&original,sizeof c));
+    coop_native_probe_npc_update(&c); assert(calls==1 && npc_session.issued && attempted==1);
+    assert(!memcmp(before_stack,session_stack,sizeof session_stack) && !memcmp(&c,&original,sizeof c));
+    assert(fegetround()==saved_round);
+    coop_native_probe_npc_update(&c); assert(calls==1);
+    join.session=12; coop_native_probe_peer_offer(&join,3,host_ns);
+    assert(npc_session.revoked && npc_peer.revoked);
+    coop_native_probe_npc_update(&c); assert(calls==1); // no automatic storage reuse/rebinding after ownership changes
+    target_valid=1; c.x[0]=0x1abc0; original=c;
+    npc_motion=(typeof(npc_motion)){.actor=0x1abc0,.body=(uintptr_t)npc_body,.generation=3,
+        .calls=1,.finished=1,.started_us=world_us-9000000};
+    npc_visibility=(typeof(npc_visibility)){0}; npc_retirement=(CoopRetirement){0};
+    unsigned early_leave_retirements=retirement_calls;
+    coop_native_probe_npc_update(&c);
+    assert(retirement_calls==early_leave_retirements+1 && npc_retirement.accepted);
+    assert(!memcmp(&c,&original,sizeof c)); // a leave before first figure publication still retires the body
     puts("native probes: scoped creation/velocity/visibility/retirement guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }
@@ -487,7 +575,7 @@ def main():
     env = dict(os.environ, PATH=str(Path(args.cc).parent) + os.pathsep + os.environ.get('PATH', ''))
     with tempfile.TemporaryDirectory(prefix='coop-native-probe-', dir=output) as folder:
         work = Path(folder)
-        (work / 'layout.h').write_text('#define MOD_MAIN_BASE 0x1000000000ull\n', encoding='utf-8')
+        (work / 'layout.h').write_text('#define MOD_MAIN_BASE 0x1000000000ull\n#define MOD_SDK_BASE 0x1010000000ull\n', encoding='utf-8')
         (work / 'check.c').write_text(HARNESS, encoding='utf-8')
         subprocess.run([args.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror',
                         '-I', str(work), '-I', str(ROOT / 'runtime'), str(work / 'check.c'), '-o', str(work / 'check.exe')],

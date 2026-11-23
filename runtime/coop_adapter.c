@@ -845,7 +845,7 @@ void coop_adapter_actor_request(const Cpu *cpu) {
     char prefix[6];
     if (!name_at || !plat_mem_read(name_at, prefix, sizeof prefix)) return;
     int npc = !memcmp(prefix, "Npc_Ro", sizeof prefix) && cpu->x[30] == RT_RET_HOST &&
-              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 10);
+              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 11);
     int probe = !memcmp(prefix, "Weapon", sizeof prefix) || npc;
     if (memcmp(prefix, "Player", sizeof prefix) && !probe) return;
     if (probe && (frame_step_world_us() < 6000000 ||
@@ -1448,6 +1448,27 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
     trace_entries[slot].host_thread = plat_thread_id();
     trace_entries[slot].generation = generation; trace_entries[slot].kind = kind;
     __atomic_store_n(&trace_entries[slot].ready, 1, __ATOMIC_RELEASE);
+}
+
+int coop_adapter_local_actor(uint64_t actor,uint32_t *generation,float position[3]) {
+    if (!actor || !generation || !position || rt_game_version!=143 ||
+        !__atomic_load_n(&trace_enabled,__ATOMIC_ACQUIRE)) return 0;
+    uint32_t epoch=__atomic_load_n(&trace_generation,__ATOMIC_ACQUIRE);
+    uint64_t resident_data=0;
+    if (!epoch || actor!=__atomic_load_n(&trace_actor,__ATOMIC_RELAXED) ||
+        player_proc()!=actor || resident_player_proc(actor,NULL,&resident_data)!=actor) return 0;
+    uint64_t metadata=guest_pointer(actor+0x1a8);
+    int32_t id=guest_s32(actor+0x10);
+    if (id<0 || metadata!=resident_data || !guest_readable(metadata,0x50) || guest_pointer(metadata+0x40)!=actor ||
+        guest_s32(metadata+0x48)!=id || (uint32_t)guest_s32(actor+0x24)-7u<5u ||
+        ((uint32_t)guest_s32(actor+0x28)&0x20000u) ||
+        !plat_mem_read(actor+0x2b4,position,12)) return 0;
+    for(unsigned i=0;i<3;i++) if(!isfinite(position[i]) || fabsf(position[i])>100000) return 0;
+    if (epoch!=__atomic_load_n(&trace_generation,__ATOMIC_ACQUIRE) ||
+        actor!=__atomic_load_n(&trace_actor,__ATOMIC_RELAXED) || player_proc()!=actor ||
+        guest_pointer(actor+0x1a8)!=metadata || guest_s32(actor+0x10)!=id ||
+        guest_pointer(metadata+0x40)!=actor || guest_s32(metadata+0x48)!=id) return 0;
+    *generation=epoch; return 1;
 }
 
 uint32_t coop_adapter_capabilities(void) { return COOP_CAP_PRESENCE; }

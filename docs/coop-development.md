@@ -458,6 +458,27 @@ passed with validation after correcting outdated texture fixtures. These do not 
 
 ## Source checks
 
+Mode 11 exercises one connection-driven creation without inventory input:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-session --seconds 30 --shots 2 --timeout 180
+```
+
+The runner copies the offline profile, writes `isolated-npc-session-create-v1` and starts its game-free ENet
+peer at world-clock start. No drop script is accepted. `--scenario controls` additionally uses the existing
+recorded local walking/camera/attack sequence. This option includes the native-origin figure, model hide/restore
+and measured-rest retirement gates. A negotiated peer with a fresh Player sample becomes a single copied
+creation candidate. Native calls occur only at the verified local actor-update worker context, after checking
+local resident/metadata identity, world generation, native code and the writable mapped guest stack. The three
+optional stack arguments are prepared in a separate aligned outgoing area; CPU/FP state and that area's prior
+bytes are restored. The original local player's controls, camera and resident/manager references are not replaced.
+
+This retains one creation slot until process exit, the 200 ms motion lease, eight-world-second movement ceiling,
+bounded consumer reapplication and existing native removal guards. Cancellation before dispatch issues no request;
+an issued request is never repeated or rebound to a different session/player/world. A disconnect before the figure
+appears still allows the stopped body to retire. No load/unload, storage reuse, second join, human-peer or campaign
+acceptance follows from this one-cycle test. Ordinary native capabilities remain disabled.
+
 For a bounded repeated-lifecycle diagnostic, use mode 10 with two recorded inventory drops:
 
 ```powershell

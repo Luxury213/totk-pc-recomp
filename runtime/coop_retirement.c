@@ -22,7 +22,8 @@ static int code(uint64_t at,size_t n,const uint8_t expected[32]) {
 
 // main+0x2f1554 records the current actor in its worker slot before dispatching the virtual +0x180 update.
 // main+0x63baa8 recognizes this same task context. Read the SDK GetTlsValue ABI rather than calling a getter.
-static int worker_context(const Cpu *c,uint64_t actor,unsigned *worker,uint32_t *tag) {
+int coop_actor_worker_context(const Cpu *c,uint64_t actor,unsigned *worker,uint32_t *tag) {
+    if (!c || !actor || !worker || !tag || rt_game_version!=143) return 1;
     *tag=UINT32_MAX;
     if (c->x[30]!=MOD_MAIN_BASE+0x2f1608ull || ptr(MOD_MAIN_BASE+0x398b0b0ull)!=MOD_SDK_BASE+0x143c60ull) return 1;
     uint64_t key_object=ptr(ptr(MOD_MAIN_BASE+0x396f7a8ull));
@@ -68,7 +69,7 @@ int coop_retirement_try(Cpu *c,CoopRetirement *r) {
         ptr(MOD_MAIN_BASE+0x3633078ull+0xe0)!=MOD_MAIN_BASE+0xb2d470ull ||
         ptr(MOD_MAIN_BASE+0x3633078ull+0x180)!=MOD_MAIN_BASE+0x2e27b0ull ||
         (word(r->actor+0x24)-7u)<5u || (word(r->actor+0x28)&0x20000u)) return 0;
-    unsigned worker=0; uint32_t tag; int context=worker_context(c,r->actor,&worker,&tag);
+    unsigned worker=0; uint32_t tag; int context=coop_actor_worker_context(c,r->actor,&worker,&tag);
     if (context) {
         if (!(r->refusals&(1u<<context))) rt_log("coop native npc retirement context: refused %d, task kind %u, worker index %u; no request issued",context,tag,worker);
         r->refusals|=1u<<context; return 0;
@@ -85,7 +86,7 @@ int coop_retirement_try(Cpu *c,CoopRetirement *r) {
         !code(MOD_SDK_BASE+0x143c60ull,20,tls_hash) || !code(MOD_MAIN_BASE+0x2e27b0ull,28,update_hash)) return 0;
     uint32_t id=word(r->actor+0x10);
     if (id==UINT32_MAX || !coop_adapter_npc_probe_body(r->actor,&body,&generation,&observed_us) ||
-        body!=r->body || generation!=r->generation || worker_context(c,r->actor,&worker,&tag)) return 0;
+        body!=r->body || generation!=r->generation || coop_actor_worker_context(c,r->actor,&worker,&tag)) return 0;
     int64_t now=frame_step_world_us();
     if (!stationary(r,now) || !coop_adapter_npc_probe_body(r->actor,&body,&generation,&observed_us) ||
         body!=r->body || generation!=r->generation) return 0;

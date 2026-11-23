@@ -422,6 +422,33 @@ def peer_start_ready(pose_echo, text):
     return marker in text
 
 
+def session_creation_summary(lines,spawn,retirement):
+    pattern=(r'coop native session creation: session (\d+), player (\d+), local generation (\d+), '
+             r'remote generation (\d+), world us (\d+), worker (\d+), queued ([01]); '
+             r'local actor update, owned stack arguments, original CPU restored')
+    creations=[dict(zip(('session','player','local_generation','remote_generation','world_us','worker','queued'),
+                       map(int,m.groups()))) for line in lines if (m:=re.search(pattern,line))]
+    bindings=[tuple(map(int,m.groups())) for line in lines if (m:=re.search(
+        r'coop native npc peer binding: session (\d+), player (\d+), remote generation (\d+), local generation (\d+);',line))]
+    drop=any('coop native actor request:' in line and 'caller 0x70020a57d8,' in line for line in lines)
+    valid=False
+    if len(creations)==1 and len(bindings)==1 and sum('coop native session creation:' in line for line in lines)==1:
+        c=creations[0]
+        valid=(c['session']>0 and c['player']>0 and c['local_generation']>0 and c['remote_generation']>0 and
+               c['world_us']>=6000000 and c['worker']<3 and c['queued']==1 and
+               bindings[0]==(c['session'],c['player'],c['remote_generation'],c['local_generation']))
+        requests=retirement.get('requests',[])
+        valid=valid and len(requests)==1 and all(r['generation']==c['local_generation'] and r['world_us']>c['world_us']
+                                               for r in requests)
+        valid=valid and next(i for i,s in enumerate(lines) if 'coop native session creation:' in s)<next(
+            i for i,s in enumerate(lines) if 'coop native npc peer binding:' in s)
+    passed=bool(valid and not drop and spawn.get('acceptance_passed') and spawn.get('owned_argument_observed') and
+                retirement.get('acceptance_passed'))
+    return dict(creations=creations,peer_bindings=bindings,inventory_drop_observed=drop,acceptance_passed=passed,
+                session_driven_creation_verified=passed,reconnect_verified=False,human_peer_verified=False,
+                request_storage_reused=False)
+
+
 def pose_echo_summary(peer_text, lines, exit_code):
     match=re.search(r'peer: pose echo completed: samples (\d+), bodies (\d+), changed (\d+)',peer_text)
     samples, bodies, changed = tuple(map(int,match.groups())) if match else (0,0,0)
@@ -648,6 +675,8 @@ def main():
                        help='test bounded ENet loopback velocities, lease-expiry stops and same-session recovery')
     spawn.add_argument('--native-npc-cycles',action='store_true',
                        help='two native pulse/removal cycles with distinct retained request slots; no figure/peer')
+    spawn.add_argument('--native-npc-session',action='store_true',
+                       help='one connection-driven NPC creation at the local actor update; no inventory drop')
     ap.add_argument('--native-npc-figure',action='store_true',
                     help='use the scoped native NPC origin for the Link figure; requires --native-npc-peer-motion')
     ap.add_argument('--native-npc-visibility',action='store_true',
@@ -659,6 +688,10 @@ def main():
     ap.add_argument('--require-spawn-fall', action='store_true',
                     help='require gradual native descent from the owned origin and subsequent positional rest')
     args = ap.parse_args()
+    if args.native_npc_session:
+        if args.without_figure or args.input_script or args.scenario not in ('idle','controls'):
+            ap.error('--native-npc-session requires idle/controls with built-in input and figure asset')
+        args.native_npc_peer_motion=args.native_npc_figure=args.native_npc_visibility=args.native_npc_retirement=True
     if args.native_npc_cycles and (not args.without_figure or args.native_npc_figure or args.native_npc_visibility or args.native_npc_retirement):
         ap.error('--native-npc-cycles requires --without-figure and cannot combine appearance/peer experiments')
     if args.native_npc_retirement and not args.native_npc_visibility:
@@ -698,9 +731,10 @@ def main():
     if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
     minimum = 42 if args.native_npc_cycles else 29 if args.native_npc_retirement else 27 if args.native_npc_peer_motion else 20 if motion else 15
-    if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < minimum or
+    if npc and ((args.scenario != 'idle' and not args.native_npc_session) or (not args.input_script and not args.native_npc_session) or args.seconds < minimum or
                                   args.require_spawn_retirement or args.require_spawn_fall):
-        ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
+        requirements='built-in idle/controls input' if args.native_npc_session else '--scenario idle and recorded drop input'
+        ap.error(f'native NPC experiments require {requirements} and at least '
                  f'{minimum} world seconds; no pickup/fall acceptance')
     if args.equipment_graph and (spawning or args.seconds<12):
         ap.error('--equipment-graph requires at least 12 world seconds and no native mutation experiment')
@@ -750,7 +784,8 @@ def main():
                 raise SystemExit('Private equipment library differs from its manifest')
         (profile/'coop-gear-probe.tsv').write_bytes(gear_probe_mapping(manifest).encode('ascii'))
     if spawning:
-        marker = ('isolated-npc-two-cycles-v1\n' if args.native_npc_cycles else
+        marker = ('isolated-npc-session-create-v1\n' if args.native_npc_session else
+                  'isolated-npc-two-cycles-v1\n' if args.native_npc_cycles else
                   'isolated-npc-native-retirement-v1\n' if args.native_npc_retirement else
                   'isolated-npc-native-visibility-v1\n' if args.native_npc_visibility else
                   'isolated-npc-body-figure-v1\n' if args.native_npc_figure else
@@ -763,7 +798,7 @@ def main():
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='10' if args.native_npc_cycles else '9' if args.native_npc_retirement else '8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='11' if args.native_npc_session else '10' if args.native_npc_cycles else '9' if args.native_npc_retirement else '8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -804,7 +839,7 @@ def main():
                     while process.poll() is None and time.monotonic()-started < args.timeout:
                         if peer_process is None:
                             chunk = tail + reader.read()
-                            if peer_start_ready(args.pose_echo,chunk):
+                            if peer_start_ready(args.pose_echo or args.native_npc_session,chunk):
                                 peer_process = subprocess.Popen(peer_command, env=dict(env, PATH='C:/msys64/ucrt64/bin'+os.pathsep+env.get('PATH', '')),
                                     stdout=peer_log, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
                             tail = chunk[-256:]
@@ -961,6 +996,9 @@ def main():
         report['native_npc_retirement']=npc_retirement_summary(lines,report['native_spawn_experiment'],report['native_body_figure'])
         report['acceptance_checks']['native_npc_retirement']=report['native_npc_retirement']['acceptance_passed']
         report['native_model_visibility']['native_retirement_verified']=report['native_npc_retirement']['native_retirement_verified']
+    if args.native_npc_session:
+        report['native_session_creation']=session_creation_summary(lines,report['native_spawn_experiment'],report['native_npc_retirement'])
+        report['acceptance_checks']['native_session_creation']=report['native_session_creation']['acceptance_passed']
     if args.equipment_graph:
         report['equipment_graph']=gear_graph_summary(lines)
         report['acceptance_checks']['equipment_graph_ran']=report['equipment_graph']['search_completed']

@@ -396,6 +396,20 @@ int main(void) {
     player(0,144,0); s = tick(); assert(!s.has_local_pos); // title actor
     player(-686,144,839); s = tick();
     assert(s.has_local_pos && s.has_peer_pos && s.connected && fabsf(s.peer_dist - 4.5f) < .01f);
+    { uint32_t local_generation; float local_origin[3];
+    ptr(resident_links+0x78,(uintptr_t)unit); ptr(actor+0x1a8,(uintptr_t)unit);
+    assert(coop_adapter_local_actor((uintptr_t)actor,&local_generation,local_origin));
+    assert(local_generation==trace_generation && local_origin[0]==-686 && local_origin[1]==144 && local_origin[2]==839);
+    assert(!coop_adapter_local_actor((uintptr_t)other_actor,&local_generation,local_origin));
+    unit[0x48]^=1;
+    assert(!coop_adapter_local_actor((uintptr_t)actor,&local_generation,local_origin));
+    unit[0x48]^=1;
+    ptr(actor+0x1a8,(uintptr_t)resident_data);
+    assert(!coop_adapter_local_actor((uintptr_t)actor,&local_generation,local_origin));
+    ptr(actor+0x1a8,(uintptr_t)unit);
+    actor[0x24]=7;
+    assert(!coop_adapter_local_actor((uintptr_t)actor,&local_generation,local_origin)); actor[0x24]=0;
+    ptr(resident_links+0x78,(uintptr_t)resident_data); ptr(actor+0x1a8,(uintptr_t)resident_data); }
     coop_adapter_snapshot(&title);
     assert(title.native_constructor_trace_count==1 && title.native_holder_trace_count==1 &&
            title.native_initializer_trace_count==1 &&

@@ -25,6 +25,19 @@ not establish that it damages the same enemy in both games.
 
 ## Source and build checkpoint
 
+Mode 11 now passes one session-driven creation without any inventory-drop input. A copied negotiated peer
+candidate is consumed only at the verified local Player's actor-update worker, with resident/metadata/world,
+native dispatch/TLS/code and mapped writable guest-stack guards. Three optional stack arguments use a separate
+aligned outgoing area; complete CPU/FP state and its prior bytes are restored. The first run `run-a507426c10`
+passed creation, leased ENet motion, Link figure/native hide-restore and native removal/resource/allocator
+correlation, with normal game/peer exits and unchanged source saves. See the native notes and development
+commands for mode 11. It still permits one retained creation slot, bounded motion and one peer lifecycle;
+second joins/reconnects, load transitions and human control remain unverified.
+A second run `run-a95babe3c7` passed the built-in local control sequence: 9.937337 m local displacement,
+122 exact native-origin figure submissions, native visibility/rest/removal and unchanged source saves.
+Its inspected frame shows both Links. The attack buttons were applied; successful strikes/shared damage
+and unobstructed feet/terrain fit are not claimed. The two runs used separate processes.
+
 Development resumed at the user's request after the reference review. Mode 10 now passes two native
 creation/pulse/rest/removal cycles in one world, using separate retained argument/blackboard slots and
 per-probe physics snapshots. The adapter publication/TLS-scope audit, synthetic address-reuse and retired
@@ -54,6 +67,7 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `53d5067` | Suppress and restore that NPC's original model through its native controller |
 | `a41fefc` | Retire the owned NPC in its verified native worker context with resource/allocator correlation |
 | `d164cab` | Reliable incompatibility rejection and isolated test-client endpoints; hosted co-op and content checks passed |
+| `1c1d507` | Two native lifecycles with separate retained requests and per-probe snapshots; hosted co-op/content checks passed |
 
 The current retirement slice adds mode 9 and a complete copied-save creation/movement/visibility/removal
 diagnostic. Its evidence and limitations below supersede earlier statements that native removal is unverified;
@@ -269,8 +283,9 @@ provides a verified drop-in 1.4.3 Player clone, shared enemy authority or prolog
    the inspected native controller API. Retain its bounded publication lease, identity/code guards and restore
    fallback. Mode 9 now passes one native retirement with resource/allocator correlation.
    Mode 10 also passes two native pulse/removal cycles in the same world using separately retained slots.
-   Next bind fresh session/peer/actor identities and verify session-driven creation/retirement, including
-   completion/rejection/cancellation and reusable storage ownership. Then test disconnect/load/reconnect and
+   Mode 11 now passes one connection-driven creation/movement/retirement without an inventory drop.
+   Next verify a second peer join with fresh identities after complete native cleanup, retaining distinct
+   storage until reuse/cancellation ownership is established. Then test disconnect/load/reconnect and
    unobstructed feet on flat ground, slopes and steps. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship

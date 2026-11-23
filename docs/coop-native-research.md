@@ -1,5 +1,56 @@
 # Co-op native research notes
 
+## Session-driven creation at the local actor update (November 23, 2026)
+
+Mode 11 (`--native-npc-session`, `isolated-npc-session-create-v1`) removes inventory-drop scheduling from
+one isolated native lifecycle. `coop_native_probe.c` `session_offer_locked` retains only copied negotiated
+session/player/local-world/remote-world identities and fresh sample times. Replayed sender samples cannot
+renew the pending creation lease. Cancellation before dispatch clears the candidate; after a request, ownership
+changes revoke movement rather than rebind the live actor or reuse creation storage.
+
+The locally inspected `main+0x2f1554` installs its current actor into the worker slot before invoking virtual
+`+0x180`, return site `main+0x2f1608`. The local Player and tested NPC share the observed base actor update
+`main+0x2e27b0` through vtable `main+0x3633078`. `coop_actor_worker_context`, shared with the earlier retirement
+experiment, verifies the installed SDK TLS getter, task kind and current actor/worker equality. The creation
+experiment additionally hashes the complete dispatch through the indirect call, the TLS getter, update and
+request prologues. `coop_adapter_local_actor` matches the current observed Player, resident metadata backlink/ID,
+active generation and finite position; matching the shared vtable alone is insufficient.
+
+`rt_call` still accepts at most eight register arguments and does not marshal stack arguments. The request ABI
+has three additional optional arguments. `session_create_locked` reserves 32 aligned bytes below current SP,
+requiring a mapped writable Stack region with 64 KiB committed call headroom. AAPCS64 has no red zone. It writes
+the three zero optional arguments there, invokes the already inspected request with separately retained
+CreateArg/BlackboardInit storage and restores the outgoing area's bytes, complete Cpu and host FP environment.
+It does not replace the original caller's existing stack arguments, publish native pointers to the network,
+copy Player singleton references or request a watcher. This is a bounded experiment at one native phase,
+not a general callable creation API or arbitrary-thread scheduling contract.
+
+The first 30-world-second copied-save run, `run-a507426c10`, passed all requested gates. The request at world
+6.013454 s used worker 0; session and peer generation matched the later velocity binding. Actor 885 in generation
+3 moved under the game-free ENet peer, published the native-origin Link figure and suppressed/restored its NPC
+model for 6.417340 s across 177 figure samples. Retirement was accepted at world 19.504015 s on worker 2 after
+30 rest samples over 1.002777 s, with the same actor's native request/queue, resource cleanup and allocator handoff.
+Game/peer exits were zero and source saves unchanged. No inventory drop occurred. The inspected image shows
+black-haired Link at the right frame edge; a horse occludes the local player and grass obscures the feet.
+
+A second 30-world-second run, `run-a95babe3c7`, passed with the built-in local control sequence. Local horizontal
+displacement during its walk was 9.937337 m; walking, camera and attack-button inputs were applied. This does
+not establish that every attack input produced a weapon strike or a shared damage outcome. Actor 888/gen3
+was requested at world 6.002549 s on worker 1. All 122 native-origin figure submissions matched exactly;
+hide/restore lasted 5.956652 s across 121 figure samples. Native retirement at world 19.873683 s on worker 2
+followed 23 rest samples over 1.017672 s and correlated resource/allocator cleanup. Both exits were zero and
+source saves unchanged. Frame `f01549.png` shows the local Link and black-haired companion together. Grass
+still hides their feet; exact capsule/model fit and terrain acceptance remain open. These are separate fresh
+processes, not two joins in one running game. No heavy-scene performance or complete camera-independence
+acceptance is claimed.
+
+Synthetic checks cover canceled/stale/replayed candidates, mismatched local metadata/world/worker, independent
+dispatch/TLS hash refusals, mapped-stack refusal, single-shot creation, ownership revocation, early leave before
+figure publication and full CPU/FP/outgoing-area restoration. No native code is called from the observer, render
+or network worker. Human control, indefinite lifetime, a second join/reconnect, scene transitions, terrain/model
+fit and combat remain unaccepted. Do not combine mode 10's two synthetic lifetimes with this one peer lifetime
+to claim two session-driven creations.
+
 ## Two retained NPC lifecycles (November 23, 2026)
 
 Mode 10 (`--native-npc-cycles`, `isolated-npc-two-cycles-v1`) permits two separately retained creation
