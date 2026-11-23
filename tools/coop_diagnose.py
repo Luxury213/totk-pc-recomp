@@ -238,7 +238,7 @@ def spawn_fall_summary(samples, origin):
                 acceptance_passed=descent_at is not None and settled)
 
 
-def native_spawn_summary(lines, actor_name='Weapon_Sword_101'):
+def native_spawn_summary(lines, actor_name='Weapon_Sword_101', expected=1):
     number = r'(-?\d+(?:\.\d+)?)'
     requests = [int(m[1]) for line in lines if (m := re.search(
         r'coop native spawn request: request (\d+), name ' + re.escape(actor_name) + r', watcher absent;', line))]
@@ -260,14 +260,15 @@ def native_spawn_summary(lines, actor_name='Weapon_Sword_101'):
         ', empty blackboard, actor dependencies absent;', line))]
     owned = [o for o in owned if all(map(math.isfinite, o['pos']))]
     fall = spawn_fall_summary(samples, owned[0]['pos']) if len(owned) == 1 else spawn_fall_summary([], [0, 0, 0])
-    queued = sum(f'coop native spawn probe: queued yes, name {actor_name},' in line for line in lines) == 1
+    queued = sum(f'coop native spawn probe: queued yes, name {actor_name},' in line for line in lines) == expected
     # A changed transform alone does not establish verified gravity or ground contact.
     return dict(queued=queued,
                 actor_name=actor_name, requests=requests, initialized=initialized, samples=samples,
-                retirement_observed=bool(retired),
-                owned_argument_observed=len(owned) == 1, owned_origins=owned,
+                retirement_observed=len(retired) == expected,
+                owned_argument_observed=len(owned) == expected, owned_origins=owned,expected_count=expected,
                 fall=fall,
-                acceptance_passed=len(requests) == 1 and len(initialized) == 1 and queued,
+                acceptance_passed=expected in (1,2) and len(requests) == len(set(requests)) == expected and
+                    len(initialized) == len({p['probe'] for p in initialized}) == expected and queued,
                 physics_verified=False, native_companion_verified=False)
 
 
@@ -534,12 +535,17 @@ def native_visibility_summary(lines,figure):
         visual_replacement_verified=False,native_retirement_verified=False,human_peer_verified=False)
 
 
-def npc_retirement_summary(lines,spawn,figure):
+def retirement_requests(lines):
     requests=[]
     for line in lines:
         if m:=re.search(r'coop native npc retirement request: generation (\d+), actor id (-?\d+), world us (\d+), result (\d+), worker ([012]), rest samples (\d+), rest us (\d+);',line):
             requests.append(dict(generation=int(m[1]),actor_id=int(m[2]),world_us=int(m[3]),result=int(m[4]),worker=int(m[5]),
                 rest_samples=int(m[6]),rest_us=int(m[7])))
+    return requests
+
+
+def npc_retirement_summary(lines,spawn,figure):
+    requests=retirement_requests(lines)
     lifecycle=probe_summary(lines,'Npc_Road_001',True,True)
     initialized=spawn.get('initialized',[])
     owned={(p['generation'],p['actor_id']) for p in figure.get('samples',[])}
@@ -554,6 +560,56 @@ def npc_retirement_summary(lines,spawn,figure):
     return dict(acceptance_passed=passed,requests=requests,lifecycle=lifecycle,
         native_retirement_verified=passed,repeated_lifecycle_verified=False,reconnect_verified=False,
         native_request_storage_reused=False)
+
+
+def npc_cycles_summary(lines):
+    begins=[dict(cycle=int(m[1]),world_us=int(m[2]),prior=int(m[3]),retired=int(m[4])) for line in lines
+        if (m:=re.search(r'coop native npc cycle begin: cycle (\d+), world us (\d+), prior actor id (-?\d+), prior retired ([01]);',line))]
+    bindings=[dict(cycle=int(m[1]),generation=int(m[2]),actor_id=int(m[3]),world_us=int(m[4])) for line in lines
+        if (m:=re.search(r'coop native npc cycle binding: cycle (\d+), generation (\d+), actor id (-?\d+), world us (\d+);',line))]
+    total=native_spawn_summary(lines,'Npc_Road_001',expected=2)
+    requests=total['requests']
+    owned=[i for i,line in enumerate(lines) if 'coop native spawn owned: pos ' in line]
+    queued=[i for i,line in enumerate(lines) if 'coop native spawn probe: queued yes, name Npc_Road_001,' in line]
+    valid=(total['acceptance_passed'] and total['owned_argument_observed'] and
+        len(begins)==len(bindings)==len(owned)==len(queued)==2 and
+        len(retirement_requests(lines))==2 and all(b['generation']>0 and b['actor_id']>=0 for b in bindings) and
+        [b['cycle'] for b in begins]==[1,2] and [b['cycle'] for b in bindings]==[1,2] and
+        begins[0]['world_us']<begins[1]['world_us'] and begins[0]['prior']==-1 and not begins[0]['retired'] and
+        begins[1]['retired']==1 and begins[1]['prior']==bindings[0]['actor_id'] and
+        bindings[0]['actor_id']!=bindings[1]['actor_id'] and bindings[0]['generation']==bindings[1]['generation'])
+    cycles=[]
+    if valid:
+        for i,begin in enumerate(begins):
+            initialized=[p for p in total['initialized'] if p['request']==requests[i]]
+            if len(initialized)!=1: valid=False; break
+            probe=initialized[0]['probe']; scoped=[]
+            stop=begins[i+1]['world_us'] if i+1<len(begins) else float('inf')
+            for index,line in enumerate(lines):
+                if index in owned and index!=owned[i] or index in queued and index!=queued[i]: continue
+                if (m:=re.search(r'world us (\d+)',line)) and not begin['world_us']<=int(m[1])<stop: continue
+                if (m:=re.search(r'coop native spawn request: request (\d+), name Npc_Road_001,',line)) and int(m[1])!=requests[i]: continue
+                if (m:=PROBE_ACTOR.search(line)) and m[4]=='Npc_Road_001' and int(m[3])!=probe: continue
+                if 'coop native spawn motion:' in line or 'coop native npc physics:' in line or 'coop native probe teardown:' in line or 'coop native probe allocator:' in line:
+                    if (m:=re.search(r'probe (\d+)',line)) and int(m[1])!=probe: continue
+                scoped.append(line)
+            spawn=native_spawn_summary(scoped,'Npc_Road_001')
+            motion=npc_velocity_summary(scoped,spawn)
+            consumer=npc_consumer_reapply_summary(scoped,motion)
+            retirement=retirement_requests(scoped)
+            binding=bindings[i]
+            retired=bool(len(retirement)==1 and spawn['retirement_observed'] and
+                retirement[0]['result']==1 and retirement[0]['actor_id']==binding['actor_id'] and
+                retirement[0]['generation']==binding['generation'] and retirement[0]['rest_samples']>=12 and
+                retirement[0]['rest_us']>=1000000 and binding['world_us']>=begin['world_us'] and
+                motion['commands'] and retirement[0]['world_us']>=motion['commands'][-1]['world_us']+1000000)
+            passed=bool(spawn['acceptance_passed'] and motion['acceptance_passed'] and consumer['acceptance_passed'] and retired)
+            cycles.append(dict(cycle=i+1,spawn=spawn,motion=motion,consumer=consumer,retirement=retirement,
+                binding=binding,acceptance_passed=passed))
+            valid=valid and passed
+    passed=bool(valid and len(cycles)==2)
+    return dict(acceptance_passed=passed,begins=begins,bindings=bindings,cycles=cycles,
+        repeated_in_process_verified=passed,request_storage_reused=False,reconnect_verified=False,human_peer_verified=False)
 
 
 def main():
@@ -590,6 +646,8 @@ def main():
                        help='test a separate NPC pulse reapplied through the native API at its request-consumer entry')
     spawn.add_argument('--native-npc-peer-motion', action='store_true',
                        help='test bounded ENet loopback velocities, lease-expiry stops and same-session recovery')
+    spawn.add_argument('--native-npc-cycles',action='store_true',
+                       help='two native pulse/removal cycles with distinct retained request slots; no figure/peer')
     ap.add_argument('--native-npc-figure',action='store_true',
                     help='use the scoped native NPC origin for the Link figure; requires --native-npc-peer-motion')
     ap.add_argument('--native-npc-visibility',action='store_true',
@@ -601,6 +659,8 @@ def main():
     ap.add_argument('--require-spawn-fall', action='store_true',
                     help='require gradual native descent from the owned origin and subsequent positional rest')
     args = ap.parse_args()
+    if args.native_npc_cycles and (not args.without_figure or args.native_npc_figure or args.native_npc_visibility or args.native_npc_retirement):
+        ap.error('--native-npc-cycles requires --without-figure and cannot combine appearance/peer experiments')
     if args.native_npc_retirement and not args.native_npc_visibility:
         ap.error('--native-npc-retirement requires the scoped --native-npc-visibility experiment')
     if args.native_npc_visibility and not args.native_npc_figure:
@@ -632,12 +692,12 @@ def main():
         ap.error('--require-allocator requires --scenario object')
     if args.require_resource and args.scenario != 'object':
         ap.error('--require-resource requires --scenario object')
-    motion = args.native_npc_motion or args.native_npc_consumer_motion
+    motion = args.native_npc_motion or args.native_npc_consumer_motion or args.native_npc_cycles
     npc = args.native_owned_npc or motion or args.native_npc_peer_motion
     spawning = args.native_clone_weapon or args.native_owned_weapon or npc
     if (args.native_clone_weapon or args.native_owned_weapon) and (args.scenario != 'object' or args.probe_name != 'Weapon_Sword_101'):
         ap.error('native weapon experiments require --scenario object --probe-name Weapon_Sword_101')
-    minimum = 29 if args.native_npc_retirement else 27 if args.native_npc_peer_motion else 20 if motion else 15
+    minimum = 42 if args.native_npc_cycles else 29 if args.native_npc_retirement else 27 if args.native_npc_peer_motion else 20 if motion else 15
     if npc and (args.scenario != 'idle' or not args.input_script or args.seconds < minimum or
                                   args.require_spawn_retirement or args.require_spawn_fall):
         ap.error(f'native NPC experiments require --scenario idle, recorded drop input and at least '
@@ -690,7 +750,8 @@ def main():
                 raise SystemExit('Private equipment library differs from its manifest')
         (profile/'coop-gear-probe.tsv').write_bytes(gear_probe_mapping(manifest).encode('ascii'))
     if spawning:
-        marker = ('isolated-npc-native-retirement-v1\n' if args.native_npc_retirement else
+        marker = ('isolated-npc-two-cycles-v1\n' if args.native_npc_cycles else
+                  'isolated-npc-native-retirement-v1\n' if args.native_npc_retirement else
                   'isolated-npc-native-visibility-v1\n' if args.native_npc_visibility else
                   'isolated-npc-body-figure-v1\n' if args.native_npc_figure else
                   'isolated-npc-enet-velocity-v1\n' if args.native_npc_peer_motion else
@@ -702,7 +763,7 @@ def main():
     if not args.input_script:
         script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
-               TOTK_COOP_NATIVE_PROBE='9' if args.native_npc_retirement else '8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
+               TOTK_COOP_NATIVE_PROBE='10' if args.native_npc_cycles else '9' if args.native_npc_retirement else '8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
                TOTK_INPUT='none', TOTK_INPUT_SCRIPT=str(script),
                TOTK_FPS_LIMIT='30', TOTK_OPERATION_MODE='handheld',
@@ -818,7 +879,7 @@ def main():
                   vulkan_validation_enabled=any('vk: validation layer enabled (VK_LAYER_KHRONOS_validation)' in line
                                                 for line in lines),
                   object_lifecycle=probe_summary(lines, args.probe_name, args.require_allocator, args.require_resource),
-                  native_spawn_experiment=native_spawn_summary(lines, 'Npc_Road_001' if npc else 'Weapon_Sword_101'),
+                  native_spawn_experiment=native_spawn_summary(lines, 'Npc_Road_001' if npc else 'Weapon_Sword_101',expected=2 if args.native_npc_cycles else 1),
                   frame_series=[str(p) for p in sorted((folder / 'frames').glob('f*.png'))],
                   observations=observations, native_function_observations=traces,
                   native_method_candidates=candidates, native_vtable_observations=vtables,
@@ -860,10 +921,16 @@ def main():
     consumer = npc_consumer_reapply_summary(lines, report['native_npc_velocity_experiment'])
     report['native_npc_velocity_experiment']['consumer_reapply'] = consumer
     report['native_npc_velocity_experiment']['consumer_reapplications'] = consumer['count']
+    if args.native_npc_cycles:
+        report['native_npc_cycles']=npc_cycles_summary(lines)
+        report['native_npc_velocity_experiment']=dict(acceptance_passed=report['native_npc_cycles']['acceptance_passed'],
+            per_cycle=[c['motion'] for c in report['native_npc_cycles']['cycles']])
     report['acceptance_checks'] = diagnostic_acceptance(
         report, scenario=args.scenario, require_animation=args.require_animation, require_figure=args.require_figure,
         spawning=spawning, owned=args.native_owned_weapon or npc, require_spawn_retirement=args.require_spawn_retirement,
         require_spawn_fall=args.require_spawn_fall, require_npc_motion=motion)
+    if args.native_npc_cycles:
+        report['acceptance_checks']['native_npc_cycles']=report['native_npc_cycles']['acceptance_passed']
     if args.native_npc_consumer_motion:
         report['acceptance_checks']['native_consumer_reapply'] = consumer['acceptance_passed']
     if args.native_npc_peer_motion:

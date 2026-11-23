@@ -79,6 +79,7 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
     if (p == MOD_MAIN_BASE + 0x3add238ull && n <= 8) return 1;
     if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x100),sizeof vtable)) return 1;
     if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x3673b58),0x80)) return 1;
+    if (in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x392af88),sizeof vtable)) return 1;
     return in_range(p,n,&mgr,sizeof mgr) || in_range(p,n,root,sizeof root) ||
            in_range(p,n,unit,sizeof unit) || in_range(p,n,actor,sizeof actor) ||
            in_range(p,n,other_actor,sizeof other_actor) ||
@@ -112,6 +113,9 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
 }
 int plat_mem_read(uint64_t p, void *out, size_t n) {
     guest_reads++;
+    if (!fail_reads && in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x392af88),sizeof vtable)) {
+        memcpy(out,vtable+(p-(MOD_MAIN_BASE+0x392af88)),n); return 1;
+    }
     if (!fail_reads && in_range(p,n,(const void *)(uintptr_t)(MOD_MAIN_BASE+0x3673b58),0x80)) {
         memcpy(out,vtable+(p-(MOD_MAIN_BASE+0x3673b58)),n); return 1;
     }
@@ -598,9 +602,9 @@ int main(void) {
     assert(probe_claimed==1 && probe_entries[0].request==requests_before_probe);
     assert(probe_motion_actor==(uintptr_t)probe_actor);
     coop_adapter_function(MOD_MAIN_BASE+0x3900,99,(uintptr_t)probe_actor);
-    assert(probe_motion_count==1);
+    assert(probe_entries[0].motion_count==1);
     coop_adapter_function(MOD_MAIN_BASE+0x3900,99,(uintptr_t)probe_actor);
-    assert(probe_motion_count==1); // rate limited
+    assert(probe_entries[0].motion_count==1); // rate limited
     assert(resource_entries[requests_before_probe].ready && resource_entries[requests_before_probe].resource==(uintptr_t)probe_resource);
     ptr(npc_component,(uintptr_t)(MOD_MAIN_BASE+0x100));
     ptr(npc_component+0x20,(uintptr_t)npc_set);
@@ -619,28 +623,28 @@ int main(void) {
     ptr(npc_body+0x1e0,(uintptr_t)npc_body_link);
     ptr(npc_body_link+0x28,(uintptr_t)npc_body_agent);
     npc_physics_observe(99,(uintptr_t)npc_component);
-    assert(!npc_physics.ready); // a weapon cannot supply humanoid controller evidence
+    assert(!npc_physics[0].ready); // a weapon cannot supply humanoid controller evidence
     strcpy(actor_request_entries[requests_before_probe].name,"Npc_Road_001");
     strcpy(probe_name,"Npc_Road_001");
     ptr(npc_component+0x38,(uintptr_t)other_actor);
-    npc_physics_observe(99,(uintptr_t)npc_component); assert(!npc_physics.ready);
+    npc_physics_observe(99,(uintptr_t)npc_component); assert(!npc_physics[0].ready);
     ptr(npc_component+0x38,(uintptr_t)probe_actor);
     probe_entries[0].stages=1;
     unsigned retired_body_reads=guest_reads;
     npc_physics_observe(99,(uintptr_t)npc_component);
-    assert(!npc_physics.ready && retired_body_reads==guest_reads);
+    assert(!npc_physics[0].ready && retired_body_reads==guest_reads);
     probe_entries[0].stages=0;
     int32_t invalid_body_id=88; memcpy(probe_data+0x48,&invalid_body_id,4);
-    npc_physics_observe(99,(uintptr_t)npc_component); assert(!npc_physics.ready);
+    npc_physics_observe(99,(uintptr_t)npc_component); assert(!npc_physics[0].ready);
     memcpy(probe_data+0x48,&probe_id,4);
     unsigned char npc_before[sizeof npc_component]; memcpy(npc_before,npc_component,sizeof npc_before);
     npc_physics_observe(99,(uintptr_t)npc_component);
-    assert(npc_physics.ready && npc_physics.request==requests_before_probe && npc_physics.node[0].vtable==0x100);
-    assert(npc_physics.node[0].methods[7]==0x301c && npc_physics.node[2].readable && !npc_physics.node[3].readable);
-    assert(npc_physics.node[5].readable && npc_physics.body_flags==0x10);
-    assert(npc_physics.node[6].readable && npc_physics.node_address[6]==(uintptr_t)npc_character);
-    assert(npc_physics.node[8].readable && npc_physics.node_address[8]==(uintptr_t)npc_set8_20);
-    assert(npc_physics.node[11].readable && npc_physics.node_address[11]==(uintptr_t)npc_body_agent);
+    assert(npc_physics[0].ready && npc_physics[0].request==requests_before_probe && npc_physics[0].node[0].vtable==0x100);
+    assert(npc_physics[0].node[0].methods[7]==0x301c && npc_physics[0].node[2].readable && !npc_physics[0].node[3].readable);
+    assert(npc_physics[0].node[5].readable && npc_physics[0].body_flags==0x10);
+    assert(npc_physics[0].node[6].readable && npc_physics[0].node_address[6]==(uintptr_t)npc_character);
+    assert(npc_physics[0].node[8].readable && npc_physics[0].node_address[8]==(uintptr_t)npc_set8_20);
+    assert(npc_physics[0].node[11].readable && npc_physics[0].node_address[11]==(uintptr_t)npc_body_agent);
     assert(!memcmp(npc_before,npc_component,sizeof npc_before));
     unsigned captured_body_reads=guest_reads;
     npc_physics_observe(99,(uintptr_t)npc_component); assert(guest_reads==captured_body_reads);
@@ -653,17 +657,17 @@ int main(void) {
     npc_receiver_observe(MOD_MAIN_BASE+0x3300,77,(uintptr_t)npc_character);
     assert(npc_receiver_claimed==2 && npc_receivers[1].kind==2);
     npc_physics_late_observe(77,(uintptr_t)probe_actor);
-    assert(!npc_late_physics.ready); // initialization alone is not a later native update
+    assert(!npc_late_physics[0].ready); // initialization alone is not a later native update
     world_us+=1000000;
-    npc_physics_late_observe(77,(uintptr_t)other_actor); assert(!npc_late_physics.ready);
+    npc_physics_late_observe(77,(uintptr_t)other_actor); assert(!npc_late_physics[0].ready);
     probe_entries[0].stages=1;
     unsigned retired_late_reads=guest_reads;
     npc_physics_late_observe(77,(uintptr_t)probe_actor);
-    assert(!npc_late_physics.ready && guest_reads==retired_late_reads);
+    assert(!npc_late_physics[0].ready && guest_reads==retired_late_reads);
     probe_entries[0].stages=0;
     npc_physics_late_observe(77,(uintptr_t)probe_actor);
-    assert(npc_late_physics.ready && npc_late_physics.world_us==world_us &&
-           npc_late_physics.entry==MOD_MAIN_BASE+0x2e27b0);
+    assert(npc_late_physics[0].ready && npc_late_physics[0].world_us==world_us &&
+           npc_late_physics[0].entry==MOD_MAIN_BASE+0x2e27b0);
     unsigned late_reads=guest_reads;
     npc_physics_late_observe(77,(uintptr_t)probe_actor); assert(guest_reads==late_reads);
     uint64_t scoped_body=0; uint32_t scoped_generation=0; int64_t scoped_time=0;
@@ -671,6 +675,43 @@ int main(void) {
     ptr(npc_set+0x150,(uintptr_t)npc_body);
     assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
     assert(scoped_body==(uintptr_t)npc_body && scoped_generation==trace_generation && scoped_time==world_us);
+    // Reuse the authored actor/body addresses with a new metadata ID in the same world.
+    NpcPhysicsSnapshot old_initial=npc_physics[0], old_late=npc_late_physics[0];
+    int64_t old_physics_time=world_us;
+    probe_entries[1]=probe_entries[0]; probe_entries[1].id=probe_id+1;
+    probe_entries[1].motion_count=0; probe_entries[1].motion_last_us=0;
+    probe_entries[0].stages=15;
+    // Publication can expose the new index before the separate active-address hint changes.
+    probe_entries[1].actor=(uintptr_t)other_actor;
+    __atomic_store_n(&probe_motion_index,1,__ATOMIC_RELEASE);
+    world_us+=200000;
+    unsigned before_old_hint_reads=guest_reads;
+    coop_adapter_function(MOD_MAIN_BASE+0x3900,99,(uintptr_t)probe_actor);
+    assert(guest_reads==before_old_hint_reads && !probe_entries[1].motion_count);
+    probe_entries[1].actor=(uintptr_t)probe_actor; world_us=old_physics_time;
+    memcpy(probe_actor+0x10,&probe_entries[1].id,4); memcpy(probe_data+0x48,&probe_entries[1].id,4);
+    __atomic_store_n(&probe_motion_index,1,__ATOMIC_RELEASE);
+    unsigned before_new_body_reads=guest_reads;
+    assert(!coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    npc_velocity_scope.ready=1; npc_velocity_scope.probe=0; npc_velocity_scope.generation=trace_generation;
+    npc_velocity_scope.body_id=0x1234;
+    npc_velocity_backend_observe(MOD_MAIN_BASE+0x3c00,MOD_MAIN_BASE+0x183518,0x1234,(uintptr_t)npc_velocity);
+    assert(!npc_velocity_scope.ready && guest_reads==before_new_body_reads); // no unpublished/stale slot read
+    npc_velocity_lock_scope.ready=1; npc_velocity_lock_scope.probe=0;
+    npc_velocity_lock_observe(MOD_MAIN_BASE+0x2bb7a70,0,(uintptr_t)npc_body+0x78);
+    assert(!npc_velocity_lock_scope.ready && guest_reads==before_new_body_reads);
+    npc_physics_observe(99,(uintptr_t)npc_component);
+    world_us+=1000000; npc_physics_late_observe(77,(uintptr_t)probe_actor);
+    assert(npc_physics[1].ready && npc_late_physics[1].ready);
+    assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
+    assert(scoped_body==(uintptr_t)npc_body && !memcmp(&npc_physics[0],&old_initial,sizeof old_initial) &&
+        !memcmp(&npc_late_physics[0],&old_late,sizeof old_late));
+    assert(probe_entries[0].motion_count==1 && !probe_entries[1].motion_count);
+    // Restore the single-threaded fixture; production never clears a published slot.
+    __atomic_store_n(&probe_motion_index,0,__ATOMIC_RELEASE); probe_entries[0].stages=0;
+    memcpy(probe_actor+0x10,&probe_id,4); memcpy(probe_data+0x48,&probe_id,4); world_us=old_physics_time;
+    memset(&probe_entries[1],0,sizeof probe_entries[1]);
+    memset(&npc_physics[1],0,sizeof npc_physics[1]); memset(&npc_late_physics[1],0,sizeof npc_late_physics[1]);
     ptr(probe_actor+0x228,(uintptr_t)npc_models); ptr(npc_models+0x280,(uintptr_t)npc_model);
     ptr(npc_model,MOD_MAIN_BASE+0x3673b58); ptr(npc_model+0x18,(uintptr_t)probe_actor); npc_model[0x9c]=1;
     uint64_t scoped_model; uint32_t model_generation;
@@ -791,7 +832,7 @@ int main(void) {
     world_us+=200000;
     unsigned reads_before_motion=guest_reads;
     coop_adapter_function(MOD_MAIN_BASE+0x3900,99,(uintptr_t)probe_actor);
-    assert(probe_motion_count==1 && guest_reads==reads_before_motion); // no actor reads after retirement begins
+    assert(probe_entries[0].motion_count==1 && guest_reads==reads_before_motion); // no actor reads after retirement begins
     probe_remove.x[1] = (uintptr_t)probe_actor;
     probe_remove.x[30] = MOD_MAIN_BASE+0x63bc40;
     coop_adapter_actor_teardown(MOD_MAIN_BASE+0x3d45e0,&probe_remove);
@@ -822,8 +863,25 @@ int main(void) {
     coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3900,MOD_MAIN_BASE+0x3800,(uintptr_t)probe_heap,(uintptr_t)other_actor,0);
     coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3900,MOD_MAIN_BASE+0x3804,(uintptr_t)probe_heap,(uintptr_t)probe_actor,0);
     assert(!probe_allocator_claimed);
+    char previous_probe_name[32]; memcpy(previous_probe_name,actor_request_entries[requests_before_probe].name,32);
+    uint64_t previous_probe_caller=actor_request_entries[requests_before_probe].caller;
+    strcpy(actor_request_entries[requests_before_probe].name,"Npc_Road_001");
+    actor_request_entries[requests_before_probe].caller=RT_RET_HOST;
+    assert(!coop_adapter_npc_probe_retired((uintptr_t)probe_actor,trace_generation,probe_id));
     coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3900,MOD_MAIN_BASE+0x3800,(uintptr_t)probe_heap,(uintptr_t)probe_actor,0);
     assert(probe_allocator_claimed==1 && !dispose_scope.target && guest_reads==probe_retired_reads);
+    assert(coop_adapter_npc_probe_retired((uintptr_t)probe_actor,trace_generation,probe_id));
+    assert(!coop_adapter_npc_probe_retired((uintptr_t)probe_actor,trace_generation,probe_id+1));
+    assert(!coop_adapter_npc_probe_retired((uintptr_t)probe_actor,trace_generation+1,probe_id));
+    resource_entries[requests_before_probe].cleanup_same=0;
+    assert(!coop_adapter_npc_probe_retired((uintptr_t)probe_actor,trace_generation,probe_id));
+    resource_entries[requests_before_probe].cleanup_same=1;
+    unsigned saved_stages=probe_entries[0].stages; probe_entries[0].stages=7;
+    assert(!coop_adapter_npc_probe_retired((uintptr_t)probe_actor,trace_generation,probe_id));
+    probe_entries[0].stages=saved_stages;
+    assert(guest_reads==probe_retired_reads); // copied retirement evidence never dereferences guest memory
+    memcpy(actor_request_entries[requests_before_probe].name,previous_probe_name,32);
+    actor_request_entries[requests_before_probe].caller=previous_probe_caller;
     coop_adapter_native_dispatch(MOD_MAIN_BASE+0x3900,MOD_MAIN_BASE+0x3800,(uintptr_t)probe_heap,(uintptr_t)probe_actor,0);
     assert(probe_allocator_claimed==1 && guest_reads==probe_retired_reads);
     dispose_scope.target = MOD_MAIN_BASE+0x3900;

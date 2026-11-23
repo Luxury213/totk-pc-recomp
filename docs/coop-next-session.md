@@ -1,6 +1,6 @@
 # Co-op handover and next character milestone
 
-Checkpoint: 2026-11-18. Read this before resuming implementation, then consult
+Checkpoint: 2026-11-23. Read this before resuming implementation, then consult
 [the public plan](coop-phase2.md), [development commands](coop-development.md) and
 [native evidence](coop-native-research.md). These public documents are authoritative; private diagnostics
 under ignored `build/` supplement them.
@@ -25,6 +25,17 @@ not establish that it damages the same enemy in both games.
 
 ## Source and build checkpoint
 
+Development resumed at the user's request after the reference review. Mode 10 now passes two native
+creation/pulse/rest/removal cycles in one world, using separate retained argument/blackboard slots and
+per-probe physics snapshots. The adapter publication/TLS-scope audit, synthetic address-reuse and retired
+identity tests, 38 diagnostic report tests and six runtime probes passed. The copied-save run is
+`run-16b6eb3cd9` (45 world seconds, normal exit, source saves unchanged); see the native notes for identities
+and measured movement. Mode 10 deliberately has no figure/peer. It is a bounded lifecycle test, not the
+playable second-Link goal, session-driven spawning or permission to reuse native request storage.
+The same executable passed the mode 9 ENet/Link-figure regression `run-90cad6854a`: 160 exact origin
+submissions, both lease-expiry stops/recovery, native model hide/restore and retirement, normal game/peer
+exits and unchanged source saves. Two synthetic cycles plus one peer cycle are not peer reconnection proof.
+
 Working branch: `feature/coop-native-npc-probe`, published to
 [Luxury213's fork](https://github.com/Luxury213/totk-pc-recomp/tree/feature/coop-native-npc-probe).
 The active source worktree in the existing workspace is `build/coop-v040-source/`. The outer
@@ -42,6 +53,7 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `3fc1151` | Anchor the separately armed figure to a copied native NPC origin |
 | `53d5067` | Suppress and restore that NPC's original model through its native controller |
 | `a41fefc` | Retire the owned NPC in its verified native worker context with resource/allocator correlation |
+| `d164cab` | Reliable incompatibility rejection and isolated test-client endpoints; hosted co-op and content checks passed |
 
 The current retirement slice adds mode 9 and a complete copied-save creation/movement/visibility/removal
 diagnostic. Its evidence and limitations below supersede earlier statements that native removal is unverified;
@@ -224,27 +236,41 @@ One later hosted success alone should not be described as exhaustive resolution 
 failure; retain failures and their endpoint diagnostics if they recur. Continue native creation-storage and
 repeated actor lifecycle work after the transport checks.
 
-## Reference review on 2026-11-14
+## Reference review on 2026-11-23
 
 | Reference | Verified state | Use and limit |
 | --- | --- | --- |
-| [arnaldolima1/totk-recomp](https://github.com/arnaldolima1/totk-recomp/blob/7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c/docs/multiplayer.md) | Main still equals the pinned `7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c`; API comparison returned identical; latest release checked was game-v0.5.2, November 2 | MIT. More remains usable: final blended skeletal pose, equipment/attachment placement and native local-player hit research. Its separate worlds/saves and PvP do not establish our cooperative campaign |
-| [daurosk/totk-recomp-multiplayer](https://github.com/daurosk/totk-recomp-multiplayer) | Main `8695a9bc7a44dd208916ca594ceb4345f3e9a52d`; multiplayer unreleased. Working branches were inspected too | Its new code is GPL-3.0-or-later: behavior reference only under this repository's rules; do not copy it |
-| [Daurosk puppets branch](https://github.com/daurosk/totk-recomp-multiplayer/blob/9e9648b968fb7c5165c43d8b34a159fa83a99ca4/docs/puppets-handover.md) | Network smoothing, local position/rotation and name-tag work exist; the latest handover leaves native body, local animation and two-game testing pending | A Player-model pack without control/camera components is proposed, not demonstrated as a complete second Player |
-| [Daurosk actors branch](https://github.com/daurosk/totk-recomp-multiplayer/blob/7143114ba2ea6bc9ca8eea81b1bbcec49b97feac/runtime/net_actors_game.c) | `g_make_copy` returns zero; `g_hit` only logs an unapplied hit. Native adapter is guarded to game 1.2.1 | Ownership, epochs, game-thread separation and laboratory cases are useful behavior references. Do not reuse its addresses on 1.4.3 or call it finished combat |
-| [LFarhi's updates](https://www.reddit.com/user/LFarhi/comments/) | Author announces upcoming minimal early access through the linked Discord; no inspectable public TotK source repository was verified | Monitor primary updates; a video does not establish the actor class or cloning technique. Some unauthenticated GitHub discovery requests were rate-limited, so the search is not exhaustive |
+| [arnaldolima1/totk-recomp](https://github.com/arnaldolima1/totk-recomp/blob/7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c/docs/multiplayer.md) | API recheck: main and develop remain `7cd8a6b6fa29df2f0c2591e3f0c34fc6e60f590c`; latest release remains game-v0.5.2, November 2. No new revision since our November 14 review | MIT. Continue reusing permitted final-pose/equipment presentation research with attribution. The documented experience uses separate worlds/saves and blocks the prologue; room progress display/PvP do not establish our shared campaign or remote native controller |
+| [daurosk/totk-recomp-multiplayer](https://github.com/daurosk/totk-recomp-multiplayer) | API recheck: main remains `8695a9bc7a44dd208916ca594ceb4345f3e9a52d`, last push November 9; no releases. The actors and inspected puppets tips are unchanged | Its multiplayer code is GPL: behavior reference only under this repository's rules. Activity in the author's other games is not evidence of new TotK implementation |
+| [Daurosk puppets branch](https://github.com/daurosk/totk-recomp-multiplayer/blob/9e9648b968fb7c5165c43d8b34a159fa83a99ca4/docs/puppets-handover.md) | Re-read the same handover: body, local animation and the two-game round remain unfinished | The proposed Player-model pack still lacks verified native-controller/ownership acceptance; no newly completed second-Link implementation found there |
+| [Daurosk actors branch](https://github.com/daurosk/totk-recomp-multiplayer/blob/7143114ba2ea6bc9ca8eea81b1bbcec49b97feac/runtime/net_actors_game.c) | Re-read actual code: `g_make_copy` still returns zero, `g_hit` remains unapplied and the adapter targets 1.2.1 | Session ownership, epochs and authoritative interaction tests remain behavioral references. Do not copy GPL code or reuse those addresses for 1.4.3 |
+| [LFarhi's demonstration and author comments](https://www.reddit.com/r/decomps/comments/1xpt33w/comment/19s98nqyajgww/) | Demonstration uses two local game instances. The author says the mod changes ARM code with few changes to the recomp fork. No public TotK implementation/release was verified in this review | Useful native-hook/mod architecture lead, not inspectable cloning code. The November 22 news story links the earlier November demonstration; publication date alone is not a new technical milestone |
 
-The source/behavior distinctions are intentional. No GPL implementation was incorporated and no completed
-1.4.3 Player-clone implementation was found in the inspected sources.
+Discovery also found [firefloc's server image](https://github.com/firefloc/totk-online-multiplayer-amp-image)
+and [airnod's Optimizer compatibility patch](https://github.com/airnod/totk-optimizer-online-fix). Their source
+describes server packaging and an emulator-mod compatibility fix, respectively, not a new native recomp
+character implementation. They do not supply the missing actor lifecycle/controller route.
+
+GitHub metadata, branches, releases and targeted source were checked rather than relying on README claims.
+Repository discovery included forks: the broad README query had 307 results and only its first 100 ranked
+results were inspected. Initial unauthenticated search was rate-limited; authenticated public-repository
+search succeeded. Reddit's submitted-post JSON was blocked. This is a bounded public-source review, not a
+claim that no private or unindexed project exists. A similarly named GitHub account was not attributed to
+LFarhi without an author-provided link. No external implementation was copied and no feature work resumed.
+
+Our priority remains the independent native companion and repeatable lifecycle. The existing permissive
+render/pose extraction should be extended for gear/action fidelity rather than rebuilt. No inspected update
+provides a verified drop-in 1.4.3 Player clone, shared enemy authority or prologue-capable co-op campaign.
 
 ## Ordered work for the next session
 
 1. **Complete native lifecycle and ground-contact acceptance.** Ordinary presence has no collider; mode 7 follows
    the validated NPC's native origin, and mode 8 now suppresses/restores only that NPC's original model through
    the inspected native controller API. Retain its bounded publication lease, identity/code guards and restore
-   fallback. Mode 9 now passes one native retirement with resource/allocator correlation. Next verify
-   creation completion/rejection/cancellation and storage ownership, then repeatable creation across
-   disconnect/load/reconnect, followed by
+   fallback. Mode 9 now passes one native retirement with resource/allocator correlation.
+   Mode 10 also passes two native pulse/removal cycles in the same world using separately retained slots.
+   Next bind fresh session/peer/actor identities and verify session-driven creation/retirement, including
+   completion/rejection/cancellation and reusable storage ownership. Then test disconnect/load/reconnect and
    unobstructed feet on flat ground, slopes and steps. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship

@@ -458,6 +458,30 @@ passed with validation after correcting outdated texture fixtures. These do not 
 
 ## Source checks
 
+For a bounded repeated-lifecycle diagnostic, use mode 10 with two recorded inventory drops:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-cycles --without-figure --input-script "<recorded two-drop script>" --seconds 45 --timeout 180
+```
+
+This requires `isolated-npc-two-cycles-v1` in the copied timed profile and permits at most two injected
+`Npc_Road_001` requests. Each has its own retained creation argument/blackboard storage; neither slot is reused
+or freed. The second request requires the first actor's accepted native retirement, request/queue/cleanup,
+resource identity and allocator handoff. This is not evidence the allocator call returned or general storage
+reuse. The verified inventory-drop caller/ABI/code guards remain mandatory. Unlike earlier modes, this mode
+accepts other bounded `Weapon_` names at that same caller because dropping the first item changes its slot.
+
+Each actor receives the bounded native forward/reverse/stop pulse, then the guarded retirement after measured
+rest. Physics snapshots and sample budgets are retained per probe; a new actor cannot inherit a prior TLS
+consumer/lock scope, including when an address is reused within the same world. Published snapshot slots are
+never reset. Rendering and the network worker make no physics calls.
+
+`native_npc_cycles` requires two distinct actor IDs in one world, both initialization/movement/consumer/rest/
+retirement sequences, and correlation with each request's resource/allocator evidence. It rejects missing or
+borrowed lifetimes and incomplete cycles. This mode deliberately has no figure/peer: it tests repeated native
+lifecycle, not human control, peer reconnection, Link combat or a shared campaign. Use mode 9's separate evidence
+for native-origin Link presentation. Both paths still require further integration before gameplay acceptance.
+
 Run with `.venv` and UCRT64; these synthetic checks need no game, keys, saves or GPU:
 
 ```powershell

@@ -1,5 +1,6 @@
 """Check diagnostic acceptance using synthetic logs, without game files or Windows processes."""
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -442,6 +443,55 @@ class DiagnosticChecks(unittest.TestCase):
         self.assertTrue(report['allocator_handoff_observed'])
         self.assertTrue(report['resource_lifetime_observed'])
         self.assertFalse(report['acceptance_passed'])
+
+    def npc_cycles_fixture(self):
+        result=[]
+        for cycle in (1,2):
+            shift=(cycle-1)*10000000; probe=9+cycle; request=4+cycle; actor_id=16+cycle
+            result.append(f'coop native npc cycle begin: cycle {cycle}, world us {1000000+shift}, prior actor id {-1 if cycle==1 else 17}, prior retired {cycle-1};')
+            result.extend(['coop native spawn owned: pos 0 3 0, empty blackboard, actor dependencies absent;',
+                'coop native spawn probe: queued yes, name Npc_Road_001, original CPU restored;',
+                f'coop native spawn request: request {request}, name Npc_Road_001, watcher absent;'])
+            events=object_events(probe,'Npc_Road_001',request); resources=resource_events(request,'Npc_Road_001')
+            result += [events[0],resources[0]]
+            result.append(f'coop native npc cycle binding: cycle {cycle}, generation 3, actor id {actor_id}, world us {2000000+shift};')
+            motion,spawn=self.npc_motion_fixture()
+            motion[0]=motion[0].replace('world us 0,','world us 1500000,')
+            for line in motion:
+                line=line.replace('probe 10,',f'probe {probe},').replace('request 5,',f'request {request},')
+                line=re.sub(r'world us (\d+)',lambda m:'world us '+str(int(m[1])+shift),line)
+                result.append(line)
+            for point in spawn['samples']:
+                x,y,z=point['pos']
+                result.append(f'coop native spawn motion: probe {probe}, request {request}, world us {point["world_us"]+shift}, pos {x:.6f} {y:.6f} {z:.6f}, entry main+0x2e27b0;')
+            for index,at in enumerate((2000000,2500000,3000000,3500000),1):
+                result.append(f'coop native npc velocity consumer reapply: correction {index}, generation 3, world us {at+shift}; same live pending request, original CPU restored')
+            result.append(f'coop native npc retirement request: generation 3, actor id {actor_id}, world us {6000000+shift}, result 1, worker 0, rest samples 31, rest us 1000000;')
+            result += events[1:]+[resources[1],f'coop native probe allocator: entry main+0x100, caller 0x1000000020, probe {probe}, name Npc_Road_001, cleanup scope same, actor argument same, host thread 7;']
+        return result
+
+    def test_two_cycles_require_separate_identities_and_complete_native_evidence(self):
+        lines=self.npc_cycles_fixture()
+        report=diagnose.npc_cycles_summary(lines)
+        self.assertTrue(report['acceptance_passed'] and report['repeated_in_process_verified'])
+        self.assertEqual(len(report['cycles']),2)
+        self.assertFalse(report['request_storage_reused'] or report['reconnect_verified'] or report['human_peer_verified'])
+        for token in ('cycle begin: cycle 2,','cycle binding: cycle 2,','request 6, name Npc_Road_001, watcher',
+                      'probe 11, name Npc_Road_001, stage request', 'probe 11, name Npc_Road_001, stage queue',
+                      'probe 11, name Npc_Road_001, stage cleanup', 'resource cleanup:', 'probe allocator:',
+                      'velocity consumer reapply:','npc physics: probe 11,'):
+            with self.subTest(missing=token):
+                self.assertFalse(diagnose.npc_cycles_summary([line for line in lines if token not in line])['acceptance_passed'])
+        for before,after in (('actor id 18,','actor id 17,'),('prior retired 1;','prior retired 0;'),
+                             ('prior actor id 17,','prior actor id 19,'),('rest us 1000000;','rest us 1000;'),
+                             ('rest samples 31,','rest samples 1,'),('result 1, worker','result 0, worker'),
+                             ('cycle 2, generation 3,','cycle 2, generation 4,'),('request 6,','request 5,')):
+            with self.subTest(changed=before):
+                self.assertFalse(diagnose.npc_cycles_summary([line.replace(before,after) for line in lines])['acceptance_passed'])
+        self.assertFalse(diagnose.npc_cycles_summary(lines+[lines[0]])['acceptance_passed'])
+        self.assertFalse(diagnose.npc_cycles_summary(lines[::-1])['acceptance_passed'])
+        extra=next(line for line in lines if 'npc retirement request:' in line)
+        self.assertFalse(diagnose.npc_cycles_summary(lines+[extra.replace('world us 6000000','world us 0')])['acceptance_passed'])
 
     def test_applied_inputs_and_native_movement(self):
         report = diagnose.local_control_summary([sample(1750, 1, 0), sample(3000, 1, 1), *control_inputs()])

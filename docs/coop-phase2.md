@@ -15,7 +15,7 @@ Visual feet/terrain and repeated native lifecycle acceptance remain open. The te
 the sender's Y and can misplace it on slopes. An origin calibration or scale adjustment cannot complete this gate.
 
 **Resume here:** [the next-session handover](coop-next-session.md) records the tested source/build checkpoint,
-the November 14 reference review and the ordered work toward original Link movement and attacks. The next
+the latest reference review and the ordered work toward original Link movement and attacks. The next
 character milestone includes final blended pose and equipment replication, original run/jump/attack evidence,
 and a verified native companion lifecycle. The current NPC stream does not establish Player behavior.
 
@@ -38,6 +38,7 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 | Phase 2: native-origin figure experiment | Mode 7 copies the owned NPC's actor origin to the Link figure; 194 exact capture/submission matches and native movement gates passed on a slope | The original NPC appearance remains; ground/feet visual acceptance, appearance replacement, retirement and human control are still pending |
 | Phase 2: native appearance experiment | Mode 8 suppresses the owned NPC mesh while publishing Link and restores it after the peer exits; images, origin and native movement gates passed | One controlled hide/restore pair; no native retirement, repeated creation, persistent model-state authority or human control |
 | Phase 2: native retirement experiment | Mode 9 passed one complete creation/movement/visibility/retirement run; the same NPC reached request, queue, resource cleanup and allocator handoff | No repeated lifecycle in one process, creation-storage reuse, reconnect/load acceptance or human control |
+| Phase 2: two native cycles | Mode 10 passed two creation/pulse/rest/removal cycles in one world with distinct IDs and separately correlated cleanup | Two retained slots, inventory-drop scheduling and no figure/peer; session-driven recreation, reusable storage, scene transitions and human control remain pending |
 | Phase 2: ordinary native character commands | Disabled; the ordinary command queue rejects mutation and capabilities remain presence-only | Production movement/animation contract, Link binding, removal, shared world identities and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 

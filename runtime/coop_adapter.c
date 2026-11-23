@@ -409,19 +409,20 @@ static struct {
     uint32_t generation, stage, reason, actor_state, pending, host_thread;
     unsigned ready;
 } teardown_entries[TEARDOWN_TRACE_LIMIT];
-enum { PROBE_LIMIT = 16, PROBE_TEARDOWN_LIMIT = 3 * PROBE_LIMIT };
+enum { PROBE_LIMIT = 32, PROBE_TEARDOWN_LIMIT = 3 * PROBE_LIMIT };
 static unsigned probe_requests, probe_claimed, probe_consumed, probe_teardown_claimed, probe_teardown_consumed;
 static struct {
     uint64_t actor, metadata, address, caller;
     int32_t id;
     uint32_t generation, host_thread;
-    unsigned request, ready, stages;
+    unsigned request, ready, stages, motion_count;
+    int64_t motion_last_us;
 } probe_entries[PROBE_LIMIT];
 // Only the isolated host-injected request is sampled here. Native calls supply a live receiver;
 // retirement disables sampling before cleanup, and metadata/ID checks reject recycled storage.
 static uint64_t probe_motion_actor;
-static unsigned probe_motion_index, probe_motion_count;
-static int64_t probe_motion_last_us;
+static unsigned probe_motion_index;
+static unsigned npc_probe_index(void) { return __atomic_load_n(&probe_motion_index, __ATOMIC_ACQUIRE); }
 
 // NPC-only snapshots at the Physics transform builder and a later actor update. The component's owner (+0x38) and
 // controller-set field (+0x20) come from that entry's reads, not from the Player's component layout.
@@ -433,10 +434,10 @@ typedef struct {
     uint64_t node_address[12], body_flags;
     struct { uint64_t vtable, methods[8]; int readable; } node[12];
 } NpcPhysicsSnapshot;
-static NpcPhysicsSnapshot npc_physics, npc_late_physics;
+static NpcPhysicsSnapshot npc_physics[PROBE_LIMIT], npc_late_physics[PROBE_LIMIT];
 static unsigned npc_receiver_claimed, npc_receiver_consumed;
 static struct { uint64_t address, caller; int64_t world_us; uint32_t thread, kind; unsigned ready; } npc_receivers[64];
-enum { NPC_VELOCITY_TRACE_LIMIT = 192 };
+enum { NPC_VELOCITY_TRACE_LIMIT = 384 };
 static unsigned npc_velocity_claimed, npc_velocity_consumed;
 static struct {
     uint64_t entry, caller;
@@ -445,8 +446,8 @@ static struct {
     float velocity[3];
     unsigned backend, ready;
 } npc_velocity_entries[NPC_VELOCITY_TRACE_LIMIT];
-static _Thread_local struct { uint64_t body_id; uint32_t generation, flags; int ready; } npc_velocity_scope;
-static _Thread_local struct { uint64_t request; uint32_t generation; int ready; } npc_velocity_lock_scope;
+static _Thread_local struct { uint64_t body_id; uint32_t generation, flags; unsigned probe; int ready; } npc_velocity_scope;
+static _Thread_local struct { uint64_t request; uint32_t generation; unsigned probe; int ready; } npc_velocity_lock_scope;
 
 static uint64_t main_relative(uint64_t address) {
     return address >= MOD_MAIN_BASE && address - MOD_MAIN_BASE < MOD_MAIN_SIZE ? address - MOD_MAIN_BASE : 0;
@@ -463,10 +464,10 @@ static int probe_identity_live(unsigned i, uint64_t actor) {
            guest_s32(actor + 0x10) == id && guest_s32(meta + 0x48) == id;
 }
 
-static void npc_physics_capture(NpcPhysicsSnapshot *snapshot, uint64_t entry, uint64_t caller, uint64_t component) {
+static void npc_physics_capture(NpcPhysicsSnapshot *snapshot, uint64_t entry, uint64_t caller, uint64_t component, unsigned i) {
     if (__atomic_load_n(&snapshot->ready, __ATOMIC_ACQUIRE)) return;
-    uint64_t actor = __atomic_load_n(&probe_motion_actor, __ATOMIC_ACQUIRE);
-    unsigned i = probe_motion_index;
+    if (!__atomic_load_n(&probe_entries[i].ready, __ATOMIC_ACQUIRE)) return;
+    uint64_t actor = probe_entries[i].actor;
     if (!actor || !probe_identity_live(i, actor)) return;
     unsigned request = probe_entries[i].request;
     if (request >= ACTOR_REQUEST_TRACE_LIMIT || strcmp(actor_request_entries[request].name, "Npc_Road_001") ||
@@ -519,24 +520,50 @@ static void npc_physics_capture(NpcPhysicsSnapshot *snapshot, uint64_t entry, ui
 }
 
 static void npc_physics_observe(uint64_t caller, uint64_t component) {
-    npc_physics_capture(&npc_physics, MOD_MAIN_BASE + 0xa0f3f0ull, caller, component);
+    unsigned index=npc_probe_index();
+    npc_physics_capture(&npc_physics[index], MOD_MAIN_BASE + 0xa0f3f0ull, caller, component,index);
 }
 
 static void npc_physics_late_observe(uint64_t caller, uint64_t actor) {
-    if (__atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE) ||
-        !__atomic_load_n(&npc_physics.ready, __ATOMIC_ACQUIRE) || actor != probe_entries[npc_physics.probe].actor ||
-        frame_step_world_us() < npc_physics.world_us + 1000000 ||
-        !probe_identity_live(npc_physics.probe, actor)) return;
-    npc_physics_capture(&npc_late_physics, MOD_MAIN_BASE + 0x2e27b0ull, caller, npc_physics.node_address[0]);
+    unsigned index = npc_probe_index();
+    NpcPhysicsSnapshot *initial = &npc_physics[index];
+    NpcPhysicsSnapshot *late = &npc_late_physics[index];
+
+    if (__atomic_load_n(&late->ready, __ATOMIC_ACQUIRE) ||
+        !__atomic_load_n(&initial->ready, __ATOMIC_ACQUIRE) || actor != probe_entries[initial->probe].actor ||
+        frame_step_world_us() < initial->world_us + 1000000 ||
+        !probe_identity_live(initial->probe, actor)) return;
+    npc_physics_capture(late, MOD_MAIN_BASE + 0x2e27b0ull, caller, initial->node_address[0],index);
+}
+
+int coop_adapter_npc_probe_retired(uint64_t actor,uint32_t generation,int32_t id) {
+    if (!actor || !generation || rt_game_version!=143 || !__atomic_load_n(&trace_enabled,__ATOMIC_ACQUIRE) ||
+        generation!=__atomic_load_n(&trace_generation,__ATOMIC_ACQUIRE)) return 0;
+    for (unsigned i=0;i<PROBE_LIMIT;i++) {
+        if (!__atomic_load_n(&probe_entries[i].ready,__ATOMIC_ACQUIRE) || probe_entries[i].actor!=actor ||
+            probe_entries[i].generation!=generation || probe_entries[i].id!=id ||
+            (__atomic_load_n(&probe_entries[i].stages,__ATOMIC_ACQUIRE)&15)!=15) continue;
+        unsigned request=probe_entries[i].request;
+        if (request>=ACTOR_REQUEST_TRACE_LIMIT || !__atomic_load_n(&actor_request_entries[request].ready,__ATOMIC_ACQUIRE) ||
+            actor_request_entries[request].caller!=RT_RET_HOST || strcmp(actor_request_entries[request].name,"Npc_Road_001")) continue;
+        return __atomic_load_n(&resource_entries[request].cleanup_ready,__ATOMIC_ACQUIRE) &&
+            __atomic_load_n(&resource_entries[request].ready,__ATOMIC_ACQUIRE) &&
+            resource_entries[request].cleanup_same && resource_entries[request].actor_id==id &&
+            resource_entries[request].actor==actor;
+    }
+    return 0;
 }
 
 int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *generation, int64_t *observed_us) {
+    unsigned index = npc_probe_index();
+    NpcPhysicsSnapshot *late = &npc_late_physics[index];
+
     if (!body || !generation || !observed_us || rt_game_version != 143 ||
         !__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) ||
-        !__atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE)) return 0;
-    NpcPhysicsSnapshot *s = &npc_late_physics;
+        !__atomic_load_n(&late->ready, __ATOMIC_ACQUIRE)) return 0;
+    NpcPhysicsSnapshot *s = late;
     const uint64_t *n = s->node_address;
-    if (s->generation != __atomic_load_n(&trace_generation, __ATOMIC_ACQUIRE) ||
+    if (s->probe != index || s->generation != __atomic_load_n(&trace_generation, __ATOMIC_ACQUIRE) ||
         !probe_identity_live(s->probe, actor) || frame_step_world_us() < s->world_us ||
         strcmp(actor_request_entries[s->request].name, "Npc_Road_001") ||
         !guest_readable(n[0], 0x40) || guest_pointer(n[0] + 0x38) != actor || guest_pointer(n[0] + 0x20) != n[1] ||
@@ -555,12 +582,13 @@ int coop_adapter_npc_probe_body(uint64_t actor, uint64_t *body, uint32_t *genera
 static void npc_figure_observe(CoopNativeBody *out) {
     memset(out,0,sizeof *out);
     if (!coop_native_probe_figure_enabled()) return;
-    uint64_t actor=__atomic_load_n(&probe_motion_actor,__ATOMIC_ACQUIRE), body, again;
+    unsigned index=npc_probe_index();
+    uint64_t actor=__atomic_load_n(&probe_entries[index].ready,__ATOMIC_ACQUIRE) ? probe_entries[index].actor : 0, body, again;
     uint32_t generation, rechecked; int64_t observed_us;
     if (!actor || !coop_adapter_npc_probe_body(actor,&body,&generation,&observed_us) ||
         (uint32_t)guest_s32(actor+0x24)-7u<5u) return;
     CoopNativeBody copy={.time_ns=plat_now_ns(),.world_us=frame_step_world_us(),.generation=generation,
-        .request=probe_entries[probe_motion_index].request,.actor_id=probe_entries[probe_motion_index].id};
+        .request=probe_entries[index].request,.actor_id=probe_entries[index].id};
     if (!guest_readable(actor+0x2b4,sizeof copy.pos) || !plat_mem_read(actor+0x2b4,copy.pos,sizeof copy.pos) ||
         !guest_readable(body+0xa0,0x28) || !plat_mem_read(body+0xa4,&copy.body_pos[0],4) ||
         !plat_mem_read(body+0xb4,&copy.body_pos[1],4) || !plat_mem_read(body+0xc4,&copy.body_pos[2],4) ||
@@ -614,14 +642,17 @@ static void npc_velocity_capture(uint64_t entry, uint64_t caller, uint32_t gener
 }
 
 void coop_adapter_npc_velocity_consume(const Cpu *cpu) {
+    unsigned index = npc_probe_index();
+    NpcPhysicsSnapshot *late = &npc_late_physics[index];
+
     // Every native request consumer invalidates this thread's preceding handoff, including other actors.
     npc_velocity_scope.ready = 0;
     if (!cpu || !__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) ||
-        !__atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE) ||
+        !__atomic_load_n(&late->ready, __ATOMIC_ACQUIRE) ||
         __atomic_load_n(&npc_velocity_claimed, __ATOMIC_RELAXED) >= NPC_VELOCITY_TRACE_LIMIT ||
-        cpu->x[1] != npc_late_physics.node_address[5]) return;
+        cpu->x[1] != late->node_address[5]) return;
     uint64_t body; uint32_t generation; int64_t observed_us;
-    if (!coop_adapter_npc_probe_body(probe_entries[npc_late_physics.probe].actor, &body, &generation, &observed_us) ||
+    if (!coop_adapter_npc_probe_body(probe_entries[late->probe].actor, &body, &generation, &observed_us) ||
         body != cpu->x[1] || !guest_readable(cpu->x[0], 0xd8)) return;
     uint32_t flags = (uint32_t)guest_s32(cpu->x[0] + 0xd4);
     float velocity[3];
@@ -631,18 +662,25 @@ void coop_adapter_npc_velocity_consume(const Cpu *cpu) {
     uint64_t sdk = guest_pointer(body + 0x70);
     if (!guest_readable(sdk, 0x10)) return;
     npc_velocity_scope.body_id = guest_pointer(sdk + 8);
+    npc_velocity_scope.probe = index;
     npc_velocity_scope.generation = generation; npc_velocity_scope.flags = flags; npc_velocity_scope.ready = 1;
     npc_velocity_capture(MOD_MAIN_BASE + 0x182eb0ull, cpu->x[30], generation, flags, velocity, 0);
 }
 
 static void npc_velocity_backend_observe(uint64_t entry, uint64_t caller, uint64_t body_id, uint64_t vector) {
-    if (!npc_velocity_scope.ready || (caller != MOD_MAIN_BASE + 0x183078ull &&
+    unsigned index = npc_probe_index();
+    NpcPhysicsSnapshot *late = &npc_late_physics[index];
+
+    // A later creation may reuse the same body address in the same world. Never inherit the old TLS scope.
+    if (npc_velocity_scope.ready && npc_velocity_scope.probe!=index) npc_velocity_scope.ready=0;
+    if (!npc_velocity_scope.ready || !__atomic_load_n(&late->ready,__ATOMIC_ACQUIRE) || late->probe!=index ||
+        (caller != MOD_MAIN_BASE + 0x183078ull &&
         caller != MOD_MAIN_BASE + 0x183518ull && caller != MOD_MAIN_BASE + 0x1843b0ull) ||
         body_id != npc_velocity_scope.body_id || !__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED) ||
         npc_velocity_scope.generation != __atomic_load_n(&trace_generation, __ATOMIC_ACQUIRE) ||
         __atomic_load_n(&npc_velocity_claimed, __ATOMIC_RELAXED) >= NPC_VELOCITY_TRACE_LIMIT || !main_relative(entry)) return;
     uint64_t body; uint32_t generation; int64_t observed_us;
-    if (!coop_adapter_npc_probe_body(probe_entries[npc_late_physics.probe].actor, &body, &generation, &observed_us)) return;
+    if (!coop_adapter_npc_probe_body(probe_entries[late->probe].actor, &body, &generation, &observed_us)) return;
     uint64_t sdk = guest_pointer(body + 0x70);
     float velocity[3];
     if (!guest_readable(sdk, 0x10) || guest_pointer(sdk + 8) != body_id ||
@@ -653,14 +691,18 @@ static void npc_velocity_backend_observe(uint64_t entry, uint64_t caller, uint64
 }
 
 static void npc_velocity_lock_observe(uint64_t entry, uint64_t caller, uint64_t mutex) {
+    unsigned index = npc_probe_index();
+    NpcPhysicsSnapshot *late = &npc_late_physics[index];
+
     int unlock = entry == MOD_MAIN_BASE + 0x2bb7a70ull;
+    if (npc_velocity_lock_scope.ready && npc_velocity_lock_scope.probe!=index) npc_velocity_lock_scope.ready=0;
     if ((!unlock && entry != MOD_MAIN_BASE + 0x2bb7a60ull) ||
-        !__atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE) ||
-        mutex != npc_late_physics.node_address[5] + 0x78 ||
+        !__atomic_load_n(&late->ready, __ATOMIC_ACQUIRE) ||
+        mutex != late->node_address[5] + 0x78 ||
         __atomic_load_n(&npc_velocity_claimed, __ATOMIC_RELAXED) >= NPC_VELOCITY_TRACE_LIMIT ||
         (unlock && !npc_velocity_lock_scope.ready)) return;
     uint64_t body; uint32_t generation; int64_t observed_us;
-    if (!coop_adapter_npc_probe_body(probe_entries[npc_late_physics.probe].actor, &body, &generation, &observed_us)) return;
+    if (!coop_adapter_npc_probe_body(probe_entries[late->probe].actor, &body, &generation, &observed_us)) return;
     uint64_t request = guest_pointer(body + 0x60);
     float velocity[3];
     if (!guest_readable(request, 0xd8) || !plat_mem_read(request + 0x44, velocity, sizeof velocity)) return;
@@ -670,6 +712,7 @@ static void npc_velocity_lock_observe(uint64_t entry, uint64_t caller, uint64_t 
         npc_velocity_lock_scope.ready = 0;
         if (!(flags & 0x80) || (fabsf(velocity[0]) < .001f && fabsf(velocity[1]) < .001f && fabsf(velocity[2]) < .001f)) return;
         npc_velocity_lock_scope.request = request; npc_velocity_lock_scope.generation = generation;
+        npc_velocity_lock_scope.probe = index;
         npc_velocity_lock_scope.ready = 1;
     } else {
         npc_velocity_lock_scope.ready = 0;
@@ -679,8 +722,12 @@ static void npc_velocity_lock_observe(uint64_t entry, uint64_t caller, uint64_t 
 }
 
 static void npc_receiver_observe(uint64_t address, uint64_t caller, uint64_t argument) {
-    if (!argument || !__atomic_load_n(&npc_physics.ready, __ATOMIC_ACQUIRE) || !main_relative(address)) return;
-    NpcPhysicsSnapshot *snapshot = __atomic_load_n(&npc_late_physics.ready, __ATOMIC_ACQUIRE) ? &npc_late_physics : &npc_physics;
+    unsigned index = npc_probe_index();
+    NpcPhysicsSnapshot *initial = &npc_physics[index];
+    NpcPhysicsSnapshot *late = &npc_late_physics[index];
+
+    if (!argument || !__atomic_load_n(&initial->ready, __ATOMIC_ACQUIRE) || !main_relative(address)) return;
+    NpcPhysicsSnapshot *snapshot = __atomic_load_n(&late->ready, __ATOMIC_ACQUIRE) ? late : initial;
     unsigned kind = argument == snapshot->node_address[0] ? 8 : argument == snapshot->node_address[1] ? 9 :
                     argument == snapshot->node_address[11] ? 7 : argument == snapshot->node_address[10] ? 6 :
                     argument == snapshot->node_address[9] ? 5 : argument == snapshot->node_address[6] ? 2 : argument == snapshot->node_address[5] ? 1 :
@@ -798,7 +845,7 @@ void coop_adapter_actor_request(const Cpu *cpu) {
     char prefix[6];
     if (!name_at || !plat_mem_read(name_at, prefix, sizeof prefix)) return;
     int npc = !memcmp(prefix, "Npc_Ro", sizeof prefix) && cpu->x[30] == RT_RET_HOST &&
-              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 9);
+              (cfg_int("TOTK_COOP_NATIVE_PROBE") >= 3 && cfg_int("TOTK_COOP_NATIVE_PROBE") <= 10);
     int probe = !memcmp(prefix, "Weapon", sizeof prefix) || npc;
     if (memcmp(prefix, "Player", sizeof prefix) && !probe) return;
     if (probe && (frame_step_world_us() < 6000000 ||
@@ -1025,7 +1072,7 @@ static void probe_initialized(uint64_t address, uint64_t caller, uint64_t actor,
         probe_entries[i].host_thread = plat_thread_id();
         __atomic_store_n(&probe_entries[i].ready, 1, __ATOMIC_RELEASE);
         if (actor_request_entries[request].caller == RT_RET_HOST) {
-            probe_motion_index = i;
+            __atomic_store_n(&probe_motion_index, i, __ATOMIC_RELEASE);
             __atomic_store_n(&probe_motion_actor, actor, __ATOMIC_RELEASE);
         }
         return;
@@ -1233,12 +1280,13 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
     if (address == MOD_MAIN_BASE + 0x2e27b0ull) npc_physics_late_observe(caller, argument);
     npc_receiver_observe(address, caller, argument);
     if (argument && argument == __atomic_load_n(&probe_motion_actor, __ATOMIC_ACQUIRE)) {
-        unsigned i = probe_motion_index;
+        unsigned i = npc_probe_index();
         int64_t now = frame_step_world_us();
-        int64_t last = __atomic_load_n(&probe_motion_last_us, __ATOMIC_RELAXED);
-        if (i < PROBE_LIMIT && !__atomic_load_n(&probe_entries[i].stages, __ATOMIC_ACQUIRE) &&
-            now >= last + 100000 && __atomic_load_n(&probe_motion_count, __ATOMIC_RELAXED) < 128 &&
-            __atomic_compare_exchange_n(&probe_motion_last_us, &last, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        int64_t last = __atomic_load_n(&probe_entries[i].motion_last_us, __ATOMIC_RELAXED);
+        if (i < PROBE_LIMIT && __atomic_load_n(&probe_entries[i].ready, __ATOMIC_ACQUIRE) &&
+            probe_entries[i].actor == argument && !__atomic_load_n(&probe_entries[i].stages, __ATOMIC_ACQUIRE) &&
+            now >= last + 100000 && __atomic_load_n(&probe_entries[i].motion_count, __ATOMIC_RELAXED) < 128 &&
+            __atomic_compare_exchange_n(&probe_entries[i].motion_last_us, &last, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
             uint64_t meta = probe_entries[i].metadata;
             int32_t id = probe_entries[i].id;
             float pos[3];
@@ -1248,7 +1296,7 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
                 plat_mem_read(argument + 0x2b4, pos, sizeof pos) &&
                 isfinite(pos[0]) && isfinite(pos[1]) && isfinite(pos[2]) &&
                 !__atomic_load_n(&probe_entries[i].stages, __ATOMIC_ACQUIRE)) {
-                __atomic_fetch_add(&probe_motion_count, 1, __ATOMIC_RELAXED);
+                __atomic_fetch_add(&probe_entries[i].motion_count, 1, __ATOMIC_RELAXED);
                 rt_log("coop native spawn motion: probe %u, request %u, world us %lld, pos %.6f %.6f %.6f, entry main+%#llx; native receiver observation only",
                        i, probe_entries[i].request, (long long)now, pos[0], pos[1], pos[2],
                        (unsigned long long)(address - MOD_MAIN_BASE));
@@ -1467,8 +1515,8 @@ void coop_adapter_observe(const Cpu *cpu) {
                (unsigned long long)probe_entries[i].caller, i, actor_request_entries[probe_entries[i].request].name,
                probe_entries[i].generation, probe_entries[i].host_thread, probe_entries[i].request);
     }
-    for (unsigned phase = 0; phase < 2; phase++) {
-        NpcPhysicsSnapshot *snapshot = phase ? &npc_late_physics : &npc_physics;
+    for (unsigned index = 0; index < PROBE_LIMIT; index++) for (unsigned phase = 0; phase < 2; phase++) {
+        NpcPhysicsSnapshot *snapshot = phase ? &npc_late_physics[index] : &npc_physics[index];
         if (!__atomic_load_n(&snapshot->ready, __ATOMIC_ACQUIRE) || snapshot->emitted) continue;
         static const char *const names[] = {"component", "set", "set10", "set148", "set10_8", "set10_8_18", "body158", "set8", "set8_20", "set150", "body1e0", "body1e0_28"};
         rt_log("coop native npc physics: probe %u, request %u, entry main+%#llx, caller %#llx, generation %u, world us %lld, host thread %u, phase %s; owner and metadata matched, observation only",

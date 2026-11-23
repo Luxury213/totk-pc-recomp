@@ -1,5 +1,60 @@
 # Co-op native research notes
 
+## Two retained NPC lifecycles (November 23, 2026)
+
+Mode 10 (`--native-npc-cycles`, `isolated-npc-two-cycles-v1`) permits two separately retained creation
+argument/empty-blackboard slots. A second authentic inventory-drop trigger is refused until the first actor
+has an accepted native retirement and copied request/queue/cleanup/resource/allocator-handoff evidence.
+Neither slot is reused or released. The native allocator observation is still its entry/handoff, not proof
+that the allocator call returned. This bounded experiment does not establish a reusable request pool.
+
+`coop_native_probe.c` `cycle_claim` holds the existing try-lock while checking that evidence and resetting
+the new cycle's motion state. The same verified inventory producer/ABI/code/stack guards remain in force.
+Mode 10 alone permits other bounded ASCII `Weapon_` names at that producer: the first drop changes the
+selected inventory slot. The injected name remains exactly `Npc_Road_001`. CPU/FP state and the original
+producer's watcher are preserved. Each cycle uses the bounded mode 5 pulse, then the previously verified
+native removal path after measured rest. This mode has no figure or peer.
+
+`coop_adapter.c` retains initial/later physics snapshots and motion sample budgets per initialized probe.
+The active index is atomic; published slots are never reset. Consumer/backend and lock scopes include the
+probe identity so a new creation in the same world cannot inherit a prior TLS scope, even when addresses
+are reused. The body getter checks the selected snapshot's probe. The retirement predicate reads copied
+host evidence only and rejects incompatible epochs, IDs, partial stages and mismatched resource cleanup.
+Synthetic tests cover address reuse with a new metadata ID, unpublished snapshots, stale TLS scopes and
+absence of guest reads when consulting retired identities. No native pointer enters a wire message/render
+snapshot, and no generated C, lifter or CPU header changed.
+
+The final 45-world-second copied-save diagnostic, `run-16b6eb3cd9`, passed both cycles:
+
+| Cycle | Actor ID / generation | Probe / request | Forward / reverse | Producer / consumer calls | Accepted retirement / measured rest |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 919 / 3 | 10 / 15 | 1.863586 / 1.930298 m | 59 / 59 | world 19.183969 s; 32 samples over 1.033162 s |
+| 2 | 962 / 3 | 21 / 29 | 1.932373 / 1.997864 m | 61 / 61 | world 37.183806 s; 32 samples over 1.020461 s |
+
+The second request began at world 28.050557 s with the first retired identity matched. Each actor's native
+request/queue, resource cleanup and allocator handoff correlated separately. Game exit was zero and source
+save hashes were unchanged. Inspected images show the first NPC and its absence afterward, then the second
+NPC and its later absence; camera framing clips the second actor in some frames. Grass obscures the feet.
+
+The same executable also passed the mode 9 regression `run-90cad6854a`: 32 world seconds, leased ENet
+forward/reverse/diagonal motion, both expiry rests/recovery, 160 exact native-origin figure submissions,
+native hide/restore for 6.258225 seconds across 159 figure samples, and correlated native retirement.
+Game/peer exits were zero and source saves were unchanged. Full-size images show the black-haired Link,
+the restored NPC and the later empty position. This remains one peer-driven lifecycle; mode 10's two
+synthetic cycles do not automatically establish two peer-driven joins or reconnection.
+
+Earlier runs `run-d30d795716` and `run-1797c033d8` passed before the final observer publication guard.
+An authored concurrent-publication fixture exposed a new-index/old-address window in the receiver sampler;
+it failed against the preceding guard and passes when the selected probe's ready state and actor address
+are checked before any guest read. The final two runs above repeat the relevant gameplay gates after that
+correction. This does not constitute a broad multithreaded stress or performance acceptance.
+
+This passes two bounded native lifecycles in one world. It does not pass peer-driven recreation, connection
+events as creation triggers, scene load/unload, indefinite storage reuse, human control or a shared campaign.
+The authentic inventory drop remains the creation scheduling boundary. Ordinary native capabilities stay
+disabled. Before a playable session, bind fresh peer/actor identities and establish creation/retirement at a
+verified session-driven native phase while retaining the original camera/input and terrain checks.
+
 ## Owned NPC retirement (November 18, 2026)
 
 `runtime/coop_retirement.c` adds a separately armed, one-shot mode 9 experiment. The original caller at

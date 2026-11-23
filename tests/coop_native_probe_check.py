@@ -14,7 +14,7 @@ HARNESS = r'''
 const int rt_game_version = 143;
 static unsigned char arg[0x98], prologue[28];
 static uint64_t manager, name_pointer, watcher;
-static const char name[] = "Weapon_Sword_101";
+static char name[32] = "Weapon_Sword_101";
 static uint64_t stack[3] __attribute__((aligned(16)));
 static int calls, bad_hash;
 static unsigned char npc_body[0x160], velocity_code[28] = {1}, update_code[28] = {2};
@@ -27,6 +27,7 @@ static float requested_velocity[3];
 static unsigned char npc_model[0xb0], setter_code[36]={5}, getter_code[24]={6};
 static int model_valid=1, visibility_calls;
 static unsigned retirement_calls;
+static int target_retired;
 static int retirement_rest_ready;
 static int bad_setter_hash,bad_getter_hash;
 static int32_t model_actor_id=17;
@@ -71,10 +72,13 @@ int coop_adapter_npc_probe_model(uint64_t actor,uint64_t *model,uint32_t *genera
     if (!target_valid || !model_valid || actor!=0x1abc0) return 0;
     *model=(uintptr_t)npc_model; *generation=target_generation; return 1;
 }
+int coop_adapter_npc_probe_retired(uint64_t actor,uint32_t generation,int32_t id) {
+    assert(actor==0x1abc0 && generation==3 && id==17); return target_retired;
+}
 int coop_retirement_try(Cpu *c,CoopRetirement *r) {
     if(r->attempted || !retirement_rest_ready) return 0;
     assert(c->x[0]==r->actor && r->body==(uintptr_t)npc_body && r->generation==3);
-    retirement_calls++; r->attempted=r->accepted=1; return 1;
+    retirement_calls++; r->attempted=r->accepted=1; r->actor_id=model_actor_id; return 1;
 }
 void rt_log(const char *fmt, ...) { (void)fmt; }
 void rt_fatal(const char *fmt, ...) { (void)fmt; abort(); }
@@ -133,16 +137,18 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
         assert(args[i] == (i == 3 ? 0 : original.x[i]));
     }
     if (armed >= COOP_NATIVE_PROBE_OWNED) {
+        ProbeCreateArg *prepared=armed==COOP_NATIVE_PROBE_NPC_CYCLES && attempted==2 ? &second_arg : &owned_arg;
+        ProbeBlackboard *bb=prepared==&second_arg ? &second_bb : &owned_bb;
         assert(args[1]==(uintptr_t)&owned_name && args[1]!=original.x[1]);
-        assert(args[2]==(uintptr_t)&owned_arg && args[2]!=original.x[2]);
-        assert(!strcmp(owned_name,armed >= COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101") && !strcmp(owned_arg.name,""));
-        assert(owned_arg.position[0]==12 && owned_arg.position[1]==22 && owned_arg.position[2]==30);
-        assert(owned_arg.rotation[0]==1 && owned_arg.rotation[4]==1 && owned_arg.rotation[8]==1);
-        assert(owned_arg.scale[0]==1 && owned_arg.scale[1]==1 && owned_arg.scale[2]==1);
-        assert(owned_arg.transform_flags==7 && owned_arg.blackboard==&owned_bb);
-        assert(!owned_arg.blackboard_60 && !owned_arg.parent && !owned_arg.dependent && !owned_arg.creator &&
-               !owned_arg.creator_rtti && !owned_arg.instance_heap);
-        assert(owned_bb.size==32 && owned_bb.count==0 && owned_bb.params==owned_bb.buffer);
+        assert(args[2]==(uintptr_t)prepared && args[2]!=original.x[2]);
+        assert(!strcmp(owned_name,armed >= COOP_NATIVE_PROBE_NPC ? "Npc_Road_001" : "Weapon_Sword_101") && !strcmp(prepared->name,""));
+        assert(prepared->position[0]==12 && prepared->position[1]==22 && prepared->position[2]==30);
+        assert(prepared->rotation[0]==1 && prepared->rotation[4]==1 && prepared->rotation[8]==1);
+        assert(prepared->scale[0]==1 && prepared->scale[1]==1 && prepared->scale[2]==1);
+        assert(prepared->transform_flags==7 && prepared->blackboard==bb);
+        assert(!prepared->blackboard_60 && !prepared->parent && !prepared->dependent && !prepared->creator &&
+               !prepared->creator_rtti && !prepared->instance_heap);
+        assert(bb->size==32 && bb->count==0 && bb->params==bb->buffer);
     }
     assert(c->sp == original.sp && stack[1] == 0 && stack[2] == 0);
     calls++;
@@ -438,6 +444,34 @@ int main(int argc, char **argv) {
     before_consume=velocity_calls;
     target_valid=0; coop_native_probe_npc_consume(&consumer);
     assert(velocity_calls==before_consume); // an old pending stop cannot touch the retired body
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_CYCLES); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-two-cycles-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_CYCLES); assert(armed==10);
+    reset(&c); memcpy(arg,pos,sizeof pos); world_us=10000000; target_valid=1; target_generation=3;
+    npc_motion_busy=1; coop_native_probe_request(&c); assert(!calls && !attempted); npc_motion_busy=0;
+    coop_native_probe_request(&c); assert(calls==1 && attempted==1);
+    ProbeCreateArg first_arg=owned_arg; ProbeBlackboard first_bb=owned_bb;
+    coop_native_probe_request(&c); assert(calls==1); // first actor has not retired
+    npc_retirement=(CoopRetirement){.actor=0x1abc0,.generation=3,.actor_id=17,.attempted=1};
+    coop_native_probe_request(&c); assert(calls==1); // an issued but rejected removal cannot rearm
+    npc_retirement.accepted=1; coop_native_probe_request(&c); assert(calls==1); // no cleanup/allocator correlation
+    target_retired=1;
+    strcpy(name,"Player"); coop_native_probe_request(&c); assert(calls==1);
+    strcpy(name,"Weapon_Shield_001");
+    coop_native_probe_request(&c); assert(calls==2 && attempted==2 && !npc_motion.calls && !npc_retirement.attempted);
+    assert(!memcmp(&owned_arg,&first_arg,sizeof first_arg) && !memcmp(&owned_bb,&first_bb,sizeof first_bb));
+    assert(second_arg.blackboard==&second_bb && second_bb.params==second_bb.buffer);
+    coop_native_probe_request(&c); assert(calls==2); // no third slot and no reuse
+    c.x[0]=0x1abc0; original=c; retirement_rest_ready=0;
+    unsigned prior_retirement_calls=retirement_calls; coop_native_probe_npc_update(&c);
+    assert(npc_motion.calls==1 && requested_velocity[0]==2);
+    for(unsigned i=0;i<70;i++) { world_us+=33334; coop_native_probe_npc_update(&c); }
+    assert(npc_motion.finished && !npc_retirement.attempted && retirement_calls==prior_retirement_calls);
+    world_us=npc_motion.started_us+3000000;
+    coop_native_probe_npc_update(&c); assert(retirement_calls==prior_retirement_calls);
+    retirement_rest_ready=1; coop_native_probe_npc_update(&c);
+    assert(retirement_calls==prior_retirement_calls+1 && npc_retirement.accepted);
+    assert(!memcmp(&c,&original,sizeof c) && fegetround()==saved_round);
     puts("native probes: scoped creation/velocity/visibility/retirement guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }
