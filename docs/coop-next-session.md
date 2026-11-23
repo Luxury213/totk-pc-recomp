@@ -25,6 +25,21 @@ not establish that it damages the same enemy in both games.
 
 ## Source and build checkpoint
 
+Latest slice: mode 12 passes two connection-driven native lifetimes in one running game, using the same
+test-player ID with fresh session/non-overlapping native actor identities and two separately retained request
+slots. The second creation requires the first peer to leave and its same-actor native removal/resource/cleanup/
+allocator handoff to correlate. A third request is refused. Old-session messages/disconnects and old-actor render
+acknowledgements cannot take over the second actor. A busy native copy can retain only a validated same-identity
+presentation sample within 250 ms, without renewing its age; real mismatches clear immediately. Motion's 200 ms
+receive lease and eight-world-second/256-call limits remain. No request storage is reused or released.
+
+Final copied-save runs `run-f5f24f8a5e` and `run-f3e2d3c5c0` each passed 48 world seconds, two complete native
+lifetimes, exact native-origin figure submissions, movement/consumer/visibility/rest/removal and separate resource/
+allocator evidence. Game/both-peer exits were zero and source saves unchanged. The controls repeat measured
+9.594396 m local movement; its inspected second-cycle frame shows both Links. Earlier candidate runs and the
+conservative early visibility restoration remain documented. This is bounded loopback reconnection, not
+continuous human control, scene transitions, correct capsule/model fit or a completed Phase 2.
+
 Mode 11 now passes one session-driven creation without any inventory-drop input. A copied negotiated peer
 candidate is consumed only at the verified local Player's actor-update worker, with resident/metadata/world,
 native dispatch/TLS/code and mapped writable guest-stack guards. Three optional stack arguments use a separate
@@ -68,6 +83,7 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `a41fefc` | Retire the owned NPC in its verified native worker context with resource/allocator correlation |
 | `d164cab` | Reliable incompatibility rejection and isolated test-client endpoints; hosted co-op and content checks passed |
 | `1c1d507` | Two native lifecycles with separate retained requests and per-probe snapshots; hosted co-op/content checks passed |
+| `4e7fecd` | One connection-driven native creation/movement/visibility/removal without inventory input; hosted co-op/content checks passed |
 
 The current retirement slice adds mode 9 and a complete copied-save creation/movement/visibility/removal
 diagnostic. Its evidence and limitations below supersede earlier statements that native removal is unverified;
@@ -284,8 +300,12 @@ provides a verified drop-in 1.4.3 Player clone, shared enemy authority or prolog
    fallback. Mode 9 now passes one native retirement with resource/allocator correlation.
    Mode 10 also passes two native pulse/removal cycles in the same world using separately retained slots.
    Mode 11 now passes one connection-driven creation/movement/retirement without an inventory drop.
-   Next verify a second peer join with fresh identities after complete native cleanup, retaining distinct
-   storage until reuse/cancellation ownership is established. Then test disconnect/load/reconnect and
+   Mode 12 now passes a second peer join after correlated native cleanup, with fresh session/actor identities
+   and distinct retained storage. Next prepare a separately gated human-control path with a supervised
+   continuous lifetime/leave policy and validated movement speeds. The native diagnostic currently clears
+   `C.peer_visual.flags` in `coop.c`, uses clip fallback, ignores remote position/Y and caps speed at 2 m/s;
+   preserve verified original body-pose/rotation capture for a real peer instead of rebuilding it. Do not
+   simply remove the eight-second cap or enable teleport to conceal drift. Then test scene load/reconnect and
    unobstructed feet on flat ground, slopes and steps. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship

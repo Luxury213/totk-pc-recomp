@@ -153,6 +153,27 @@ int coop_active(void) {
     return __atomic_load_n(&C_active_flag, __ATOMIC_ACQUIRE);
 }
 
+// C_lock is held. Busy native state can retain an already validated copy, never renew its timestamp or
+// borrow another session/actor's copy. The ordinary 250 ms presentation lease still bounds this fallback.
+static CoopNativeBody native_capture_locked(const CoopNetSnapshot *peer,const CoopAdapterSnapshot *adapter,
+                                           int match,uint64_t now) {
+    const CoopNativeBody *body=&adapter->native_body;
+    int eligible=peer->negotiated && peer->has_remote && peer->session && peer->peer_player && peer->remote.generation &&
+        (peer->remote.flags&COOP_SAMPLE_PLAYER) &&
+        (adapter->sample.flags&COOP_SAMPLE_PLAYER) && body->time_ns && now>=body->time_ns &&
+        now-body->time_ns<=250000000ull && body->generation==adapter->sample.generation;
+    int retain=eligible && match<0 && C.native_body.time_ns && now>=C.native_body.time_ns &&
+        now-C.native_body.time_ns<=250000000ull && C.native_session==peer->session &&
+        C.native_player==peer->peer_player && C.native_remote_generation==peer->remote.generation &&
+        C.native_body.generation==body->generation && C.native_body.actor_id==body->actor_id &&
+        C.native_body.request==body->request;
+    if (eligible && match>0) C.native_body=*body;
+    else if (!retain) C.native_body=(CoopNativeBody){0};
+    C.native_session=peer->session; C.native_player=peer->peer_player;
+    C.native_remote_generation=peer->remote.generation;
+    return C.native_body;
+}
+
 void coop_guest_observe(const Cpu *cpu) {
     int active = coop_active();
     coop_adapter_trace_enable(active && rt_game_version == 143 && cfg_bool("TOTK_COOP_TRACE_GUEST"));
@@ -172,20 +193,15 @@ void coop_guest_observe(const Cpu *cpu) {
         plat_mutex_unlock(&C_lock);
     }
     if (coop_native_probe_figure_enabled()) {
-        int bound=peer_probe && peer.negotiated && peer.has_remote && (peer.remote.flags&COOP_SAMPLE_PLAYER) &&
-            adapter.native_body.time_ns &&
-            coop_native_probe_peer_matches(peer.session,peer.peer_player,peer.remote.generation,adapter.sample.generation);
+        int match=peer_probe ? coop_native_probe_peer_matches(peer.session,peer.peer_player,peer.remote.generation,
+                                                              adapter.sample.generation) : 0;
         plat_mutex_lock(&C_lock);
-        C.native_body=bound ? adapter.native_body : (CoopNativeBody){0};
-        C.native_session=peer.session; C.native_player=peer.peer_player;
-        C.native_remote_generation=peer.remote.generation;
+        CoopNativeBody copy=native_capture_locked(&peer,&adapter,match,plat_now_ns());
         plat_mutex_unlock(&C_lock);
         static unsigned logs;
-        if (bound && __atomic_fetch_add(&logs,1,__ATOMIC_RELAXED)<512) rt_log("coop native figure capture: sample %llu, world us %lld, generation %u, actor id %d, pos %.6f %.6f %.6f, body pos %.6f %.6f %.6f; copied native origin",
-            (unsigned long long)adapter.native_body.time_ns,(long long)adapter.native_body.world_us,
-            adapter.native_body.generation,adapter.native_body.actor_id,
-            adapter.native_body.pos[0],adapter.native_body.pos[1],adapter.native_body.pos[2],
-            adapter.native_body.body_pos[0],adapter.native_body.body_pos[1],adapter.native_body.body_pos[2]);
+        if (copy.time_ns && __atomic_fetch_add(&logs,1,__ATOMIC_RELAXED)<512) rt_log("coop native figure capture: sample %llu, world us %lld, generation %u, actor id %d, pos %.6f %.6f %.6f, body pos %.6f %.6f %.6f; copied native origin",
+            (unsigned long long)copy.time_ns,(long long)copy.world_us,copy.generation,copy.actor_id,
+            copy.pos[0],copy.pos[1],copy.pos[2],copy.body_pos[0],copy.body_pos[1],copy.body_pos[2]);
     }
 }
 

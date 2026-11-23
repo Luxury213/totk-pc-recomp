@@ -97,10 +97,10 @@ int coop_adapter_npc_probe_model(uint64_t actor,uint64_t *model,uint32_t *genera
     *model=(uintptr_t)npc_model; *generation=target_generation; return 1;
 }
 int coop_adapter_npc_probe_retired(uint64_t actor,uint32_t generation,int32_t id) {
-    assert(actor==0x1abc0 && generation==3 && id==17); return target_retired;
+    assert(actor==0x1abc0 && generation==3 && id==model_actor_id); return target_retired;
 }
 int coop_retirement_try(Cpu *c,CoopRetirement *r) {
-    if(r->attempted || !retirement_rest_ready) return 0;
+    if(r->attempted || !retirement_rest_ready || c->x[0]!=r->actor) return 0;
     assert(c->x[0]==r->actor && r->body==(uintptr_t)npc_body && r->generation==3);
     retirement_calls++; r->attempted=r->accepted=1; r->actor_id=model_actor_id; return 1;
 }
@@ -165,7 +165,7 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     }
     assert(fn == MOD_MAIN_BASE+0x599670ull && n == 8);
     for (int i=0;i<n;i++) {
-        if (armed==COOP_NATIVE_PROBE_NPC_SESSION) {
+        if (session_mode()) {
             if(i==1 || i==2) continue;
             assert(args[i]==(i ? 0 : manager)); continue;
         }
@@ -173,7 +173,7 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
         assert(args[i] == (i == 3 ? 0 : original.x[i]));
     }
     if (armed >= COOP_NATIVE_PROBE_OWNED) {
-        ProbeCreateArg *prepared=armed==COOP_NATIVE_PROBE_NPC_CYCLES && attempted==2 ? &second_arg : &owned_arg;
+        ProbeCreateArg *prepared=(armed==COOP_NATIVE_PROBE_NPC_CYCLES || armed==COOP_NATIVE_PROBE_NPC_RECONNECT) && attempted==2 ? &second_arg : &owned_arg;
         ProbeBlackboard *bb=prepared==&second_arg ? &second_bb : &owned_bb;
         assert(args[1]==(uintptr_t)&owned_name && args[1]!=original.x[1]);
         assert(args[2]==(uintptr_t)prepared && args[2]!=original.x[2]);
@@ -186,7 +186,7 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
                !prepared->creator_rtti && !prepared->instance_heap);
         assert(bb->size==32 && bb->count==0 && bb->params==bb->buffer);
     }
-    if(armed==COOP_NATIVE_PROBE_NPC_SESSION) {
+    if(session_mode()) {
         assert(c->sp==original.sp-32);
         uint64_t *outgoing=(uint64_t *)(uintptr_t)c->sp;
         assert(!outgoing[0] && !outgoing[1] && !outgoing[2] && !outgoing[3]);
@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
     assert(!coop_native_probe_peer_matches(11,22,2,3));
     assert(!coop_native_probe_peer_matches(11,22,1,4));
     npc_peer.revoked=1; assert(!coop_native_probe_peer_matches(11,22,1,3));
-    npc_peer.revoked=0; npc_motion_busy=1; assert(!coop_native_probe_peer_matches(11,22,1,3));
+    npc_peer.revoked=0; npc_motion_busy=1; assert(coop_native_probe_peer_matches(11,22,1,3)==-1);
     npc_motion_busy=0; armed=6; assert(!coop_native_probe_figure_enabled());
     armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_VISIBILITY); assert(!armed);
     f=fopen(path,"wb"); assert(f); fputs("isolated-npc-native-visibility-v1\n",f); fclose(f);
@@ -560,6 +560,58 @@ int main(int argc, char **argv) {
     coop_native_probe_npc_update(&c);
     assert(retirement_calls==early_leave_retirements+1 && npc_retirement.accepted);
     assert(!memcmp(&c,&original,sizeof c)); // a leave before first figure publication still retires the body
+    armed=0; coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_RECONNECT); assert(!armed);
+    f=fopen(path,"wb"); assert(f); fputs("isolated-npc-session-reconnect-v1\n",f); fclose(f);
+    coop_native_probe_init(argv[1],1,COOP_NATIVE_PROBE_NPC_RECONNECT); assert(armed==12);
+    reset(&c); manager=(uintptr_t)session_manager; target_valid=0; target_retired=0;
+    npc_motion=(typeof(npc_motion)){0}; npc_peer=(typeof(npc_peer)){0}; npc_visibility=(typeof(npc_visibility)){0};
+    npc_session=(NpcSession){0}; npc_next_session=(NpcSession){0}; npc_previous_session=0; npc_retirement=(CoopRetirement){0};
+    c.x[0]=0x2abc0; c.x[30]=MOD_MAIN_BASE+0x2f1608; c.sp=(uintptr_t)(session_stack+sizeof session_stack); original=c;
+    join.session=101; join.remote.time_ns=100; join.state_received_ns=host_ns;
+    coop_native_probe_peer_offer(&join,3,host_ns); coop_native_probe_npc_update(&c);
+    assert(calls==1 && attempted==1 && npc_session.session==101);
+    first_arg=owned_arg; first_bb=owned_bb;
+    npc_motion=(typeof(npc_motion)){.actor=0x1abc0,.body=(uintptr_t)npc_body,.generation=3,.calls=1,.finished=1};
+    join.session=102; join.remote.time_ns=1; join.state_received_ns=++host_ns;
+    coop_native_probe_peer_offer(&join,3,host_ns);
+    assert(npc_session.revoked && npc_next_session.present && npc_next_session.session==102);
+    coop_native_probe_npc_update(&c); assert(calls==1); // the next connection waits for native cleanup
+    npc_retirement=(CoopRetirement){.actor=0x1abc0,.generation=3,.actor_id=17,.attempted=1};
+    coop_native_probe_npc_update(&c); assert(calls==1 && !npc_session.cleaned);
+    npc_retirement.accepted=1; coop_native_probe_npc_update(&c); assert(calls==1 && !npc_session.cleaned);
+    target_retired=1; worker_valid=0;
+    coop_native_probe_npc_update(&c); assert(calls==1 && npc_session.cleaned); worker_valid=1;
+    host_ns+=200000001; coop_native_probe_npc_update(&c); assert(calls==1); // cleanup cannot refresh a stale candidate
+    join.state_received_ns=host_ns; coop_native_probe_peer_offer(&join,3,host_ns);
+    coop_native_probe_npc_update(&c); assert(calls==1); // a repeated sender sample cannot refresh it either
+    join.remote.time_ns++; coop_native_probe_peer_offer(&join,3,host_ns);
+    target_generation=4; coop_native_probe_npc_update(&c); assert(calls==1); target_generation=3;
+    coop_native_probe_npc_update(&c);
+    assert(calls==2 && attempted==2 && npc_session.session==102 && npc_previous_session==101);
+    assert(!npc_motion.calls && !npc_peer.bound && !npc_retirement.attempted && !npc_visibility.calls);
+    coop_native_probe_figure_publish(3,17,host_ns);
+    assert(!npc_visibility.publication_ns); // the second body has not bound yet; no first-actor acknowledgement
+    assert(!memcmp(&first_arg,&owned_arg,sizeof first_arg) && !memcmp(&first_bb,&owned_bb,sizeof first_bb));
+    assert(second_arg.blackboard==&second_bb && !memcmp(before_stack,session_stack,sizeof session_stack));
+    assert(!memcmp(&c,&original,sizeof c) && fegetround()==saved_round);
+    CoopNetSnapshot late_peer=join; late_peer.session=101; late_peer.state_received_ns=++host_ns;
+    coop_native_probe_peer_offer(&late_peer,3,host_ns);
+    late_peer.negotiated=0; coop_native_probe_peer_offer(&late_peer,3,host_ns);
+    assert(!npc_session.revoked && !npc_peer.revoked); // old session data/leave cannot revoke the new actor
+    model_actor_id=18; cycle_actor_id=18;
+    npc_motion=(typeof(npc_motion)){.actor=0x1abc0,.body=(uintptr_t)npc_body,.generation=3,.calls=1,.finished=1,
+        .started_us=world_us-9000000};
+    coop_native_probe_figure_publish(3,18,host_ns); assert(npc_visibility.publication_ns==host_ns);
+    coop_native_probe_figure_publish(3,17,host_ns+1); assert(npc_visibility.publication_ns==host_ns);
+    coop_native_probe_figure_publish(4,18,host_ns+1); assert(npc_visibility.publication_ns==host_ns);
+    target_valid=1; c.x[0]=0x1abc0; original=c;
+    unsigned before_leave=retirement_calls;
+    coop_native_probe_npc_update(&c); assert(retirement_calls==before_leave); // a still-connected peer prevents retirement
+    join.negotiated=0; coop_native_probe_peer_offer(&join,3,host_ns);
+    coop_native_probe_npc_update(&c); assert(retirement_calls==before_leave+1);
+    join.negotiated=1; join.session=103; join.state_received_ns=++host_ns; join.remote.time_ns++;
+    coop_native_probe_peer_offer(&join,3,host_ns);
+    c.x[0]=0x2abc0; original=c; coop_native_probe_npc_update(&c); assert(calls==2); // no third retained slot
     puts("native probes: scoped creation/velocity/visibility/retirement guards, bounded requests and CPU/FP restoration passed");
     return 0;
 }

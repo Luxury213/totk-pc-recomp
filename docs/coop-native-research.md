@@ -1,5 +1,57 @@
 # Co-op native research notes
 
+## Two session-owned native lifetimes (November 23, 2026)
+
+Mode 12 (`--native-npc-reconnect`, `isolated-npc-session-reconnect-v1`) combines mode 11's inspected
+creation phase with mode 10's separately retained request slots. The first peer must leave and its actor
+must have accepted removal plus copied request/queue/resource/cleanup/allocator-handoff evidence before
+the second request can run. The native allocator call's return is still unobserved. Each slot remains valid
+until process exit, with no overwrite/release or third request. Rejected/incomplete removal cannot rearm it.
+
+The network worker already chooses a fresh session nonce per transport connection. The diagnostic reuses
+the same private peer profile/player ID, starts the next peer only after the previous exits successfully
+and the first actor's copied cleanup marker appears, and keeps the game running throughout. A new session
+candidate may wait for cleanup but cannot move/rebind the old actor. World changes reject it. Motion, peer,
+visibility and retirement state reset under the existing native-probe try-lock only at the inspected local
+actor update, after code/task/TLS/stack/world checks. Published adapter snapshots stay separate per probe.
+Old-session samples/disconnects cannot revoke the new binding, and figure acknowledgements for the first
+actor cannot publish visibility state for the second. Both native lifetimes retain the movement/lease caps.
+
+Review also found that `coop_native_probe_peer_matches` previously returned the same value for a mismatch
+and a busy nonblocking copy. It now reports busy separately. `coop.c` `native_capture_locked` can then keep
+an already validated presentation copy within its existing 250 ms lease, without refreshing its timestamp.
+That fallback requires the same session/player, both world generations, native actor ID and request ID,
+plus a fresh matching adapter copy. It cannot establish a new binding. Real mismatches/disconnection clear
+immediately. Synthetic checks cover old IDs/epochs, expired copies, no prior ownership and delayed render
+acknowledgements. Native motion's separate 200 ms receive lease is unchanged.
+
+The earlier candidate runs `run-fda299d4aa` and `run-b60058f77a` passed two native lifetimes before the
+presentation-copy correction. The first candidate's original mesh was conservatively restored after
+2.566644 seconds while later figure samples continued; the controls repeat kept both hide intervals above
+six seconds. Keep that shorter interval as evidence of presentation limits, not proof of a clean mesh
+replacement for an entire session or a definitive live cause for that individual event.
+
+The final executable repeated all requested native gates in two 48-world-second copied-save runs:
+
+| Run / local input | Actor IDs, generation 3 | Exact origin submissions | Native hide durations | Native retirement / measured rest |
+| --- | --- | --- | --- | --- |
+| `run-f5f24f8a5e`, idle | 888, then 897 | 192, then 195; maximum error 0 | 6.592689, then 6.599940 s | world 19.401295 s / 31 samples over 1.033326 s; world 32.867841 s / 29 over 1.033325 s |
+| `run-f3e2d3c5c0`, controls | 890, then 905 | 196, then 195; maximum error 0 | 6.572407, then 6.573858 s | world 19.304589 s / 32 samples over 1.033323 s; world 32.811715 s / 31 over 1.033324 s |
+
+Each run kept one game alive, reused one test-player identity and negotiated two distinct session nonces.
+Both actors' initialization, movement/consumer, expiry rests/recovery, figure, visibility, native removal,
+resource cleanup and allocator handoff correlated separately. The second creation followed the first copied
+cleanup. Game and both peer exits were zero; source save hashes were unchanged. The controls run applied the
+existing walking/camera/attack-button sequence and measured 9.594396 m local displacement. Successful strikes,
+shared damage and full camera independence are not established by those input logs.
+
+Inspected second-cycle frames `f01648.png` in the idle run and `f01630.png` in the controls run show the
+black-haired companion and local Link. Grass/trees still obscure parts of their feet/body. No terrain/model
+fit, heavy-scene performance, loaded-validation-layer or Internet acceptance is claimed. The authored suites
+cover stale pending joins, incomplete cleanup, wrong epochs/context/stack, distinct retained storage, old
+messages/acknowledgements, no third request and the bounded busy-copy fallback. Forty report tests passed.
+This proves bounded loopback reconnection; continuous human control and scene transitions remain open.
+
 ## Session-driven creation at the local actor update (November 23, 2026)
 
 Mode 11 (`--native-npc-session`, `isolated-npc-session-create-v1`) removes inventory-drop scheduling from

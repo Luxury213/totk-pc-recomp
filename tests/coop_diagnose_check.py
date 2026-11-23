@@ -37,6 +37,63 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def reconnect_fixture(self):
+        lines=[]
+        for i,start in enumerate((6000000,26000000)):
+            actor=17+i; probe=10+i; request=5+i; session=11+i
+            base,spawn=self.npc_peer_fixture()
+            base=[re.sub(r'world us (\d+)',lambda m:f'world us {start+int(m[1])}',s)
+                    .replace('probe 10,',f'probe {probe},').replace('request 5,',f'request {request},')
+                    .replace('session 11,',f'session {session},') for s in base]
+            events=object_events(probe=probe,name='Npc_Road_001',request=request)
+            lines.extend([f'coop native npc cycle begin: cycle {i+1}, world us {start}, prior actor id {17 if i else -1}, prior retired {int(i>0)};',
+                'coop native spawn owned: pos 1 2 3, empty blackboard, actor dependencies absent;',
+                f'coop native spawn request: request {request}, name Npc_Road_001, watcher absent;',
+                'coop native spawn probe: queued yes, name Npc_Road_001,',
+                f'coop native session creation: session {session}, player 22, local generation 3, remote generation 1, world us {start}, worker 1, queued 1; local actor update, owned stack arguments, original CPU restored',
+                events[0],*base,
+                f'coop native npc cycle binding: cycle {i+1}, generation 3, actor id {actor}, world us {start+1000000};'])
+            for s in spawn['samples']:
+                x,y,z=s['pos']
+                lines.append(f'coop native spawn motion: probe {probe}, request {request}, world us {start+s["world_us"]}, pos {x:.6f} {y:.6f} {z:.6f},')
+            for j in range(40):
+                at=start+2000000+j*50000
+                ns=(i+1)*1000000000+j
+                lines.extend([f'coop native npc velocity consumer reapply: correction {j+1}, generation 3, world us {at}; same live pending request, original CPU restored',
+                    f'coop native figure capture: sample {ns}, world us {at}, generation 3, actor id {actor}, pos 1 2 3, body pos 1 2.8 3;',
+                    f'coop native figure submitted: sample {ns}, generation 3, actor id {actor}, pos 1 2 3;'])
+            lines.extend([f'coop native model visibility: call 1, phase hide, generation 3, actor id {actor}, world us {start+2000000}, before 1, requested 0, after 0, owner matched 1;',
+                f'coop native model visibility: call 2, phase restore, generation 3, actor id {actor}, world us {start+8000000}, before 0, requested 1, after 1, owner matched 1;',
+                *events[1:],*resource_events(request=request,name='Npc_Road_001'),
+                f'coop native probe allocator: entry main+0x100, caller 0x1000000020, probe {probe}, name Npc_Road_001, cleanup scope same, actor argument same, host thread 7;',
+                f'coop native npc retirement request: generation 3, actor id {actor}, world us {start+12000000}, result 1, worker 0, rest samples 31, rest us 1000000;',
+                f'coop native session retired: cycle {i+1}, session {session}, generation 3, actor id {actor}, world us {start+13000000}; correlated cleanup and allocator handoff'])
+        return lines
+
+    def test_reconnect_requires_two_complete_distinct_session_lifetimes_and_one_player(self):
+        lines=self.reconnect_fixture()
+        summary=diagnose.session_reconnect_summary(lines,[0,0])
+        self.assertTrue(summary['acceptance_passed'],summary)
+        self.assertTrue(summary['bounded_reconnect_verified']); self.assertTrue(summary['same_player'])
+        self.assertFalse(summary['native_request_storage_reused']); self.assertFalse(summary['human_peer_verified'])
+        for results in ([],[0],[0,1],[0,0,0]):
+            self.assertFalse(diagnose.session_reconnect_summary(lines,results)['acceptance_passed'])
+        changes=(('missing_cleanup',lambda s:'coop native session retired: cycle 1,' not in s),
+                 ('missing_second_figure',lambda s:not ('figure submitted:' in s and 'actor id 18,' in s)),
+                 ('missing_resource',lambda s:not ('resource cleanup:' in s and 'request 6,' in s)),
+                 ('missing_retirement',lambda s:not ('retirement request:' in s and 'actor id 18,' in s)))
+        for name,keep in changes:
+            with self.subTest(name=name):
+                self.assertFalse(diagnose.session_reconnect_summary(list(filter(keep,lines)),[0,0])['acceptance_passed'])
+        for old,new in (('session 12,','session 11,'),('session 12, player 22,','session 12, player 23,'),
+                        ('prior actor id 17,','prior actor id 18,'),('prior retired 1;','prior retired 0;'),
+                        ('world us 19000000;','world us 27000000;'),
+                        ('actor id 18, world us 38000000, result 1','actor id 18, world us 38000000, result 0')):
+            with self.subTest(change=(old,new)):
+                self.assertFalse(diagnose.session_reconnect_summary([s.replace(old,new) for s in lines],[0,0])['acceptance_passed'])
+        self.assertFalse(diagnose.session_reconnect_summary(lines+[lines[-1]],[0,0])['acceptance_passed'])
+        self.assertFalse(diagnose.session_reconnect_summary(lines+['coop native session retired: malformed;'],[0,0])['acceptance_passed'])
+
     def test_session_creation_requires_owned_spawn_matching_peer_and_retirement_without_drop(self):
         creation=('coop native session creation: session 11, player 22, local generation 3, remote generation 1, '
                   'world us 6000000, worker 1, queued 1; local actor update, owned stack arguments, original CPU restored')

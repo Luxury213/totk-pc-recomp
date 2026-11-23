@@ -757,6 +757,30 @@ int main(void) {
     body_peer.remote.generation++; assert(!native_figure_ready(&body_peer,trace_generation,now)); body_peer.remote.generation--;
     body_peer.has_remote=0; assert(!native_figure_ready(&body_peer,trace_generation,now));
     body_peer.has_remote=1; body_peer.remote.flags=0; assert(!native_figure_ready(&body_peer,trace_generation,now));
+    body_peer.remote.flags=COOP_SAMPLE_PLAYER;
+    CoopAdapterSnapshot body_adapter={.sample={.generation=trace_generation,.flags=COOP_SAMPLE_PLAYER},.native_body=body_copy};
+    C.native_body=(CoopNativeBody){0};
+    assert(!native_capture_locked(&body_peer,&body_adapter,-1,now).time_ns); // contention alone cannot establish ownership
+    assert(native_capture_locked(&body_peer,&body_adapter,1,now).time_ns==now);
+    body_adapter.native_body.time_ns=now+100000000; body_adapter.native_body.pos[0]+=1;
+    CoopNativeBody retained=native_capture_locked(&body_peer,&body_adapter,-1,now+100000000);
+    assert(retained.time_ns==now && retained.pos[0]==body_copy.pos[0]); // keep the old copy without refreshing its lease
+    assert(!native_capture_locked(&body_peer,&body_adapter,-1,now+250000001).time_ns);
+    body_adapter.native_body=body_copy;
+    for(unsigned invalid=0;invalid<7;invalid++) {
+        CoopNetSnapshot altered_peer=body_peer; CoopAdapterSnapshot altered_body=body_adapter;
+        assert(native_capture_locked(&body_peer,&body_adapter,1,now).time_ns==now);
+        if(invalid==0) altered_peer.session++;
+        if(invalid==1) altered_peer.peer_player++;
+        if(invalid==2) altered_peer.remote.generation++;
+        if(invalid==3) altered_body.native_body.actor_id++;
+        if(invalid==4) altered_body.native_body.request++;
+        if(invalid==5) altered_body.sample.flags=0;
+        if(invalid==6) altered_peer.negotiated=0;
+        assert(!native_capture_locked(&altered_peer,&altered_body,-1,now).time_ns);
+    }
+    assert(native_capture_locked(&body_peer,&body_adapter,1,now).time_ns==now);
+    assert(!native_capture_locked(&body_peer,&body_adapter,0,now).time_ns); // actual mismatch clears immediately
     // The renderer receives the actor origin, never a guessed body-centre-to-feet offset.
     probe_entries[0].stages=1; npc_figure_observe(&body_copy); assert(!body_copy.time_ns);
     assert(!coop_adapter_npc_probe_model((uintptr_t)probe_actor,&scoped_model,&model_generation));
@@ -922,6 +946,8 @@ int main(void) {
     coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc);
     strcpy(probe_name,"Npc_Road_001");
     coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc+1);
+    native_probe_mode=12;
+    coop_adapter_actor_request(&probe_request); assert(actor_request_claimed==before_npc+2);
     native_probe_mode=0;
     world_us = -1;
     pipeline_actor = pipeline_descriptor = 0;

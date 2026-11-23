@@ -458,6 +458,28 @@ passed with validation after correcting outdated texture fixtures. These do not 
 
 ## Source checks
 
+Mode 12 tests a bounded reconnect in one running game:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-reconnect --seconds 48 --shots 2 --timeout 210
+```
+
+It uses `isolated-npc-session-reconnect-v1` and the same native worker/ABI/stack guards as mode 11.
+The runner starts two game-free peers sequentially using the same private peer profile, preserving the
+player ID. The second starts only after the first exits successfully and the first actor's copied native
+request/queue/resource/cleanup/allocator-handoff evidence is complete. Each connection receives a fresh
+session nonce and a separate retained creation argument/blackboard slot. Neither slot is reused or released;
+there is no third slot. An allocator handoff still does not establish that its call returned.
+
+Only a new session in the same local world can become the next candidate. Old-session samples/disconnects
+and render acknowledgements for the old actor cannot take over the new body/model. Motion/visibility/retirement
+state resets only at the verified native phase after the first cleanup evidence; published adapter snapshots
+remain scoped per probe. Retirement also requires that the owning connection has left. The eight-world-second
+motion ceiling and 200 ms receive-time lease remain in force. `--scenario controls` applies the existing local
+walking/camera/attack-button sequence. Acceptance requires both native lifetimes, figure/visibility/movement/
+rest/removal checks, two clean peer exits, one stable player ID and distinct session/native actor identities.
+This is bounded loopback reconnection, not indefinite storage reuse, scene transitions or human/Internet play.
+
 Mode 11 exercises one connection-driven creation without inventory input:
 
 ```powershell
