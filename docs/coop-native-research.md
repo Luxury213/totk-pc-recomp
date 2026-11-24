@@ -1,5 +1,64 @@
 # Co-op native research notes
 
+## Native update interruption and return test (November 23, 2026)
+
+The longer-walk failure is recoverable without creating another actor. A return using the original Player
+controller at world 13-15 seconds makes the same NPC receive its native update again. The first private-input
+trial `run-f571778be3` observed actor 884/gen3 stop at 11.492811 s, report the gap at 11.786879 s after 97 calls
+and resume at 14.095507 s. The actor later reached native retirement at 19.501952 s, followed by a second actor
+904. The source save stayed unchanged and the game and both peers exited normally. The complete diagnostic
+still failed its movement/reconnect gates: resumption does not repair the interrupted motion contract.
+
+The public runner now reproduces this with `--native-pose-return-walk` in addition to the longer-walk flags.
+It removes the overlapping 14-second attack and keeps the second walk short to isolate the first interruption.
+`native_update_summary` correlates a resumption only with an earlier gap for the same probe, generation and
+actor ID. Wrong identities, timestamps and malformed/duplicate resumption events are rejected. Any observed
+gap fails the pose diagnostic's continuity gate even when later poses and native cleanup succeed.
+
+Read-only instrumentation in `coop_adapter.c` `npc_dispatch_observe` counts the inspected task dispatchers
+`main+0x2f1d30`, `main+0x2f1554` and `main+0x2f9910`. Each takes a task whose actor is read at +0x20; a live
+diagnostic actor/metadata/ID/world check is required. Counts and last world times are separate per probe.
+`npc_schedule_report` limits gap snapshots to three per actor; baseline and first-resumption snapshots copy
+the inspected state/flags and current virtual +0x180 callback. These reads do not invoke a task or activation
+API, write guest flags, change TLS/current-actor slots or extend the diagnostic movement/receive limits.
+
+The first instrumented return `run-aed1e2bc2a` reproduced the pause on actor 884/gen3: last update 11.499339 s,
+gap 11.752531 s, resumption 14.125670 s. Both observed dispatchers `main+0x2f1554` and `main+0x2f9910` stayed
+at 97 calls, with the same last time, across all three gap snapshots. The `main+0x2f1d30` candidate was not
+observed for this NPC; this does not establish that all pre-update work is absent. Actor state remained 5,
+pending removal was zero and virtual +0x180 remained `main+0x2e27b0`. Raw state fields have no assumed wake or
+distance semantics. This narrows the interruption to a point before both observed dispatches, rather than a
+rejected velocity request or missing body-pose packet. Exact distance/camera/activation selection and a safe
+persistent native scheduling operation remain unresolved. The return changes player position/orientation;
+it is not a controlled proof that distance alone selects the pause.
+
+Next, compare the copied active/gap/resumed state and inspect the native task-selection/culling route that
+feeds those dispatchers. Do not set an opaque bit, manufacture worker ownership or invoke the remote actor
+from the local Player's callback as a workaround. Continuous independent movement is still the immediate
+character gate; vertical/contact behavior follows it. Player's native locomotion remains the source/reference
+for ground, slopes, jumping and climbing, with remote body ownership verified separately.
+
+The final snapshot executable repeated the return and the nearby acceptance command:
+
+| Run | Owned native actor IDs, generation 3 | Result |
+| --- | --- | --- |
+| `run-28dc400be9`, long walk and return | 890, then 913 | Gap at 11.884827 s after last update 11.610714 s; same actor resumes at 14.082572 s; full acceptance remains false |
+| `run-1d165f07ca`, nearby pose regression | 892, then 900 | All requested native lifecycle, original-pose and update-continuity gates passed; no observed gap |
+
+Both runs used the same executable, completed 48 world seconds, had normal game/both-peer exits and left the
+source saves unchanged. In the return run, baseline actor state 4 changed to 5 during the gap and returned to
+4 on resumption. The copied scheduling-component flags changed from 0 to `0x1a1`, then `0x1`; its native
+callback stayed unchanged. These are stronger state-transition observations, not an established wake API.
+
+Targeted static inspection found `main+0x54cb00`'s state-4/state-5 branches removing/inserting the actor in
+native manager lists and invoking native callbacks. A direct state-field store would omit those operations.
+`main+0x65399c` sets a reason-indexed bit in the actor's request flags and can queue the transition to state 5;
+`main+0x1b4884` removes a corresponding reason bit and can queue a return from state 5. Both inspect native
+task context and manager locking. These candidate routes were read, not called or validated as cooperative
+operations. Next, correlate their original actor/reason/caller and the state-handler request mask during
+the retained failure, then verify the ownership and matching lifetime of a keep-active policy. Do not use a
+sleep/wake request to clear unrelated reasons or bypass the native manager protocol.
+
 ## Original Link pose on the owned native body (November 23, 2026)
 
 The native-origin path no longer discards `C.peer_visual.flags` in `coop.c`. It preserves validated body,

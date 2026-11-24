@@ -25,6 +25,23 @@ not establish that it damages the same enemy in both games.
 
 ## Source and build checkpoint
 
+Current scheduling investigation: returning with original Player input at world13-15s resumes the SAME native
+actor after the longer walk. Trials `run-f571778be3` and `run-aed1e2bc2a` retain failed full acceptance despite
+normal game/both-peer exits, unchanged source saves and later native retirement/second creation. In the latter,
+both observed task dispatchers main+2f1554/main+2f9910 pause at97calls/11.499339s and resume at14.125670s.
+Actor state5, pending0 and callback main+2e27b0 remain. main+2f1d30 is unobserved for this NPC, not proof all
+pre-update work is absent. Public `--native-pose-return-walk` requires the long-walk/pose flags and controls;
+the runner correlates matching actor/world/probe resumes and explicitly fails continuity for any gap.
+Compare bounded active/gap/resumed state copies and inspect task selection BEFORE both stopped dispatchers.
+Distance alone, an activation API and a persistent scheduling fix remain unverified. No native wake calls,
+opaque flag writes, TLS/worker spoofing, reduced guards or increased motion limits were added.
+Final snapshot executable runs: `run-28dc400be9` retains failure on a matching actor890/gen3 gap/resume,
+with state4->5->4 and scheduling flags0->0x1a1->1; `run-1d165f07ca` passes all nearby gates on actors892/900.
+Both are48worldseconds, game/both peers exit0 and source saves unchanged. Static follow-up found state-handler
+main+54cb00 and reason-indexed request candidates main+65399c/main+1b4884. Correlate ORIGINAL native calls,
+reasons/request masks and caller context next; no safe keep-active operation is verified. Preserve manager
+list/callback ownership and other sleep reasons. See the newest native research before changing activation.
+
 Latest pose slice: the native-origin figure now keeps the original Link's captured body/rotation/animation
 and equipped identities instead of discarding its visual flags. A sender-time-aware receive lease clears
 stale optional data; native position, vertical physics and movement limits are unchanged. Two near-source

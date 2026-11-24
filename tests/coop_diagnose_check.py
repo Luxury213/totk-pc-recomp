@@ -46,6 +46,32 @@ class DiagnosticChecks(unittest.TestCase):
         self.assertIn('@10000 LSTICK -32767 0 2000',far)
         self.assertIn('@12500 Y 100',near)
         self.assertNotIn('@10000',diagnose.diagnostic_script(60,'controls'))
+        returned=diagnose.diagnostic_script(60,'controls',True,True,True)
+        self.assertIn('@10000 LSTICK -32767 0 2000',returned)
+        self.assertIn('@13000 LSTICK 32767 0 2000',returned)
+        self.assertNotIn('@14000 Y',returned)
+        self.assertIn('@23000 LSTICK -32767 0 300',returned)
+        timed=[int(line[1:].split()[0]) for line in returned.splitlines() if line.startswith('@')]
+        self.assertEqual(timed,sorted(timed))
+
+    def test_native_update_resume_requires_the_same_live_identity_and_retains_failure(self):
+        gap='coop native npc update gap: probe 0, generation 3, actor id 88, world us 12000000, last update us 11000000, updates 150; live owned body, hook timing only'
+        resume='coop native npc update resumed: probe 0, generation 3, actor id 88, world us 14000000; hook timing only'
+        self.assertTrue(diagnose.native_update_summary([])['uninterrupted_observation'])
+        result=diagnose.native_update_summary([gap,resume])
+        self.assertEqual(result['same_actor_resumptions'],1)
+        self.assertEqual(result['malformed_events'],0)
+        self.assertFalse(result['uninterrupted_observation'])
+        self.assertFalse(result['activation_requested'])
+        for bad in (resume.replace('actor id 88','actor id 89'),resume.replace('generation 3','generation 4'),
+                    resume.replace('probe 0','probe 1'),resume.replace('14000000','10000000')):
+            result=diagnose.native_update_summary([gap,bad])
+            self.assertEqual(result['same_actor_resumptions'],0)
+            self.assertGreater(result['malformed_events'],0)
+        for lines in ([resume],[gap,resume,resume],[gap.replace('12000000','11000100')],['coop native npc update gap: invalid']):
+            result=diagnose.native_update_summary(lines)
+            self.assertFalse(result['uninterrupted_observation'])
+            self.assertGreater(result['malformed_events'],0)
     def test_native_original_pose_requires_native_origin_both_actors_and_original_actions(self):
         native=self.reconnect_fixture()
         figures=[c['figure'] for c in diagnose.session_reconnect_summary(native,[0,0])['cycles']]

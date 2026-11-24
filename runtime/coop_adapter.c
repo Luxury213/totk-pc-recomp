@@ -417,6 +417,8 @@ static struct {
     uint32_t generation, host_thread;
     unsigned request, ready, stages, motion_count,update_count,update_gap_reported;
     int64_t motion_last_us,update_last_us;
+    unsigned dispatch_count[3],schedule_reports;
+    int64_t dispatch_last_us[3];
 } probe_entries[PROBE_LIMIT];
 // Only the isolated host-injected request is sampled here. Native calls supply a live receiver;
 // retirement disables sampling before cleanup, and metadata/ID checks reject recycled storage.
@@ -462,6 +464,49 @@ static int probe_identity_live(unsigned i, uint64_t actor) {
     return actor == probe_entries[i].actor && guest_readable(actor, 0x1b0) && guest_readable(meta, 0x50) &&
            guest_pointer(actor + 0x1a8) == meta && guest_pointer(meta + 0x40) == actor &&
            guest_s32(actor + 0x10) == id && guest_s32(meta + 0x48) == id;
+}
+
+// All three inspected actor-task dispatchers take a task with its actor at +0x20. Count only the
+// diagnostic actor, before dispatch, without running a callback or installing another worker identity.
+static void npc_dispatch_observe(uint64_t address,uint64_t task) {
+    unsigned phase=address==MOD_MAIN_BASE+0x2f1d30ull ? 0 : address==MOD_MAIN_BASE+0x2f1554ull ? 1 :
+                   address==MOD_MAIN_BASE+0x2f9910ull ? 2 : 3;
+    if (phase==3) return;
+    unsigned i=npc_probe_index();
+    if (i>=PROBE_LIMIT || !__atomic_load_n(&probe_entries[i].ready,__ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&probe_entries[i].stages,__ATOMIC_ACQUIRE) || !guest_readable(task,0x28)) return;
+    uint64_t actor=guest_pointer(task+0x20);
+    if (!probe_identity_live(i,actor)) return;
+    __atomic_fetch_add(&probe_entries[i].dispatch_count[phase],1,__ATOMIC_RELAXED);
+    __atomic_store_n(&probe_entries[i].dispatch_last_us[phase],frame_step_world_us(),__ATOMIC_RELEASE);
+}
+
+static void npc_schedule_snapshot(unsigned i,uint64_t actor,int64_t now,const char *phase) {
+    if (!probe_identity_live(i,actor) || !guest_readable(actor,0x5b8)) return;
+    uint64_t table=guest_pointer(actor),component=guest_pointer(actor+0x228),scheduler=0;
+    if (guest_readable(component,0xb8)) scheduler=guest_pointer(component+0xb0);
+    unsigned flags=guest_readable(scheduler,0xc0) ? (uint32_t)guest_s32(scheduler+0xbc)&65535u : UINT32_MAX;
+    uint64_t method=guest_readable(table,0x188) ? main_relative(guest_pointer(table+0x180)) : 0;
+    rt_log("coop native npc schedule: probe %u, generation %u, actor id %d, world us %lld, phase counts %u %u %u, phase last us %lld %lld %lld, state %u, pending %u, flags3fc %#x, flags440 %#x, flags444 %#x, counter530 %u, flags5ac %#x, timer5b0 %#x, stamp5b4 %u, scheduler flags %#x, update main+%#llx, phase %s; copied observations, no activation requested",
+        i,probe_entries[i].generation,probe_entries[i].id,(long long)now,
+        __atomic_load_n(&probe_entries[i].dispatch_count[0],__ATOMIC_RELAXED),
+        __atomic_load_n(&probe_entries[i].dispatch_count[1],__ATOMIC_RELAXED),
+        __atomic_load_n(&probe_entries[i].dispatch_count[2],__ATOMIC_RELAXED),
+        (long long)__atomic_load_n(&probe_entries[i].dispatch_last_us[0],__ATOMIC_ACQUIRE),
+        (long long)__atomic_load_n(&probe_entries[i].dispatch_last_us[1],__ATOMIC_ACQUIRE),
+        (long long)__atomic_load_n(&probe_entries[i].dispatch_last_us[2],__ATOMIC_ACQUIRE),
+        (uint32_t)guest_s32(actor+0x24),((uint32_t)guest_s32(actor+0x28)>>17)&1,
+        (uint32_t)guest_s32(actor+0x3fc),(uint32_t)guest_s32(actor+0x440),
+        (uint32_t)guest_s32(actor+0x444),(uint32_t)guest_s32(actor+0x530),
+        (uint32_t)guest_s32(actor+0x5ac),(uint32_t)guest_s32(actor+0x5b0),
+        (uint32_t)guest_s32(actor+0x5b4),flags,(unsigned long long)method,phase);
+}
+
+static void npc_schedule_report(unsigned i,uint64_t actor,int64_t now,int64_t update_us) {
+    if (i>=PROBE_LIMIT || update_us<=0 || now<update_us+250000) return;
+    unsigned bit=now<update_us+1000000 ? 1 : now<update_us+2000000 ? 2 : 4;
+    if (__atomic_fetch_or(&probe_entries[i].schedule_reports,bit,__ATOMIC_RELAXED)&bit) return;
+    npc_schedule_snapshot(i,actor,now,"gap");
 }
 
 static void npc_physics_capture(NpcPhysicsSnapshot *snapshot, uint64_t entry, uint64_t caller, uint64_t component, unsigned i) {
@@ -604,6 +649,7 @@ static void npc_figure_observe(CoopNativeBody *out) {
         __atomic_compare_exchange_n(&probe_entries[index].update_gap_reported,&zero,1,0,__ATOMIC_ACQ_REL,__ATOMIC_RELAXED))
         rt_log("coop native npc update gap: probe %u, generation %u, actor id %d, world us %lld, last update us %lld, updates %u; live owned body, hook timing only",
             index,generation,copy.actor_id,(long long)copy.world_us,(long long)update_us,updates);
+    if (updates) npc_schedule_report(index,actor,copy.world_us,update_us);
     // Actor origin is the native model origin; a rigid-body centre is not a foot location.
     *out=copy;
     static unsigned model_logged;
@@ -1281,6 +1327,7 @@ void coop_adapter_native_dispatch(uint64_t address, uint64_t caller, uint64_t x0
 
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument) {
     if (!__atomic_load_n(&trace_enabled, __ATOMIC_RELAXED)) return;
+    npc_dispatch_observe(address,argument);
     npc_velocity_lock_observe(address, caller, argument);
     if (address == MOD_MAIN_BASE + 0xa0f3f0ull) npc_physics_observe(caller, argument);
     if (address == MOD_MAIN_BASE + 0x2e27b0ull) npc_physics_late_observe(caller, argument);
@@ -1292,11 +1339,13 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
             probe_entries[i].actor==argument && !__atomic_load_n(&probe_entries[i].stages,__ATOMIC_ACQUIRE) &&
             address==MOD_MAIN_BASE+0x2e27b0ull) {
             unsigned gap=1;
-            if (__atomic_compare_exchange_n(&probe_entries[i].update_gap_reported,&gap,2,0,__ATOMIC_ACQ_REL,__ATOMIC_RELAXED))
+            int resumed=__atomic_compare_exchange_n(&probe_entries[i].update_gap_reported,&gap,2,0,__ATOMIC_ACQ_REL,__ATOMIC_RELAXED);
+            if (resumed)
                 rt_log("coop native npc update resumed: probe %u, generation %u, actor id %d, world us %lld; hook timing only",
                     i,probe_entries[i].generation,probe_entries[i].id,(long long)now);
-            __atomic_fetch_add(&probe_entries[i].update_count,1,__ATOMIC_RELAXED);
+            unsigned count=__atomic_fetch_add(&probe_entries[i].update_count,1,__ATOMIC_RELAXED);
             __atomic_store_n(&probe_entries[i].update_last_us,now,__ATOMIC_RELEASE);
+            if (resumed || !count || count==63) npc_schedule_snapshot(i,argument,now,resumed ? "resumed" : "baseline");
         }
         int64_t last = __atomic_load_n(&probe_entries[i].motion_last_us, __ATOMIC_RELAXED);
         if (i < PROBE_LIMIT && __atomic_load_n(&probe_entries[i].ready, __ATOMIC_ACQUIRE) &&

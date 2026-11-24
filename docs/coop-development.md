@@ -483,6 +483,13 @@ remains readable but movement/retirement/reconnection do not complete, so that d
 state. Wake/culling/task ownership must be investigated before using this as free exploration. A short walk
 is an isolated pose test, not a fix for that longer-range failure.
 
+Add `--native-pose-return-walk` to that longer-walk command to return with the original Player controller at
+world 13-15 seconds. The overlapping 14-second attack is omitted and the second walk stays at 300 ms. This
+observes whether the same native actor resumes; it does not request activation or change the controller.
+The report records per-actor gap/resumption identities and bounded native task/state snapshots. Resuming
+does not erase a gap: the continuity gate and the full movement/reconnect gates still apply. This is a
+failure reproduction, not the nearby pose-acceptance command or a continuous-movement fix.
+
 Mode 12 tests a bounded reconnect in one running game:
 
 ```powershell

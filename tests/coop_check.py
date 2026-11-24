@@ -37,7 +37,8 @@ static unsigned char request_arg[0x98];
 static int fail_reads;
 static unsigned guest_reads;
 static int64_t world_us = -1;
-static unsigned char probe_actor[0x400], probe_data[0x50], probe_descriptor[0x170], probe_context[0x18];
+static unsigned char probe_actor[0x600], probe_data[0x50], probe_descriptor[0x170], probe_context[0x18];
+static unsigned char npc_task[0x28];
 static char probe_name[] = "Weapon_Sword_Test";
 static unsigned char request_stack[0x18], probe_owner[0x40], probe_heap[8], probe_heap_vtable[0x40];
 static unsigned char probe_resource[0xe0];
@@ -94,6 +95,7 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
            in_range(p,n,&request_name_ref,sizeof request_name_ref) ||
            in_range(p,n,request_arg,sizeof request_arg) ||
            in_range(p,n,probe_actor,sizeof probe_actor) || in_range(p,n,probe_data,sizeof probe_data) ||
+           in_range(p,n,npc_task,sizeof npc_task) ||
            in_range(p,n,probe_descriptor,sizeof probe_descriptor) || in_range(p,n,probe_context,sizeof probe_context) ||
            in_range(p,n,probe_name,sizeof probe_name) || in_range(p,n,request_stack,sizeof request_stack) ||
            in_range(p,n,probe_owner,sizeof probe_owner) || in_range(p,n,probe_heap,sizeof probe_heap) ||
@@ -700,12 +702,42 @@ int main(void) {
     coop_adapter_function(MOD_MAIN_BASE+0x2e27b0,77,(uintptr_t)probe_actor);
     assert(probe_entries[0].update_count==1); probe_entries[0].stages=0;
     probe_entries[0].motion_count=motion_before_update; probe_entries[0].motion_last_us=motion_time_before_update;
+    ptr(npc_task+0x20,(uintptr_t)other_actor);
+    npc_dispatch_observe(MOD_MAIN_BASE+0x2f1554,(uintptr_t)npc_task);
+    assert(!probe_entries[0].dispatch_count[1]);
+    ptr(npc_task+0x20,(uintptr_t)probe_actor);
+    const uint64_t phases[3]={0x2f1d30,0x2f1554,0x2f9910};
+    unsigned char task_before[sizeof npc_task]; memcpy(task_before,npc_task,sizeof npc_task);
+    for(unsigned k=0;k<3;k++) {
+        npc_dispatch_observe(MOD_MAIN_BASE+phases[k],(uintptr_t)npc_task);
+        assert(probe_entries[0].dispatch_count[k]==1 && probe_entries[0].dispatch_last_us[k]==world_us);
+    }
+    assert(!memcmp(task_before,npc_task,sizeof npc_task));
+    unsigned schedule_reads=guest_reads;
+    probe_entries[0].stages=1;
+    npc_dispatch_observe(MOD_MAIN_BASE+0x2f1554,(uintptr_t)npc_task);
+    assert(guest_reads==schedule_reads && probe_entries[0].dispatch_count[1]==1);
+    probe_entries[0].stages=0;
+    ptr(probe_data+0x48,probe_id+1);
+    npc_dispatch_observe(MOD_MAIN_BASE+0x2f1554,(uintptr_t)npc_task);
+    assert(probe_entries[0].dispatch_count[1]==1); ptr(probe_data+0x48,probe_id);
+    npc_schedule_report(0,(uintptr_t)probe_actor,world_us+249999,world_us);
+    assert(!probe_entries[0].schedule_reports);
+    npc_schedule_report(0,(uintptr_t)probe_actor,world_us+250000,world_us);
+    schedule_reads=guest_reads;
+    npc_schedule_report(0,(uintptr_t)probe_actor,world_us+300000,world_us);
+    assert(probe_entries[0].schedule_reports==1 && guest_reads==schedule_reads);
+    npc_schedule_report(0,(uintptr_t)probe_actor,world_us+1000000,world_us);
+    npc_schedule_report(0,(uintptr_t)probe_actor,world_us+2000000,world_us);
+    assert(probe_entries[0].schedule_reports==7);
     // Reuse the authored actor/body addresses with a new metadata ID in the same world.
     NpcPhysicsSnapshot old_initial=npc_physics[0], old_late=npc_late_physics[0];
     int64_t old_physics_time=world_us;
     probe_entries[1]=probe_entries[0]; probe_entries[1].id=probe_id+1;
     probe_entries[1].motion_count=0; probe_entries[1].motion_last_us=0;
     probe_entries[1].update_count=probe_entries[1].update_gap_reported=0; probe_entries[1].update_last_us=0;
+    memset(probe_entries[1].dispatch_count,0,sizeof probe_entries[1].dispatch_count);
+    memset(probe_entries[1].dispatch_last_us,0,sizeof probe_entries[1].dispatch_last_us); probe_entries[1].schedule_reports=0;
     probe_entries[0].stages=15;
     // Publication can expose the new index before the separate active-address hint changes.
     probe_entries[1].actor=(uintptr_t)other_actor;
