@@ -16,7 +16,7 @@ def build_peer(cc='C:/msys64/ucrt64/bin/clang.exe'):
     sources += [enet / name for name in ('callbacks.c', 'compress.c', 'host.c', 'list.c', 'packet.c',
                                        'peer.c', 'protocol.c', 'win32.c')]
     if out.is_file() and all(p.stat().st_mtime <= out.stat().st_mtime for p in
-                            [*sources, *enet.glob('include/enet/*.h'), *ROOT.glob('runtime/coop_*.h'), Path(__file__)]):
+                            [*sources, ROOT/'tools/coop_pose_relay.h', *enet.glob('include/enet/*.h'), *ROOT.glob('runtime/coop_*.h'), Path(__file__)]):
         return out
     env = dict(os.environ, PATH=str(Path(cc).parent) + os.pathsep + os.environ.get('PATH', ''))
     subprocess.run([cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-flto', '-ffunction-sections',

@@ -1,5 +1,6 @@
 // Synthetic ENet peer for a single copied-profile native NPC diagnostic. No game, renderer or guest pointers.
 #include "coop_net.h"
+#include "coop_pose_relay.h"
 #include "platform/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,7 +57,8 @@ static int pose_echo(CoopNet *net, float offset) {
 
 int main(int argc, char **argv) {
     int echo=(argc==5 || argc==6) && !strcmp(argv[4],"--pose-echo");
-    if ((argc != 4 && !echo) || strlen(argv[2]) != 64) return 2;
+    int relay=argc==5 && !strcmp(argv[4],"--native-pose-relay");
+    if ((argc != 4 && !echo && !relay) || strlen(argv[2]) != 64) return 2;
     char *end;
     float offset=3;
     if (echo && argc==6) {
@@ -85,10 +87,13 @@ int main(int argc, char **argv) {
     uint64_t begin=plat_now_ns(), pulse=0;
     unsigned last_phase=99;
     int success=0;
+    CoopPoseRelay source={0}; CoopBody previous={0};
+    unsigned published=0,bodies=0,changed=0;
     while (plat_now_ns()-begin < 90000000000ull) {
         uint64_t now=plat_now_ns();
         CoopNetSnapshot view;
         coop_net_snapshot(net,&view);
+        if (relay) coop_pose_relay_offer(&source,&view,now);
         if (!pulse && view.negotiated && view.has_remote && !strcmp(view.notice,"npc-velocity-ready-v1")) {
             pulse=now;
             printf("peer: native diagnostic ready; negotiated session %llu\n",(unsigned long long)view.session);
@@ -106,6 +111,16 @@ int main(int argc, char **argv) {
             CoopSample sample={.generation=1,.flags=COOP_SAMPLE_PLAYER,.time_ns=now};
             sample.velocity[0]=phase==1 ? 2 : phase==3 ? -2 : phase==5 ? 1 : 0;
             sample.velocity[2]=phase==5 ? 1 : 0;
+            if (relay) {
+                coop_pose_relay_apply(&source,&sample,now);
+                if (pulse) {
+                    published++;
+                    if (sample.flags&COOP_SAMPLE_BODY) {
+                        changed+=bodies && memcmp(&previous,&sample.body,sizeof previous)!=0;
+                        previous=sample.body; bodies++;
+                    }
+                }
+            }
             coop_net_publish(net,&sample);
         }
         if (pulse && (!view.negotiated || !view.has_remote)) break;
@@ -114,5 +129,10 @@ int main(int argc, char **argv) {
     }
     coop_net_destroy(net);
     printf("peer: diagnostic sequence %s\n",success ? "completed" : "failed");
+    if (relay) {
+        printf("peer: native pose relay %s: published %u, bodies %u, changed %u\n",
+            success && bodies>=10 && changed>0 ? "completed" : "failed",published,bodies,changed);
+        if (bodies<10 || !changed) success=0;
+    }
     return success ? 0 : 1;
 }

@@ -24,6 +24,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROL_EVENTS = ((2000, 'LSTICK -32767 0 2000', 'LSTICK -32767 0'),
                   (5000, 'RSTICK 32767 0 1000', 'RSTICK 32767 0'),
                   (7000, 'Y 100', 'Y'), (9000, 'Y 100', 'Y'))
+# Reuse recorded control actions while the first/second session-owned body is active.
+NATIVE_POSE_EVENTS=((10000,'LSTICK -32767 0 300'),(12500,'Y 100'),(14000,'Y 100'),
+                    (23000,'LSTICK -32767 0 300'),(25500,'Y 100'),(27000,'Y 100'))
 LOCAL_SAMPLE = re.compile(r'world ms (\d+(?:\.\d+)?), generation (\d+), '
                           r'pos (-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?), '
                           r'yaw (-?\d+(?:\.\d+)?), action (\d+);')
@@ -36,10 +39,14 @@ PLAYER_CONTINUITY = re.compile(r'coop native player continuity: generation (\d+)
                                r'actor metadata id same, constructor entries (\d+), limit (\d+);')
 
 
-def diagnostic_script(timeout, scenario):
+def diagnostic_script(timeout, scenario, native_pose=False, long_walk=False):
     title = ''.join(f'{tick} A 4\n' for tick in range(180, int(timeout * 60) + 180, 180))
     # A timed line makes input.c stop every untimed title confirmation once the world clock starts.
-    world = ''.join(f'@{at} {event}\n' for at, event, _ in CONTROL_EVENTS) if scenario == 'controls' else '@0 LSTICK 0 0 1\n'
+    events=[(at,event) for at,event,_ in CONTROL_EVENTS] if scenario=='controls' else [(0,'LSTICK 0 0 1')]
+    if native_pose:
+        events.extend((at,event.replace('LSTICK -32767 0 300','LSTICK -32767 0 2000') if long_walk else event)
+                      for at,event in NATIVE_POSE_EVENTS)
+    world=''.join(f'@{at} {event}\n' for at,event in sorted(events))
     return '# Title confirmation ends at world start; timed actions use the copied save only.\n' + title + world
 
 
@@ -703,6 +710,34 @@ def session_reconnect_summary(lines,peer_exit_codes):
         native_request_storage_reused=False,scene_transition_verified=False,human_peer_verified=False)
 
 
+def native_original_pose_summary(lines,peer_text,figures,peer_exit_codes):
+    relays=[dict(published=int(m[1]),bodies=int(m[2]),changed=int(m[3])) for m in re.finditer(
+        r'peer: native pose relay completed: published (\d+), bodies (\d+), changed (\d+)',peer_text)]
+    poses=[]
+    for line in lines:
+        if m:=re.search(r'coop native figure pose: sample (\d+), generation (\d+), actor id (-?\d+), changed ([01]), rotation ([01]), animation ([A-Za-z0-9_]+); captured body supplied to mapped skeleton',line):
+            poses.append(dict(sample_ns=int(m[1]),generation=int(m[2]),actor_id=int(m[3]),changed=int(m[4]),rotation=int(m[5]),animation=m[6]))
+    groups=[]; matched=0
+    for figure in figures:
+        keys={(s['sample_ns'],s['generation'],s['actor_id']) for s in figure['samples']}
+        scoped=[p for p in poses if (p['sample_ns'],p['generation'],p['actor_id']) in keys]
+        matched+=len(scoped); names=sorted({p['animation'] for p in scoped})
+        unique=len({(p['sample_ns'],p['generation'],p['actor_id']) for p in scoped})==len(scoped)
+        running=any('Run' in name for name in names); attack=any('Attack' in name for name in names)
+        passed=bool(figure['acceptance_passed'] and unique and len(scoped)>=10 and
+                    sum(p['changed'] for p in scoped)>0 and all(p['rotation'] for p in scoped) and running and attack)
+        groups.append(dict(samples=len(scoped),changed=sum(p['changed'] for p in scoped),animations=names,
+            running_pose_observed=running,attack_pose_observed=attack,acceptance_passed=passed))
+    renderer=any('figure: final body pose applied' in line for line in lines)
+    passed=bool(figures and len(relays)==len(figures)==len(peer_exit_codes) and all(code==0 for code in peer_exit_codes) and
+        sum('peer: native pose relay ' in s for s in peer_text.splitlines())==len(relays) and
+        sum('coop native figure pose:' in s for s in lines)==len(poses) and
+        all(10<=r['bodies']<=r['published'] and 0<r['changed']<r['bodies'] for r in relays) and
+        all(g['acceptance_passed'] for g in groups) and matched==len(poses) and renderer)
+    return dict(acceptance_passed=passed,relay=relays,actors=groups,renderer_body_applied=renderer,
+        climbing_physics_verified=False,attack_damage_verified=False,equipment_rendering_verified=False,human_peer_verified=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -743,6 +778,10 @@ def main():
                        help='one connection-driven NPC creation at the local actor update; no inventory drop')
     spawn.add_argument('--native-npc-reconnect',action='store_true',
                        help='two connection-driven native lifecycles in one world with a stable test-peer identity')
+    ap.add_argument('--native-pose-relay',action='store_true',
+                    help='relay original Link body/rotation onto a session-owned body; requires controls and native session/reconnect')
+    ap.add_argument('--native-pose-long-walk',action='store_true',
+                    help='retain the longer pose-relay walk to reproduce interrupted native updates; requires --native-pose-relay')
     ap.add_argument('--native-npc-figure',action='store_true',
                     help='use the scoped native NPC origin for the Link figure; requires --native-npc-peer-motion')
     ap.add_argument('--native-npc-visibility',action='store_true',
@@ -755,6 +794,10 @@ def main():
                     help='require gradual native descent from the owned origin and subsequent positional rest')
     args = ap.parse_args()
     if args.native_npc_reconnect: args.native_npc_session=True
+    if args.native_pose_relay and (not args.native_npc_session or args.scenario!='controls'):
+        ap.error('--native-pose-relay requires --native-npc-session/reconnect and --scenario controls')
+    if args.native_pose_long_walk and not args.native_pose_relay:
+        ap.error('--native-pose-long-walk requires --native-pose-relay')
     if args.native_npc_session:
         if args.without_figure or args.input_script or args.scenario not in ('idle','controls'):
             ap.error('--native-npc-session requires idle/controls with built-in input and figure asset')
@@ -864,7 +907,7 @@ def main():
         (profile / 'coop-native-probe.txt').write_bytes(marker.encode('ascii'))
     script = args.input_script.resolve() if args.input_script else folder / 'input.txt'
     if not args.input_script:
-        script.write_text(diagnostic_script(args.timeout, args.scenario), encoding='utf-8')
+        script.write_text(diagnostic_script(args.timeout,args.scenario,args.native_pose_relay,args.native_pose_long_walk), encoding='utf-8')
     env = dict(os.environ, TOTK_COOP_MODE='bot', TOTK_COOP_TRACE_GUEST='1', TOTK_BACKGROUND_WINDOW='1',
                TOTK_COOP_NATIVE_PROBE='12' if args.native_npc_reconnect else '11' if args.native_npc_session else '10' if args.native_npc_cycles else '9' if args.native_npc_retirement else '8' if args.native_npc_visibility else '7' if args.native_npc_figure else '6' if args.native_npc_peer_motion else '5' if args.native_npc_consumer_motion else '4' if args.native_npc_motion else '3' if npc else '2' if args.native_owned_weapon else '1' if args.native_clone_weapon else '0',
                TOTK_ASSUME_FOCUS='1',
@@ -888,6 +931,7 @@ def main():
         peer_command = [str(peer_exe), str(port), content, str(peer_profile)]
         if args.pose_echo:
             peer_command.extend(['--pose-echo',str(args.pose_echo_offset)])
+        if args.native_pose_relay: peer_command.append('--native-pose-relay')
         env.update(TOTK_COOP_MODE='host', TOTK_COOP_IP='127.0.0.1', TOTK_COOP_PORT=str(port))
     # Explicit game assets from the verified build manifest; only the new profile is writable.
     command = [str(exe), '--exefs', info['exefs'], '--romfs', info['romfs'], '--profile', str(profile),
@@ -979,6 +1023,8 @@ def main():
     controls = local_control_summary(lines)
     reload = reload_summary(lines)
     report = dict(executable_sha256=info['executable_sha256'], exit_code=result, timed_out=timed_out,
+                  native_pose_relay=args.native_pose_relay,native_pose_long_walk=args.native_pose_long_walk,
+                  native_update_gap_observations=[s for s in lines if 'coop native npc update gap:' in s or 'coop native npc update resumed:' in s],
                   elapsed_seconds=round(time.monotonic() - started, 2), source_save_unchanged=intact,
                   scenario='custom' if args.input_script and args.scenario == 'idle' else args.scenario,
                   local_controls=controls, reload=reload, visual_state=visual_summary(lines),
@@ -1077,6 +1123,11 @@ def main():
     if args.native_npc_reconnect:
         report['native_session_reconnect']=session_reconnect_summary(lines,peer_exit_codes)
         report['acceptance_checks']['native_session_reconnect']=report['native_session_reconnect']['acceptance_passed']
+    if args.native_pose_relay:
+        figures=([c['figure'] for c in report['native_session_reconnect']['cycles']] if args.native_npc_reconnect
+                 else [report['native_body_figure']])
+        report['native_original_pose']=native_original_pose_summary(lines,(folder/'peer.log').read_text(encoding='utf-8',errors='replace'),figures,peer_exit_codes)
+        report['acceptance_checks']['native_original_pose']=report['native_original_pose']['acceptance_passed']
     if args.equipment_graph:
         report['equipment_graph']=gear_graph_summary(lines)
         report['acceptance_checks']['equipment_graph_ran']=report['equipment_graph']['search_completed']

@@ -25,6 +25,22 @@ not establish that it damages the same enemy in both games.
 
 ## Source and build checkpoint
 
+Latest pose slice: the native-origin figure now keeps the original Link's captured body/rotation/animation
+and equipped identities instead of discarding its visual flags. A sender-time-aware receive lease clears
+stale optional data; native position, vertical physics and movement limits are unchanged. Two near-source
+48-world-second reconnect runs, `run-9e477b85c8` and `run-331418fbc6`, passed original run/attack/charge poses
+on both owned actors, mapped renderer application and every native lifecycle gate. No source saves changed.
+The prepared outfit/model stays fixed with black hair; equipment placement and armor changes are absent.
+
+IMPORTANT NEW LIMIT: longer repeated local walks fail reproducibly. Runs `run-6bc050cabd`, `run-ea69e5078a`
+and instrumented `run-6e2414880e` lose the inspected NPC update hook while its body remains valid, preventing
+movement completion, first retirement and second creation. The last run reports actor887/gen3, last hook
+world11.499420s, gap observed11.757912s after150 calls, no resume. Exact activation/culling/task cause remains
+unverified. Near-source repeats use extra300ms walks to isolate pose binding; they do not fix this failure.
+Add `--native-pose-long-walk` to the native pose relay command to reproduce it. Investigate safe persistent native scheduling before free
+human movement or climbing. Retain current-actor/task/body ownership guards; do not spoof TLS or call a remote
+body from Player's worker without verified lifetime ownership. Read the newest native notes first.
+
 Latest slice: mode 12 passes two connection-driven native lifetimes in one running game, using the same
 test-player ID with fresh session/non-overlapping native actor identities and two separately retained request
 slots. The second creation requires the first peer to leave and its same-actor native removal/resource/cleanup/
@@ -84,6 +100,7 @@ and accidentally resume from it. On another clone, use the published branch and 
 | `d164cab` | Reliable incompatibility rejection and isolated test-client endpoints; hosted co-op and content checks passed |
 | `1c1d507` | Two native lifecycles with separate retained requests and per-probe snapshots; hosted co-op/content checks passed |
 | `4e7fecd` | One connection-driven native creation/movement/visibility/removal without inventory input; hosted co-op/content checks passed |
+| `29765d5` | Two bounded native lifetimes across reconnect, with scoped presentation-copy fallback; hosted co-op/content checks passed |
 
 The current retirement slice adds mode 9 and a complete copied-save creation/movement/visibility/removal
 diagnostic. Its evidence and limitations below supersede earlier statements that native removal is unverified;
@@ -301,11 +318,13 @@ provides a verified drop-in 1.4.3 Player clone, shared enemy authority or prolog
    Mode 10 also passes two native pulse/removal cycles in the same world using separately retained slots.
    Mode 11 now passes one connection-driven creation/movement/retirement without an inventory drop.
    Mode 12 now passes a second peer join after correlated native cleanup, with fresh session/actor identities
-   and distinct retained storage. Next prepare a separately gated human-control path with a supervised
-   continuous lifetime/leave policy and validated movement speeds. The native diagnostic currently clears
-   `C.peer_visual.flags` in `coop.c`, uses clip fallback, ignores remote position/Y and caps speed at 2 m/s;
-   preserve verified original body-pose/rotation capture for a real peer instead of rebuilding it. Do not
-   simply remove the eight-second cap or enable teleport to conceal drift. Then test scene load/reconnect and
+   and distinct retained storage. The original-pose relay now works on that body in near-source tests.
+   First resolve the reproduced loss of the native actor-update hook on longer movement, using verified
+   activation/task ownership. Then prepare a separately gated human-control path with a supervised continuous
+   lifetime/leave policy and validated speeds. Remote position/Y remain ignored and speed is capped at 2 m/s.
+   Reuse the original body-pose/rotation capture; do not rebuild animations, simply remove the eight-second
+   cap or enable teleport to conceal drift. Then verify vertical locomotion/contact for jump/climb/swim,
+   scene load/reconnect and
    unobstructed feet on flat ground, slopes and steps. The user reported
    apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
    the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship

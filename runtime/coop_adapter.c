@@ -415,8 +415,8 @@ static struct {
     uint64_t actor, metadata, address, caller;
     int32_t id;
     uint32_t generation, host_thread;
-    unsigned request, ready, stages, motion_count;
-    int64_t motion_last_us;
+    unsigned request, ready, stages, motion_count,update_count,update_gap_reported;
+    int64_t motion_last_us,update_last_us;
 } probe_entries[PROBE_LIMIT];
 // Only the isolated host-injected request is sampled here. Native calls supply a live receiver;
 // retirement disables sampling before cleanup, and metadata/ID checks reject recycled storage.
@@ -598,6 +598,12 @@ static void npc_figure_observe(CoopNativeBody *out) {
         !isfinite(copy.velocity[k]) || fabsf(copy.velocity[k])>50) return;
     if (copy.world_us<observed_us || !coop_adapter_npc_probe_body(actor,&again,&rechecked,&observed_us) ||
         again!=body || rechecked!=generation) return;
+    int64_t update_us=__atomic_load_n(&probe_entries[index].update_last_us,__ATOMIC_ACQUIRE);
+    unsigned updates=__atomic_load_n(&probe_entries[index].update_count,__ATOMIC_RELAXED),zero=0;
+    if (updates && update_us>0 && copy.world_us>update_us+250000 &&
+        __atomic_compare_exchange_n(&probe_entries[index].update_gap_reported,&zero,1,0,__ATOMIC_ACQ_REL,__ATOMIC_RELAXED))
+        rt_log("coop native npc update gap: probe %u, generation %u, actor id %d, world us %lld, last update us %lld, updates %u; live owned body, hook timing only",
+            index,generation,copy.actor_id,(long long)copy.world_us,(long long)update_us,updates);
     // Actor origin is the native model origin; a rigid-body centre is not a foot location.
     *out=copy;
     static unsigned model_logged;
@@ -1282,6 +1288,16 @@ void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument)
     if (argument && argument == __atomic_load_n(&probe_motion_actor, __ATOMIC_ACQUIRE)) {
         unsigned i = npc_probe_index();
         int64_t now = frame_step_world_us();
+        if (i<PROBE_LIMIT && __atomic_load_n(&probe_entries[i].ready,__ATOMIC_ACQUIRE) &&
+            probe_entries[i].actor==argument && !__atomic_load_n(&probe_entries[i].stages,__ATOMIC_ACQUIRE) &&
+            address==MOD_MAIN_BASE+0x2e27b0ull) {
+            unsigned gap=1;
+            if (__atomic_compare_exchange_n(&probe_entries[i].update_gap_reported,&gap,2,0,__ATOMIC_ACQ_REL,__ATOMIC_RELAXED))
+                rt_log("coop native npc update resumed: probe %u, generation %u, actor id %d, world us %lld; hook timing only",
+                    i,probe_entries[i].generation,probe_entries[i].id,(long long)now);
+            __atomic_fetch_add(&probe_entries[i].update_count,1,__ATOMIC_RELAXED);
+            __atomic_store_n(&probe_entries[i].update_last_us,now,__ATOMIC_RELEASE);
+        }
         int64_t last = __atomic_load_n(&probe_entries[i].motion_last_us, __ATOMIC_RELAXED);
         if (i < PROBE_LIMIT && __atomic_load_n(&probe_entries[i].ready, __ATOMIC_ACQUIRE) &&
             probe_entries[i].actor == argument && !__atomic_load_n(&probe_entries[i].stages, __ATOMIC_ACQUIRE) &&

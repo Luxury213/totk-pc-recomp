@@ -17,6 +17,7 @@ HARNESS = r'''
 #include "coop_adapter.c"
 #include "coop_interp.c"
 #include "coop.c"
+#include "coop_pose_relay.h"
 
 const int rt_game_version = 143;
 volatile int g_fnprof;
@@ -689,11 +690,22 @@ int main(void) {
     ptr(npc_set+0x150,(uintptr_t)npc_body);
     assert(coop_adapter_npc_probe_body((uintptr_t)probe_actor,&scoped_body,&scoped_generation,&scoped_time));
     assert(scoped_body==(uintptr_t)npc_body && scoped_generation==trace_generation && scoped_time==world_us);
+    unsigned motion_before_update=probe_entries[0].motion_count;
+    int64_t motion_time_before_update=probe_entries[0].motion_last_us;
+    coop_adapter_function(MOD_MAIN_BASE+0x2e27b0,77,(uintptr_t)other_actor);
+    assert(!probe_entries[0].update_count);
+    coop_adapter_function(MOD_MAIN_BASE+0x2e27b0,MOD_MAIN_BASE+0x2f1608,(uintptr_t)probe_actor);
+    assert(probe_entries[0].update_count==1 && probe_entries[0].update_last_us==world_us);
+    probe_entries[0].stages=1;
+    coop_adapter_function(MOD_MAIN_BASE+0x2e27b0,77,(uintptr_t)probe_actor);
+    assert(probe_entries[0].update_count==1); probe_entries[0].stages=0;
+    probe_entries[0].motion_count=motion_before_update; probe_entries[0].motion_last_us=motion_time_before_update;
     // Reuse the authored actor/body addresses with a new metadata ID in the same world.
     NpcPhysicsSnapshot old_initial=npc_physics[0], old_late=npc_late_physics[0];
     int64_t old_physics_time=world_us;
     probe_entries[1]=probe_entries[0]; probe_entries[1].id=probe_id+1;
     probe_entries[1].motion_count=0; probe_entries[1].motion_last_us=0;
+    probe_entries[1].update_count=probe_entries[1].update_gap_reported=0; probe_entries[1].update_last_us=0;
     probe_entries[0].stages=15;
     // Publication can expose the new index before the separate active-address hint changes.
     probe_entries[1].actor=(uintptr_t)other_actor;
@@ -781,6 +793,39 @@ int main(void) {
     }
     assert(native_capture_locked(&body_peer,&body_adapter,1,now).time_ns==now);
     assert(!native_capture_locked(&body_peer,&body_adapter,0,now).time_ns); // actual mismatch clears immediately
+    body_peer.remote.time_ns=17; body_peer.state_received_ns=now;
+    body_peer.remote.flags=COOP_SAMPLE_PLAYER|COOP_SAMPLE_BODY|COOP_SAMPLE_ROTATION|COOP_SAMPLE_ANIMATION;
+    unsigned pose_flags=COOP_SAMPLE_BODY|COOP_SAMPLE_ROTATION|COOP_SAMPLE_ANIMATION;
+    assert(native_visual_flags_locked(&body_peer,pose_flags,now)==pose_flags);
+    body_peer.state_received_ns=now+250000001;
+    assert(!native_visual_flags_locked(&body_peer,pose_flags,now+250000001)); // retransmission cannot renew the pose
+    body_peer.remote.time_ns++;
+    assert(native_visual_flags_locked(&body_peer,pose_flags,now+250000001)==pose_flags);
+    body_peer.remote.flags&=~COOP_SAMPLE_BODY;
+    assert(!(native_visual_flags_locked(&body_peer,pose_flags,now+250000001)&COOP_SAMPLE_BODY));
+    body_peer.remote.flags|=COOP_SAMPLE_BODY; body_peer.remote.time_ns--;
+    assert(!native_visual_flags_locked(&body_peer,pose_flags,now+250000001));
+    body_peer.remote.generation++; body_peer.remote.time_ns=1;
+    assert(native_visual_flags_locked(&body_peer,pose_flags,now+250000001)==pose_flags);
+    body_peer.negotiated=0; assert(!native_visual_flags_locked(&body_peer,pose_flags,now+250000001));
+    body_peer.negotiated=1; body_peer.remote.body=(CoopBody){0}; body_peer.remote.rotation[3]=1;
+    strcpy(body_peer.remote.animation,"Synthetic_Move"); body_peer.remote.action=3; body_peer.remote.yaw=42;
+    for(unsigned k=0;k<COOP_BODY_BONES;k++) body_peer.remote.body.q[k][3]=1;
+    CoopPoseRelay relay={0}; CoopSample pulse={.flags=COOP_SAMPLE_PLAYER,.generation=77,.time_ns=300,.velocity={2,0,0}};
+    coop_pose_relay_offer(&relay,&body_peer,now+250000001);
+    assert(coop_pose_relay_apply(&relay,&pulse,now+250000001) && (pulse.flags&COOP_SAMPLE_BODY));
+    assert(pulse.action==3 && pulse.yaw==42 && pulse.rotation[3]==1 && !strcmp(pulse.animation,"Synthetic_Move"));
+    assert(pulse.generation==77 && pulse.time_ns==300 && pulse.velocity[0]==2); // presentation never takes native control
+    uint64_t pose_received=relay.received_ns;
+    body_peer.state_received_ns+=300000000; coop_pose_relay_offer(&relay,&body_peer,now+550000001);
+    assert(relay.received_ns==pose_received && !coop_pose_relay_apply(&relay,&pulse,now+550000001));
+    assert(!(pulse.flags&COOP_SAMPLE_BODY) && !pulse.body.q[0][3] && !pulse.action && !pulse.yaw);
+    body_peer.remote.time_ns++; coop_pose_relay_offer(&relay,&body_peer,now+550000001);
+    assert(coop_pose_relay_apply(&relay,&pulse,now+550000001));
+    body_peer.has_remote=0; coop_pose_relay_offer(&relay,&body_peer,now+550000001);
+    assert(!coop_pose_relay_apply(&relay,&pulse,now+550000001));
+    body_peer.has_remote=1; coop_pose_relay_offer(&relay,&body_peer,now+550000001);
+    assert(!coop_pose_relay_apply(&relay,&pulse,now+550000001)); // canceled capture cannot be revived by replay
     // The renderer receives the actor origin, never a guessed body-centre-to-feet offset.
     probe_entries[0].stages=1; npc_figure_observe(&body_copy); assert(!body_copy.time_ns);
     assert(!coop_adapter_npc_probe_model((uintptr_t)probe_actor,&scoped_model,&model_generation));
@@ -976,7 +1021,7 @@ def main():
         source.write_text(HARNESS, encoding='utf-8')
         exe = folder / ('check.exe' if os.name == 'nt' else 'check')
         subprocess.run([args.cc, '-std=gnu11', '-O2', '-Wall', '-Wextra', '-Werror', '-I', str(folder),
-                        '-I', str(ROOT / 'runtime'), '-I', str(args.deps), '-I', str(args.deps / 'vma'),
+                        '-I', str(ROOT / 'runtime'), '-I', str(ROOT / 'tools'), '-I', str(args.deps), '-I', str(args.deps / 'vma'),
                         str(source), *([] if os.name == 'nt' else ['-lm']), '-o', str(exe)], check=True)
         subprocess.run([str(exe)], check=True)
 

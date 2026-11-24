@@ -37,6 +37,38 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_native_pose_script_separates_nearby_pose_acceptance_from_long_walk_reproduction(self):
+        near=diagnose.diagnostic_script(60,'controls',True)
+        far=diagnose.diagnostic_script(60,'controls',True,True)
+        self.assertIn('@2000 LSTICK -32767 0 2000',near)
+        self.assertIn('@10000 LSTICK -32767 0 300',near)
+        self.assertIn('@23000 LSTICK -32767 0 300',near)
+        self.assertIn('@10000 LSTICK -32767 0 2000',far)
+        self.assertIn('@12500 Y 100',near)
+        self.assertNotIn('@10000',diagnose.diagnostic_script(60,'controls'))
+    def test_native_original_pose_requires_native_origin_both_actors_and_original_actions(self):
+        native=self.reconnect_fixture()
+        figures=[c['figure'] for c in diagnose.session_reconnect_summary(native,[0,0])['cycles']]
+        poses=[]
+        for i,figure in enumerate(figures):
+            for k,s in enumerate(figure['samples']):
+                poses.append(f'coop native figure pose: sample {s["sample_ns"]}, generation {s["generation"]}, actor id {s["actor_id"]}, '
+                             f'changed {int(k>0)}, rotation 1, animation '+('Nml_Move_Run' if k%2 else 'Sword_Blunt_Attack_S1')+
+                             '; captured body supplied to mapped skeleton')
+        lines=native+poses+['figure: final body pose applied (89 palette entries, 191 bones); presentation only']
+        peer='peer: native pose relay completed: published 40, bodies 40, changed 39\n'*2
+        summary=diagnose.native_original_pose_summary(lines,peer,figures,[0,0])
+        self.assertTrue(summary['acceptance_passed']); self.assertFalse(summary['climbing_physics_verified'])
+        for changed in (lines[:-1],native+poses[:-31]+[lines[-1]],lines+[poses[0]],
+                        [s.replace('Sword_Blunt_Attack_S1','Nml_Wait') for s in lines],
+                        [s.replace('Nml_Move_Run','Nml_Wait') for s in lines],
+                        [s.replace('rotation 1, animation','rotation 0, animation') for s in lines],
+                        [s.replace('figure pose: sample','figure pose: bad') for s in lines]):
+            self.assertFalse(diagnose.native_original_pose_summary(changed,peer,figures,[0,0])['acceptance_passed'])
+        self.assertFalse(diagnose.native_original_pose_summary(lines,peer,figures,[0])['acceptance_passed'])
+        self.assertFalse(diagnose.native_original_pose_summary(lines,peer.replace('changed 39','changed 0'),figures,[0,0])['acceptance_passed'])
+        self.assertFalse(diagnose.native_original_pose_summary(lines,peer,[],[0,0])['acceptance_passed'])
+
     def reconnect_fixture(self):
         lines=[]
         for i,start in enumerate((6000000,26000000)):

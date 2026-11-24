@@ -21,12 +21,20 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 
 ## Current status
 
+The companion's prepared model/outfit and black hair are fixed in this prototype. Two-PC control reuses
+each PC's original local Player, including its native actions and animation graph. The remote representation
+reproduces captured poses on a separately owned body. Reusing that data does not grant the NPC proxy Player's
+climbing controller, stamina, inventory or camera singletons. Character work must first establish continuous
+safe scheduling/movement, then vertical/contact behavior for jumping, climbing and swimming. Combat/items,
+persistence, shared Ultrahand/Recall ownership and story retain their later campaign-stage gates. A replicated
+attack pose does not establish damage, and equipped names do not establish rendered weapons or clothing.
+
 | Area | Verified result | Remaining gate |
 | --- | --- | --- |
 | Phase 1: isolated build | 1.4.3 module hashes, separate runtime/executable, dedicated profiles, selftest/config probe | Each participant supplies their own local build |
 | Phase 2: transport | ENet worker, protocol v5, reliable labels, 30 Hz pose, compatibility/freshness and local impairment tests; acknowledged incompatibility rejection and isolated proxy client endpoints | Real two-PC private-VPN validation; gameplay authority is not implemented |
 | Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
-| Phase 2: final body pose | 58-bone capture/encoding/interpolation/application; one-game ENet echo passed with 387 body samples and unchanged source saves | Equipment, full run/jump/attack fidelity and binding to a native body remain pending |
+| Phase 2: final body pose | 58-bone capture/encoding/interpolation/application; ENet echo and near-source native-origin run/attack/charge tests passed with unchanged source saves | Full movement fidelity, vertical/contact behavior and equipment placement remain pending |
 | Phase 2: equipped identities | Bounded pouch observation and optional weapon/shield/bow names; live echo received 394 equipped snapshots; selected models prepared privately | No gear placement/rendering, fused additions, bow-string replication or inventory transaction |
 | Phase 2: native equipment research | Original reference-setter identities and bounded ModelUnit discovery; three models and 81 raw first-palette matrices observed | Persistent ownership, coordinate conversion and hand/back attachment binding remain unverified |
 | Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
@@ -41,6 +49,7 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 | Phase 2: two native cycles | Mode 10 passed two creation/pulse/rest/removal cycles in one world with distinct IDs and separately correlated cleanup | Two retained slots, inventory-drop scheduling and no figure/peer; session-driven recreation, reusable storage, scene transitions and human control remain pending |
 | Phase 2: session-driven native creation | Mode 11 passed one negotiated connection creating its NPC at the verified local actor-update worker, ENet motion, native-origin Link presentation and correlated removal without an inventory drop | One retained slot and bounded movement; second join/reconnect, scene transitions, body/model fit and human control remain pending |
 | Phase 2: bounded native reconnection | Mode 12 passed two session-owned native lifetimes in one running game, stable test-player ID, distinct session/actor identities and separately correlated cleanup; idle and local-control runs passed | Two retained slots and existing motion limits; indefinite reuse, scene transitions, body/model fit and continuous human control remain pending |
+| Phase 2: original pose on native body | The original Player's captured 58-bone pose and rotation now reach the native-origin figure; two near-source reconnect runs passed with original run/attack/charge poses on both actors | Longer local movement reproducibly loses the inspected native update hook and blocks retirement/reconnect; safe activation, vertical locomotion, equipment placement and human control remain pending |
 | Phase 2: ordinary native character commands | Disabled; the ordinary command queue rejects mutation and capabilities remain presence-only | Production movement/animation contract, Link binding, removal, shared world identities and repeated lifecycle tests |
 | Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
 

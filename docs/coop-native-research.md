@@ -1,5 +1,49 @@
 # Co-op native research notes
 
+## Original Link pose on the owned native body (November 23, 2026)
+
+The native-origin path no longer discards `C.peer_visual.flags` in `coop.c`. It preserves validated body,
+rotation, animation and equipped-identity data through the existing interpolator while taking position and
+vertical physics from the owned native body. Original rotation takes precedence over velocity-derived yaw.
+The native pose lease uses the first local receive time of a new sender sample, keyed by session/player and
+remote generation; retransmissions cannot refresh it. Missing/stale optional fields select clip fallback
+without granting physics authority. `coop_figure.c` supplies the original 58-bone data to the already mapped
+prepared skeleton. Face/hair child behavior remains the existing local fallback, and hair tint stays black.
+
+`tools/coop_pose_relay.h` copies only presentation/action data from the game-free peer's fresh observed Player
+sample; velocity, sender generation and time remain the diagnostic peer's. The regular explicit protocol v5
+encoder carries the packet. Its independent source-receive lease bounds held pose data; neither peer's clock
+is compared with the other's. This adds no native call, player-memory clone, asset conversion or protocol change.
+Equipped names remain identities; the prepared clothing/mesh and absent weapon attachments are unchanged.
+
+The longer source movement exposed a separate native scheduling limit. Two earlier runs `run-6bc050cabd` and
+`run-ea69e5078a` received original run/attack poses but failed the complete diagnostic: native velocity updates
+stopped around world 11.46/11.50 s, and first removal/second creation never completed. The instrumented
+`run-6e2414880e` reproduced it on the final executable. Its live owned actor 887/gen3 reported a hook gap at
+world 11.757912 s: last update 11.499420 s, 150 observed calls. No resume was logged. The Actor/metadata/body
+observations remained valid. This narrows the failure to missing inspected update entry rather than a new
+movement-API success; exact culling/activation/task cause remains unverified. Native limits were retained,
+and the failed run is not gameplay acceptance. Safe activation/scheduling is now a priority for human control.
+
+The separate near-source test repeats the recorded stick action for 300 ms instead of two seconds. It
+isolates pose binding while keeping the NPC near the local player; it does not fix the longer walk. Both
+48-world-second runs below passed creation, movement/consumer, expiry rests/recovery, figure origin,
+hide/restore, removal/resource/allocator handoff and reconnection, with normal game/both-peer exits and
+unchanged source saves:
+
+| Run | Native actor IDs, generation 3 | Original-body submissions / changing poses | Original clips observed on both actors |
+| --- | --- | --- | --- |
+| `run-9e477b85c8` | 889, then 899 | 156 / 139; 155 / 133 | `Nml_Move_Run`, `Sword_Blunt_Attack_S1`, `Sword_Charge`, plus transitions/idle |
+| `run-331418fbc6` | 891, then 905 | 151 / 133; 149 / 129 | The same run/attack/charge families, with independent captured transitions |
+
+The renderer logged mapped final-body application. Inspected first/second-cycle images in the first near run
+show different copied arm/body poses on the black-haired companion; equipment is absent and grass obscures
+feet. This is simultaneous native-body anchoring and original pose reuse, not exact frame-by-frame fidelity,
+shared hit outcomes, full locomotion, clothing replication, terrain fit or human/Internet acceptance.
+Authored checks cover fresh/expired/replayed optional data, body loss, relay cancellation, preserved independent
+velocity/generation/time and per-probe update counters. The report rejects missing mapped application,
+run/attack evidence, either actor or peer, duplicate/malformed pose events and unrelated native origins.
+
 ## Two session-owned native lifetimes (November 23, 2026)
 
 Mode 12 (`--native-npc-reconnect`, `isolated-npc-session-reconnect-v1`) combines mode 11's inspected

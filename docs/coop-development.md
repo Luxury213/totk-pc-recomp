@@ -458,6 +458,31 @@ passed with validation after correcting outdated texture fixtures. These do not 
 
 ## Source checks
 
+To relay the original Player's final pose onto the session-owned native body:
+
+```powershell
+.venv/Scripts/python.exe tools/coop_diagnose.py --seed-profile "<offline test profile>" --native-npc-reconnect --native-pose-relay --scenario controls --seconds 48 --shots 2 --timeout 210
+```
+
+This reuses mode 12's marker, native physics/lifecycle guards and two retained creation slots. The game-free
+peer returns the original Link's captured body, rotation, clip and equipped identities while keeping its
+existing independent velocity pulse, sender generation and time. Two receive-time leases bound optional
+pose data; a repeated sender timestamp cannot refresh either relay/receiver lease. Missing body data selects
+the existing clip fallback. Native origin/vertical physics are retained and teleport remains disabled.
+The black-haired prepared model/outfit remains fixed; equipped names do not render equipment or armor.
+
+The recorded control actions are repeated during both native lifetimes. The extra walks last 300 ms so this
+pose/lifecycle test stays near the companion. Acceptance requires actual mapped-body application on both
+actors, changing poses and original run/attack clips, plus all movement/visibility/removal/reconnect gates.
+This does not establish exact attack fidelity, damage, jump/climb/swim physics or continuous human control.
+
+`--native-pose-long-walk` restores the extra two-second walks as a retained failure reproduction. In the tested
+scene the owned NPC stops receiving the inspected update hook after the player moves farther away. Its body
+remains readable but movement/retirement/reconnection do not complete, so that diagnostic correctly fails.
+`coop native npc update gap` and optional `update resumed` record per-probe hook timing without mutating game
+state. Wake/culling/task ownership must be investigated before using this as free exploration. A short walk
+is an isolated pose test, not a fix for that longer-range failure.
+
 Mode 12 tests a bounded reconnect in one running game:
 
 ```powershell

@@ -58,6 +58,8 @@ static struct {
     CoopNativeBody native_body;
     uint64_t native_session, native_player;
     uint32_t native_remote_generation;
+    uint64_t visual_session,visual_player,visual_sender_ns,visual_received_ns;
+    uint32_t visual_generation;
     int peer_action;
     uint64_t last_rx_ns;
     uint32_t ping_ms;
@@ -341,6 +343,21 @@ static int native_figure_ready(const CoopNetSnapshot *network, uint32_t generati
         C.native_remote_generation==network->remote.generation;
 }
 
+static uint32_t native_visual_flags_locked(const CoopNetSnapshot *peer,uint32_t flags,uint64_t now) {
+    if (C.visual_session!=peer->session || C.visual_player!=peer->peer_player || C.visual_generation!=peer->remote.generation) {
+        C.visual_sender_ns=C.visual_received_ns=0;
+        C.visual_session=peer->session; C.visual_player=peer->peer_player; C.visual_generation=peer->remote.generation;
+    }
+    if (!peer->negotiated || !peer->has_remote || !(peer->remote.flags&COOP_SAMPLE_PLAYER) ||
+        !peer->session || !peer->peer_player || !peer->remote.generation || !peer->remote.time_ns || !peer->state_received_ns) return 0;
+    if (peer->remote.time_ns>C.visual_sender_ns && peer->state_received_ns>C.visual_received_ns) {
+        C.visual_sender_ns=peer->remote.time_ns; C.visual_received_ns=peer->state_received_ns;
+    }
+    // Use our first receive time, never the sender's clock or a replay's later arrival, for visual expiry.
+    if (peer->remote.time_ns!=C.visual_sender_ns || now<C.visual_received_ns || now-C.visual_received_ns>250000000ull) return 0;
+    return flags&peer->remote.flags&(COOP_SAMPLE_ROTATION|COOP_SAMPLE_ANIMATION|COOP_SAMPLE_BODY|COOP_SAMPLE_EQUIPMENT);
+}
+
 void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
     memset(out, 0, sizeof *out);
     uint64_t now = plat_now_ns();
@@ -415,8 +432,9 @@ void coop_tick(uint32_t width, uint32_t height, CoopSnapshot *out) {
             if (C.has_peer) {
                 memcpy(C.peer_pos,C.native_body.pos,sizeof C.peer_pos);
                 C.peer_speed=hypotf(C.native_body.velocity[0],C.native_body.velocity[2]);
-                if (C.peer_speed>.15f) C.peer_yaw=atan2f(C.native_body.velocity[0],C.native_body.velocity[2])*57.2957795131f;
-                C.peer_visual.flags=0; // This peer supplies velocity only; use local clip fallback.
+                C.peer_visual.flags=native_visual_flags_locked(&network,C.peer_visual.flags,now);
+                if (!(C.peer_visual.flags&COOP_SAMPLE_ROTATION) && C.peer_speed>.15f)
+                    C.peer_yaw=atan2f(C.native_body.velocity[0],C.native_body.velocity[2])*57.2957795131f;
                 out->peer_native_body=1; out->peer_native_sample_ns=C.native_body.time_ns;
                 out->peer_native_generation=C.native_body.generation; out->peer_native_actor_id=C.native_body.actor_id;
             }

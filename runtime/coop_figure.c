@@ -56,10 +56,22 @@ void coop_figure_publish(const CoopSnapshot *snapshot) {
         snapshot->peer_native_actor_id,snapshot->peer_native_body ? snapshot->peer_native_sample_ns : 0);
     static uint64_t logged_sample;
     static unsigned native_logs;
+    static CoopBody previous_body;
+    static uint32_t previous_generation;
+    static int32_t previous_actor=-1;
     if (snapshot->peer_native_body && snapshot->peer_native_sample_ns!=logged_sample && native_logs<512) {
         logged_sample=snapshot->peer_native_sample_ns; native_logs++;
         rt_log("coop native figure submitted: sample %llu, generation %u, actor id %d, pos %.6f %.6f %.6f; copied position, native appearance controlled separately",
             (unsigned long long)snapshot->peer_native_sample_ns,snapshot->peer_native_generation,
             snapshot->peer_native_actor_id,figure.feet[0],figure.feet[1],figure.feet[2]);
+        if (figure.has_body) {
+            int same=previous_generation==snapshot->peer_native_generation && previous_actor==snapshot->peer_native_actor_id;
+            int changed=same && memcmp(&previous_body,&figure.body,sizeof previous_body)!=0;
+            previous_body=figure.body; previous_generation=snapshot->peer_native_generation; previous_actor=snapshot->peer_native_actor_id;
+            rt_log("coop native figure pose: sample %llu, generation %u, actor id %d, changed %u, rotation %u, animation %s; captured body supplied to mapped skeleton",
+                (unsigned long long)snapshot->peer_native_sample_ns,snapshot->peer_native_generation,
+                snapshot->peer_native_actor_id,changed,!!(snapshot->peer_visual_flags&COOP_SAMPLE_ROTATION),
+                (snapshot->peer_visual_flags&COOP_SAMPLE_ANIMATION) ? snapshot->peer_animation : "unavailable");
+        }
     }
 }
