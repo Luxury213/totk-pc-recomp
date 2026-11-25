@@ -1,179 +1,99 @@
-# Co-op status and public development plan
+# Co-op plan: deliver a playable exploration prototype
 
-Phase 2 is in progress. There is no playable second Link or shared cooperative campaign yet. The current
-milestone provides session infrastructure, an animated visual Link and a bounded native NPC creation/movement/removal experiment.
-This public plan is the resumption reference; it does not depend on private notes in ignored `build/`.
+Updated November 25, 2026. This delivery order supersedes earlier investigation-first and equipment-first
+instructions. Phase 2 is still incomplete. The next deliverable is a build the user can control and play.
 
-See [the development guide](coop-development.md) for commands, [native research](coop-native-research.md) for
-engine evidence and [the campaign design](coop.md) for the agreed final behavior.
+## First playable target
 
-Priority update after the visual-grounding report: verify the visible figure's binding to a native body and
-its feet/terrain relationship before further equipment appearance work. Ordinary presence has no collider;
-mode 7 now anchors the figure to the tested NPC origin, and mode 8 suppresses/restores that NPC's original
-mesh through its native controller. Mode 9 passed one native retirement with resource/allocator correlation.
-Visual feet/terrain and repeated native lifecycle acceptance remain open. The test echo's horizontal offset reuses
-the sender's Y and can misplace it on slopes. An origin calibration or scale adjustment cannot complete this gate.
+Two people on separate PCs, connected through the private VPN, walk and run together in one supported outdoor
+area. Each controls their original local Link with their own camera. Each game creates one independently owned
+remote companion, presents the other player's pose and keeps it physically active when the local Link moves
+away within that loaded area. The user can launch, connect and move without a developer input script.
 
-**Resume here:** [the next-session handover](coop-next-session.md) records the tested source/build checkpoint,
-the latest reference review and the ordered work toward original Link movement and attacks. The next
-character milestone includes final blended pose and equipment replication, original run/jump/attack evidence,
-and a verified native companion lifecycle. The current NPC stream does not establish Player behavior.
+Start with ground exploration and basic idle/run presentation. Use isolated development profiles and the fixed
+black-haired Link figure. The first prototype does not promise shared combat, inventory, quests or saves.
 
-## Current status
+## Starting point
 
-The distance-activity investigation now has two complete bounded experimental passes. The smaller private
-experiment preserves the native active-policy branch for the owned NPC instead of merely refusing its later
-sleep request. Public builds contain observation only: integrating explicit diagnostic build/runner options
-and testing their guards is the next small implementation step. See the latest [native research](coop-native-research.md).
+- ENet sessions, copied snapshots, original Link poses and bounded native NPC creation/movement/removal exist.
+- Two private longer-walk experiments passed all requested bounded gates. The smaller successful version
+  preserves the native active-policy branch; it has not been integrated into public builds.
+- Public source checkpoint: `20b738680e07111855b5a90018037bcd1a233ec4`. The restored ordinary executable has
+  observation only. Movement still has eight-second/256-request limits, activity a private twenty-second
+  limit, and creation two retained slots. There is no continuous human-controlled companion yet.
+- Each PC's world is currently independent. Shared enemies, items and progression require later authority work.
 
-Deferred appearance bug: the road-NPC carrier can become visible during creation/publication gaps or after
-visibility restoration. This is separate from the prepared black-haired Link figure. Finish distance activity
-first; later prevent that carrier mesh from appearing throughout creation, disconnect and retirement using
-verified native ownership and visibility phases.
+Use [native research](coop-native-research.md) for evidence and [the handover](coop-next-session.md) to resume.
+Use [the development guide](coop-development.md) for build commands. Reuse the current 0.4.0 integration and
+1.4.3 content, generated objects, figure and networking code.
 
-The companion's prepared model/outfit and black hair are fixed in this prototype. Two-PC control reuses
-each PC's original local Player, including its native actions and animation graph. The remote representation
-reproduces captured poses on a separately owned body. Reusing that data does not grant the NPC proxy Player's
-climbing controller, stamina, inventory or camera singletons. Character work must first establish continuous
-safe scheduling/movement, then vertical/contact behavior for jumping, climbing and swimming. Combat/items,
-persistence, shared Ultrahand/Recall ownership and story retain their later campaign-stage gates. A replicated
-attack pose does not establish damage, and equipped names do not establish rendered weapons or clothing.
+## Delivery order
 
-| Area | Verified result | Remaining gate |
+| Delivery | Implementation | Result the user can observe |
 | --- | --- | --- |
-| Phase 1: isolated build | 1.4.3 module hashes, separate runtime/executable, dedicated profiles, selftest/config probe | Each participant supplies their own local build |
-| Phase 2: transport | ENet worker, protocol v5, reliable labels, 30 Hz pose, compatibility/freshness and local impairment tests; acknowledged incompatibility rejection and isolated proxy client endpoints | Real two-PC private-VPN validation; gameplay authority is not implemented |
-| Phase 2: visual companion | Textured animated Link with black hair, scene lighting/depth/shadows | No associated native body/controller, collision or gameplay |
-| Phase 2: final body pose | 58-bone capture/encoding/interpolation/application; ENet echo and near-source native-origin run/attack/charge tests passed with unchanged source saves | Full movement fidelity, vertical/contact behavior and equipment placement remain pending |
-| Phase 2: equipped identities | Bounded pouch observation and optional weapon/shield/bow names; live echo received 394 equipped snapshots; selected models prepared privately | No gear placement/rendering, fused additions, bow-string replication or inventory transaction |
-| Phase 2: native equipment research | Original reference-setter identities and bounded ModelUnit discovery; three models and 81 raw first-palette matrices observed | Persistent ownership, coordinate conversion and hand/back attachment binding remain unverified |
-| Phase 2: engine observation | Local-player request/task/construction/reference paths and weapon retirement/resource/allocator correlation | General ownership, cancellation, scheduling and safe callable operations |
-| Phase 2: native experiment | One independent weapon request falls, rests and is collected; strict checks passed with/without the visual figure | Still one-shot and triggered by an authentic weapon drop; not companion spawning |
-| Phase 2: humanoid creation experiment | One owned Npc_Road_001 request initialized; visible native NPC with the visual figure disabled, observed descent/rest, source save preserved | Reusable session ownership, rejection and cancellation remain unverified |
-| Phase 2: NPC body/velocity diagnosis | Early actor-update pulses failed; scoped consumer/backend tracing showed their velocity was already zero before consumption | The exact native override writer remains unconfirmed |
-| Phase 2: isolated NPC movement | Two consumer-entry pulse runs passed: about 2 m forward, 1.9 m reverse and positional rest; normal exits and unchanged source saves | Synthetic commands only; no peer control, verified locomotion animation/grounding contract or Link model binding |
-| Phase 2: ENet NPC diagnostic | A game-free loopback peer drives forward/reverse/diagonal movement; two lease-expiry stops, recovery and final positional rest passed | Scripted peer only; no human/Internet acceptance or complete native companion lifecycle |
-| Phase 2: native-origin figure experiment | Mode 7 copies the owned NPC's actor origin to the Link figure; 194 exact capture/submission matches and native movement gates passed on a slope | The original NPC appearance remains; ground/feet visual acceptance, appearance replacement, retirement and human control are still pending |
-| Phase 2: native appearance experiment | Mode 8 suppresses the owned NPC mesh while publishing Link and restores it after the peer exits; images, origin and native movement gates passed | One controlled hide/restore pair; no native retirement, repeated creation, persistent model-state authority or human control |
-| Phase 2: native retirement experiment | Mode 9 passed one complete creation/movement/visibility/retirement run; the same NPC reached request, queue, resource cleanup and allocator handoff | No repeated lifecycle in one process, creation-storage reuse, reconnect/load acceptance or human control |
-| Phase 2: two native cycles | Mode 10 passed two creation/pulse/rest/removal cycles in one world with distinct IDs and separately correlated cleanup | Two retained slots, inventory-drop scheduling and no figure/peer; session-driven recreation, reusable storage, scene transitions and human control remain pending |
-| Phase 2: session-driven native creation | Mode 11 passed one negotiated connection creating its NPC at the verified local actor-update worker, ENet motion, native-origin Link presentation and correlated removal without an inventory drop | One retained slot and bounded movement; second join/reconnect, scene transitions, body/model fit and human control remain pending |
-| Phase 2: bounded native reconnection | Mode 12 passed two session-owned native lifetimes in one running game, stable test-player ID, distinct session/actor identities and separately correlated cleanup; idle and local-control runs passed | Two retained slots and existing motion limits; indefinite reuse, scene transitions, body/model fit and continuous human control remain pending |
-| Phase 2: original pose on native body | The original Player's captured 58-bone pose and rotation now reach the native-origin figure; two near-source reconnect runs passed with original run/attack/charge poses on both actors | Longer local movement reproducibly loses the inspected native update hook and blocks retirement/reconnect; safe activation, vertical locomotion, equipment placement and human control remain pending |
-| Phase 2: update interruption diagnosis | Returning with original Player input resumes the same actor; two observed task dispatchers pause together while actor identity/callback stay valid; the runner retains failure on a gap | Exact task-selection/activation cause and safe persistent scheduling remain unresolved; returning nearby is not a fix |
-| Phase 2: ordinary native character commands | Disabled; the ordinary command queue rejects mutation and capabilities remain presence-only | Production movement/animation contract, Link binding, removal, shared world identities and repeated lifecycle tests |
-| Phase 3: cooperative adventure | Design and acceptance requirements documented | Combat/items, persistence, travel/abilities and complete story remain unimplemented |
+| 1. Integrate distance activity | Bring the smaller successful policy wrapper into authored runtime code, with explicit v143 build/profile opt-in and verified lifetime/expiry guards | The same long-walk case passes on a reproducible source build; the companion remains active |
+| 2. Manual control in one game | Connect keyboard/gamepad input from a lightweight ENet peer to the existing bounded native command path | The user can steer, stop and change the real companion's direction; local Link input/camera remain independent |
+| 3. Sustained exploration | Replace the fixed diagnostic timeline with a session-owned movement/activity lifecycle and renewable local receive leases; retain identity, phase and code validation | At least five minutes of manual movement, including separation, stopping and packet silence, without an eight-second cutoff |
+| 4. Two-player build | Connect each PC's original Player capture to the other PC's owned companion, with an explicit same-area/origin setup and launch instructions | Two humans explore together for at least fifteen minutes over the private VPN |
 
-The ordinary visual Link and the native weapon are separate objects. A separately armed NPC/figure experiment
-now shares a copied native origin, while retaining the NPC's original appearance. An observed weapon fall does not establish humanoid
-collision/controller behavior. Negotiation cannot enable gameplay readiness without verified native capabilities
-and stable shared world identities. Raw guest addresses must never become network entity IDs.
+Delivery 2 is a manually testable technical preview using one full game and a lightweight controller. Delivery 4
+is the first playable multiplayer exploration prototype. A scripted peer or one-way visual echo cannot complete
+delivery 4. Match both directions; displaying a pose is insufficient if the companion body stops or drifts away.
 
-## Next implementation milestone
+**Next session starts with delivery 1, then wires manual input for delivery 2.** Prefer a small executable feature
+and a user launch command as the session output. If one cannot be delivered, record the exact failed operation
+and the smallest code change needed next. Further investigation must resolve a blocker in these four deliveries.
 
-Upstream compatibility review (2026-11-13): [v0.4.0](https://github.com/valentderah/totk-pc-recomp/releases/tag/v0.4.0)
-was published on November 10 at `7a37fc3c346cd6f2b3c80637effb27b880ce817b`. The preserved cooperative baseline
-uses port version 0.3.11; an isolated integration candidate targets 0.4.0. Both target TotK 1.4.3. The release changes renderer replay,
-memory/resolution handling, CPU/runtime behavior and diagnostics. Several touched files also contain our
-figure hooks, including vk_exec_draw.c, vk_exec.c/.h, vk_device.c, nvn_api_obj.c, main.c and menu.cpp.
-The candidate preserves the figure recorder hooks and invalidates the new per-context draw caches after figure
-passes. Camera capture uses replay-local uniform values. While co-op is enabled, replay chunks record in order
-through the existing hold scheduler because figure/camera/shadow/tile state is shared. Mode is sampled once per
-submission, so enabling co-op cannot expose that state to already-parallel chunks. Ordinary non-co-op recording
-keeps upstream behavior. This is a correctness constraint, not a co-op parallel-rendering speedup.
+## Checks attached to each delivery
 
-The candidate passed CPU differential checks on both variants, runtime probes, fresh shader preparation,
-local controls/animation and copied-save native weapon/figure tests, including four replay workers. Full-game
-validation with the layer confirmed loaded still timed out after entering the scene, with no logged Vulkan
-errors. Keep this integration experimental and preserve the old build; that timeout is not an acceptance pass.
-No full performance comparison or two-PC gameplay acceptance is claimed. A source merge does not complete Phase 2.
+1. For the activity integration, verify original forwarding, CPU/FP preservation, foreign/stale actor rejection,
+   code mismatch, strict opt-in and expiry. Retain the known failed case and compare it with the integrated fix.
+2. For manual control, check actual actor/body displacement and visual alignment, native ground contact in the
+   chosen area, stop on lost input and continued local camera/input ownership. A controller disconnect revokes
+   commands. Repeated old packets cannot renew a lease.
+3. For sustained operation, establish a verified lifetime/renewal contract before replacing fixed time budgets.
+   Do not simply remove caps, clear opaque flags, spoof worker/TLS ownership or write physics from rendering.
+   Stop safely on departure/world change. Either verify reconnect within the supported lifecycle or require a
+   clearly documented clean session restart; never duplicate actors or reuse freed request storage.
+4. For the two-PC build, check both movement directions, compatible game/content versions, consistent coordinates,
+   ground/figure alignment, separation and peer loss. The host must use its own native companion too.
 
-Deliver a real companion actor that appears, moves independently and disappears through verified engine
-operations, while the local player's camera and input continue working. Keep the native capability bits disabled
-until the complete gate below passes.
+Run checks appropriate to the changed path after implementing it. Add instrumentation only to decide a concrete
+failing condition; stop extending it once it answers that question. Re-run wider checks when a change or failure
+requires them. Keep failed outcomes visible and keep content/staged checks before commits.
 
-1. Assess a suitable companion actor/controller and its native body, including a Player-derived puppet if its
-   ownership can be verified. The existing Player's resident record and manager link are scene-owned; copying
-   them or allocating another PlayerLink is not a verified shortcut. The
-   ordinary Hylian NPC packs reference Npc_Size_M character controllers/bodies without direct Player/camera
-   components in their own ActorParam. The first Npc_Road_001 creation experiment passed; inspect its native
-   controller and movement contract further. Early actor-update velocity requests are overwritten before
-   consumption. Reapplying through the same native API at the verified request-consumer entry passed two
-   bounded movement tests. This is an isolated scheduling result, not yet a production locomotion contract.
-   The initial and later ownership snapshots identify the same primary body; trying that alias again is not
-   a different controller. The inventory-display PouchPlayer
-   remains a weaker research candidate, not a verified world actor. Parameter references alone are not live-body proof.
-2. Verify creation/storage ownership beyond the one-shot experiment: asynchronous completion, rejection,
-   cancellation and safe storage reuse. Retain scoped request, actor, metadata ID and world-generation identities.
-3. Extend the bounded ENet velocity experiment into a production movement contract. Its 200 ms receive-time
-   lease stops repeated stale samples and permits recovery within the same session; a changed session/player or
-   generation revokes the actor binding. Verify world transitions, broader ground/collision behavior and local
-   input/camera ownership while keeping network work on its worker. No direct physics writes from
-   rendering, guessed function signatures or teleport fallback.
-4. Reproduce the original Link's final blended pose, equipment and run/jump/attack actions, then establish their
-   binding to the native companion. The model, extraction and ENet infrastructure already exist; do not restart
-   those implementations. Exact attack appearance and cooperative enemy damage are separate acceptance gates.
-5. Exercise repeated creation/removal, scene load/unload and reconnect. Only then enable supported native
-   capabilities and validate with two PCs over the private VPN.
+## Prototype acceptance
 
-## Phase 2 acceptance
+- A documented local build and host/client launch flow; each user supplies their own game content.
+- Both players independently walk/run/stop, see the other and retain their own camera/input for fifteen minutes.
+- Remote actor, physical body and displayed figure agree; no reproducible freeze when the local player moves
+  away within the tested loaded area. Support is limited to that verified area until transitions are implemented.
+- Input/packet silence stops remote motion; disconnect invalidates commands and leaves the remaining game stable.
+- Original executables and saves remain intact. Prototype profiles do not claim shared campaign persistence.
+- Known limitations are listed in the launch guide. Phase 2 remains open after this exploration prototype.
 
-| Test | Required result |
-| --- | --- |
-| Independent characters | Two positions and facing states with basic animation, independent local camera/input |
-| Join and leave | One companion is created and removed through verified native operations |
-| Reconnection | No duplicate actor, stale generation command or access to a retired actor |
-| Scene lifetime | Repeated load/unload preserves valid references and coordinates both peers' readiness |
-| Execution context | No guest mutation in rendering or the network worker; native calling/locking contract verified |
-| Adverse network | Reliable interactions survive 100/200 ms latency, jitter and 5% loss without duplication |
-| Internet session | Two actual PCs on the private VPN, at least 30 minutes with reconnection and save/reload |
+## Deferred until after this prototype
 
-Local workers and short copied-save diagnostics support development; they do not replace these gameplay tests.
-If the engine still prevents safe companion operations, the diagnostic milestone can be reviewed with its limit
-stated. A rendered figure or native weapon experiment cannot be labelled a completed Phase 2.
+The intermittent road-NPC carrier appearance is retained as a known visual bug, per the user's priority.
+Keep the prepared black-haired Link figure fixed; address carrier visibility across creation/publication gaps,
+disconnect and retirement after distance activity/control. Correct a visual/body mismatch earlier if it prevents
+the user from steering or testing physical movement.
 
-## Adventure after native characters
+Jumping, climbing, swimming, equipment placement, shared combat/items, Ultrahand/Recall, region transitions and
+story follow this prototype. Original Player behavior and poses remain references; copying Player memory,
+camera/input ownership or singleton references does not create a separate player.
 
-The campaign contract remains host-owned progress in a separate profile, per-player inventory/equipment/health,
-unique ordinary pickups, shared quest progress and a common checkpoint restored after either player's death.
-Both players initially stay in the same region; the host advances story text/cinematics. Simulation-pausing menus
-pause both peers and transitions wait until both are ready.
+The complete Phase 2 still requires robust repeated lifecycle/reconnection, scene load/unload, verified native
+execution context, adverse-network checks and two-PC VPN acceptance for thirty minutes with reconnect/save/reload.
+The campaign stages and agreed host/world/individual-inventory rules remain in [coop.md](coop.md).
 
-| Stage | Completion evidence |
-| --- | --- |
-| Combat and items | Host decides enemies/damage/death and gives each simultaneous pickup one winner; no initial PvP |
-| Persistence | Stable guest identity, correct individual inventory after reconnect, atomic common checkpoints/save recovery |
-| Travel and abilities | Coordinated destinations/streaming; exclusive object ownership for Ultrahand, constructions and Recall |
-| Full story | New campaign through the prologue and mandatory transitions, tutorials/rewards, dialogue/skips and scene disconnects |
+## Work and publication constraints
 
-Persistent operations need identifiers, revisions and recovery semantics. Reliable notification labels are not
-persistent events. Do not copy actively written save folders. Personalization beyond the fixed black hair,
-public servers, split screen and PvP remain outside the initial target.
+Use one full game instance during local development; measure memory before two full instances. Reuse incremental
+builds and assets, and avoid duplicate installations or generated rebuilds for runtime-only changes. Code,
+documentation and commit messages stay English. Publish authored source, tests and dependency notices only;
+keep game-derived code, assets, executables, saves and evidence ignored. Follow `AGENTS.md`, keep generated C
+and `refs/` unchanged, and run `tools/check_content.py --staged` before a normal source commit.
 
-## Reusing Link's appearance and behavior
-
-The companion may reuse Link's locally extracted mesh, skeleton and animation data. The current figure already
-provides a visual starting point. Giving a native companion that appearance still requires a verified model
-binding or replacement path and removal of the NPC's original visible model. Drawing both at the same position
-would not establish that binding.
-
-Keep the companion's actor/body identity and lifetime independent. Copying the local Player's component memory,
-input owner, camera links or singleton references cannot create a second independent human-controlled player.
-Each PC keeps its own local Player and camera. Its original movements and attacks can supply final pose,
-equipment and action data for the other PC's independently owned representation. A complete extra Player
-instance remains an investigation route requiring a verified control/camera/manager contract. The current NPC
-does not inherit that behavior through a mesh change. Neither appearance replication nor a successful spawn
-establishes shared combat, abilities or campaign authority. See the handover for the next pose/combat gates.
-
-## Source delivery and known limits
-
-Consolidate handwritten source, synthetic fixtures, dependency notices and these public documents in reviewable
-commits on the cooperative branch. Each copied permissive component needs its original license/header and exact
-source revision in THIRD_PARTY_NOTICES.md. Keep all game-derived code, binaries, extracted models, save copies,
-screenshots and private reports ignored; every player supplies their own content.
-
-Run the development-guide checks and `tools/check_content.py --staged` before a source commit. CPU-header/lifter
-changes also need the differential checks in building.md. Report failed or unrequested checks honestly. The
-research notes preserve known validation limitations, including the optional Vulkan validation-layer shutdown
-and the pre-existing exclusive-monitor ABA test failure. Hosted CI has to run after publication; local results
-are not a hosted CI approval.
+The existing fork branch is the development publication target. An exploration prototype is an intermediate
+milestone; full campaign completion retains the gameplay, persistence, abilities and story gates in the design.

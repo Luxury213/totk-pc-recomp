@@ -1,20 +1,35 @@
 # Co-op handover and next character milestone
 
-## Resume checkpoint: November 25, 2026
+## Next session: deliver manual companion control
 
-The distance-activity prototype has complete bounded passes in `run-994b511a03` and `run-e48bf733f9`.
-The latter uses only the native active-policy predicate wrapper; earlier sleep-only and physical-pause
-interceptions fail complete movement acceptance and must not be promoted. Read the new first section of
-[native research](coop-native-research.md) for the exact route, ABIs, successful executable hash and limits.
-Public source contains read-only argument/policy observation and correlation tests; the wrapper remains a
-private experiment. The normal public build is restored before ending this checkpoint.
+The [playable-prototype plan](coop-phase2.md) defines the current delivery order. It supersedes the older
+ordered work and priorities in the historical evidence below. The first playable multiplayer target is
+two humans walking/running together in one supported area; intermediate output must be manually testable.
 
-Next: integrate the smaller wrapper with an explicit v143 build flag and strict copied-profile opt-in;
-test original-forwarding/CPU preservation/lifetime/expiry guards, then repeat full on/off and nearby native
-regressions. Do not expand motion budgets or claim playable co-op. Keep the intermittent visible road-NPC
-carrier issue deferred until distance activity is integrated. The prepared Link figure stays fixed.
+1. Integrate the smaller successful native active-policy wrapper into authored source with explicit v143
+   build/copied-profile opt-in. Test its forwarding, identity, CPU/FP and lifetime/expiry guards.
+2. Wire a lightweight manually controlled ENet peer to the native companion path. Deliver a launch command
+   and independent steering/stopping in one game; retain local Link input/camera ownership.
+3. Replace fixed diagnostic timelines with verified session ownership and receive-lease renewal. Deliver
+   five minutes of continuous manual control with safe stopping/disconnect, then connect both original
+   Players across two PCs for the fifteen-minute exploration prototype.
 
-## Previous checkpoint
+Do not merely remove eight-second/256-request or twenty-second limits. Establish their session/lifetime
+replacement with the native ownership checks intact. Shared combat, equipment and climbing follow this
+prototype. The intermittent visible NPC carrier remains deferred unless it blocks movement testing.
+
+Starting source: `20b738680e07111855b5a90018037bcd1a233ec4`, branch `feature/coop-native-npc-probe`.
+The ordinary restored executable includes read-only observation, not the successful wrapper. Private runs
+`run-994b511a03` and the smaller `run-e48bf733f9` passed complete bounded longer-walk gates. The latter wraps
+only `main+0x3476e4` from original caller `main+0x347478`; read [native research](coop-native-research.md).
+The private handover retains authored WIP source and an integration patch requiring review, not blind application.
+Do not promote the failed sleep-only/physical-pause interceptions. No persistent activity or human play passed yet.
+
+Session output: a source build with an integrated feature and, as the next delivery, a manual launch/control
+path. Tests verify that implementation. If blocked, record the exact failed operation and next code change;
+additional traces alone do not complete the delivery. No completion date is claimed before manual acceptance.
+
+## Historical checkpoint: previous delivery priorities are superseded
 
 Checkpoint: 2026-11-23. Read this before resuming implementation, then consult
 [the public plan](coop-phase2.md), [development commands](coop-development.md) and
@@ -342,57 +357,11 @@ Our priority remains the independent native companion and repeatable lifecycle. 
 render/pose extraction should be extended for gear/action fidelity rather than rebuilt. No inspected update
 provides a verified drop-in 1.4.3 Player clone, shared enemy authority or prologue-capable co-op campaign.
 
-## Ordered work for the next session
+## Current implementation order
 
-1. **Complete native lifecycle and ground-contact acceptance.** Ordinary presence has no collider; mode 7 follows
-   the validated NPC's native origin, and mode 8 now suppresses/restores only that NPC's original model through
-   the inspected native controller API. Retain its bounded publication lease, identity/code guards and restore
-   fallback. Mode 9 now passes one native retirement with resource/allocator correlation.
-   Mode 10 also passes two native pulse/removal cycles in the same world using separately retained slots.
-   Mode 11 now passes one connection-driven creation/movement/retirement without an inventory drop.
-   Mode 12 now passes a second peer join after correlated native cleanup, with fresh session/actor identities
-   and distinct retained storage. The original-pose relay now works on that body in near-source tests.
-   First resolve the reproduced loss of the native actor-update hook on longer movement, using verified
-   activation/task ownership. Then prepare a separately gated human-control path with a supervised continuous
-   lifetime/leave policy and validated speeds. Remote position/Y remain ignored and speed is capped at 2 m/s.
-   Reuse the original body-pose/rotation capture; do not rebuild animations, simply remove the eight-second
-   cap or enable teleport to conceal drift. Then verify vertical locomotion/contact for jump/climb/swim,
-   scene load/reconnect and
-   unobstructed feet on flat ground, slopes and steps. The user reported
-   apparent small size and sinking in grass: the diagnostic echo moves three metres along X while retaining
-   the source Y, and the synthetic bot also has no terrain query. Confirm the actor-origin/feet relationship
-   on flat ground, slopes and steps, extending the new copied-origin association through verified engine
-   operations. Preserve the tested native movement guards and original camera/input.
-   Evaluate a Player-derived puppet where its ownership can be verified; do not copy Player singleton references.
-   Safe repeated creation/removal across scene changes/reconnect is part of this contract. Use
-   `--pose-echo-offset 0` only for origin calibration, not as a ground-contact or physics acceptance pass.
-2. **Reuse the original equipment actors and matrices.** `coop_gear_probe.c` now observes the verified original
-   actor-reference setter through `coop_adapter_actor_bind`, deduplicates native actor/metadata IDs and searches
-   only their bounded ModelUnit references for exact prepared model names. Three native models and 81 first
-   palette matrices were observed. Exclusive ownership remains unverified; the recorded setter can refer to a
-   temporary stack object. Validate a persistent owner relation and hand/back transforms before binding.
-   Broad Player graph searches were capped and unproductive; do not expand them or restart a full-heap scan.
-3. **Integrate validated body/pose/equipment data into rendering.** Reuse `coop_body.c/.h`, `coop_equipment.c/.h`,
-   the selected LNKA2 library, native matrices and the original animation data. The renderer still has no gear
-   model cache or verified native attachment binding. Keep native/render ownership separate and retire GPU
-   resources safely. Account for malformed data, freshness, world changes, unequipping and clearing optional
-   fields. Protocol v5 states are 152 bytes base, 628 with body, 296 with identities, or 772 with both (896-byte
-   ceiling). Animated attachment palettes require an explicit size/fragmentation design. Never transmit pointers
-   or raw C structures. Retain permissive attribution; no base asset/animation conversion restart is needed.
-4. **Demonstrate original movement and attack poses.** Script the real local Link running, jumping and performing
-   a basic weapon attack, then reproduce its captured pose/equipment on the remote representation. A deterministic
-   game-free peer can help before a human/two-PC run. Clip-name agreement alone does not prove blended pose or
-   attack fidelity. Keep visual acceptance separate from native gameplay acceptance.
-5. **Prove one real cooperative combat outcome.** Inspect the MIT hit-hook research as a starting point, then
-   verify the native enemy damage route, stable enemy/attack IDs, host authority and deduplication. The existing
-   local-Link PvP damage hook is not an enemy-combat adapter. Animation, a health-memory write or a notification
-   alone cannot satisfy this gate. Shared items, projectiles and abilities follow their own authority contracts.
-6. **Complete the Phase 2 lifecycle and Internet gates**, then proceed through campaign stages in `coop.md`.
-   Two actual PCs, a private VPN and a 30-minute session with reconnect/save/reload are still required.
-
-These steps reuse the original game's behavior. The native body/lifecycle and Internet gates remain mandatory
-for calling the result a playable companion. Ground contact now precedes further visual equipment work.
-Report each result at its actual level. Neither successful rendering nor a native NPC stream completes Phase 2.
+Follow deliveries 1-4 in [the playable-prototype plan](coop-phase2.md#delivery-order). Earlier proposals to
+complete equipment, climbing or cooperative combat before the first exploration prototype are superseded.
+The historical research and source references above remain evidence, not a requirement to repeat finished work.
 
 ## Working constraints
 
@@ -405,6 +374,6 @@ or push upstream. No PR approval or hosted CI result should be invented.
 Keep at least 25 GiB free. Development storage was cleaned and inactive outputs archived; reuse existing packed
 shader caches and incremental objects. Retain the seed and only useful recent copied profiles, with evidence
 separate. Free space changes independently; measure it before large jobs. Use one game instance, an offline seed
-copy, background scripted input and only owned child PIDs. Do not overwrite the original executable or copy
+copy, background input appropriate to the selected automated/manual mode and only owned child PIDs. Do not overwrite the original executable or copy
 active saves. Exact local paths, diagnostic commands and original executable hash are in the ignored
 `build/coop-v143/NEXT_SESSION.md` of the active source worktree.
