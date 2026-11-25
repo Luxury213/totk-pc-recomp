@@ -21,6 +21,16 @@ and a verified native companion lifecycle. The current NPC stream does not estab
 
 ## Current status
 
+The distance-activity investigation now has two complete bounded experimental passes. The smaller private
+experiment preserves the native active-policy branch for the owned NPC instead of merely refusing its later
+sleep request. Public builds contain observation only: integrating explicit diagnostic build/runner options
+and testing their guards is the next small implementation step. See the latest [native research](coop-native-research.md).
+
+Deferred appearance bug: the road-NPC carrier can become visible during creation/publication gaps or after
+visibility restoration. This is separate from the prepared black-haired Link figure. Finish distance activity
+first; later prevent that carrier mesh from appearing throughout creation, disconnect and retirement using
+verified native ownership and visibility phases.
+
 The companion's prepared model/outfit and black hair are fixed in this prototype. Two-PC control reuses
 each PC's original local Player, including its native actions and animation graph. The remote representation
 reproduces captured poses on a separately owned body. Reusing that data does not grant the NPC proxy Player's

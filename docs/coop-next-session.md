@@ -1,5 +1,21 @@
 # Co-op handover and next character milestone
 
+## Resume checkpoint: November 25, 2026
+
+The distance-activity prototype has complete bounded passes in `run-994b511a03` and `run-e48bf733f9`.
+The latter uses only the native active-policy predicate wrapper; earlier sleep-only and physical-pause
+interceptions fail complete movement acceptance and must not be promoted. Read the new first section of
+[native research](coop-native-research.md) for the exact route, ABIs, successful executable hash and limits.
+Public source contains read-only argument/policy observation and correlation tests; the wrapper remains a
+private experiment. The normal public build is restored before ending this checkpoint.
+
+Next: integrate the smaller wrapper with an explicit v143 build flag and strict copied-profile opt-in;
+test original-forwarding/CPU preservation/lifetime/expiry guards, then repeat full on/off and nearby native
+regressions. Do not expand motion budgets or claim playable co-op. Keep the intermittent visible road-NPC
+carrier issue deferred until distance activity is integrated. The prepared Link figure stays fixed.
+
+## Previous checkpoint
+
 Checkpoint: 2026-11-23. Read this before resuming implementation, then consult
 [the public plan](coop-phase2.md), [development commands](coop-development.md) and
 [native evidence](coop-native-research.md). These public documents are authoritative; private diagnostics

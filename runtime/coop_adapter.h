@@ -54,6 +54,8 @@ int coop_adapter_submit(const CoopGuestCommand *command);
 uint32_t coop_adapter_capabilities(void);
 void coop_adapter_trace_enable(int enable);
 void coop_adapter_function(uint64_t address, uint64_t caller, uint64_t argument);
+// Copy original native activity request arguments for the isolated owned actor; never executes a request.
+void coop_adapter_activity_request(uint64_t address, const Cpu *cpu);
 // Native update only: match the currently observed local Player, resident ownership and metadata ID.
 int coop_adapter_local_actor(uint64_t actor, uint32_t *generation, float position[3]);
 // Diagnostic-only target for the scoped NPC's native actor-update entry. Revalidates live ownership and world.

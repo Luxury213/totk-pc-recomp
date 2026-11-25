@@ -165,6 +165,8 @@ volatile int g_fnprof = 0;   // resolution.c switches it on until the game sets 
 void fnprof_hit(uint64_t addr, Cpu *c) {
     if (__atomic_load_n(&g_fnprof, __ATOMIC_RELAXED) & 1) res_fn_hit(addr, c->x[0]);
     coop_adapter_function(addr, c->x[30], c->x[0]);
+    if (addr==MOD_MAIN_BASE+0x65399cull || addr==MOD_MAIN_BASE+0x1b4884ull || addr==MOD_MAIN_BASE+0x54cb00ull)
+        coop_adapter_activity_request(addr,c);
     if (addr == MOD_MAIN_BASE + 0x182eb0ull) {
         coop_native_probe_npc_consume(c);
         coop_adapter_npc_velocity_consume(c);

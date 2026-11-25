@@ -37,6 +37,29 @@ def resource_events(request=10, name='Weapon_Sword_Test'):
 
 
 class DiagnosticChecks(unittest.TestCase):
+    def test_native_activity_distinguishes_suspend_index_from_wake_mask(self):
+        def event(t,kind,entry,arg,state,flags):
+            return f'coop native npc activity: probe 0, generation 3, actor id 88, world us {t}, kind {kind}, entry main+{entry}, caller main+0x1234, reason {arg}, state {state}, flags {flags}; original native entry, request outcome unverified'
+        lines=[event(11000000,'suspend','0x65399c',5,4,'0'),event(11033000,'state','0x54cb00',0xffffffff,4,'0x210000'),
+               event(13900000,'resume','0x1b4884',32,5,'0x10000'),event(14000000,'state','0x54cb00',0xffffffff,5,'0x400000')]
+        continuity=dict(gaps=[dict(probe=0,generation=3,actor_id=88,world_us=11300000)],
+                        resumes=[dict(probe=0,generation=3,actor_id=88,world_us=14000000)])
+        result=diagnose.native_activity_summary(lines,continuity)
+        self.assertFalse(result['native_keep_active_verified']); self.assertFalse(result['native_calls_added'])
+        self.assertEqual(result['events'][0]['reason_mask'],32)
+        self.assertEqual(result['correlations'][0]['wake_mask'],32)
+        self.assertTrue(result['correlations'][0]['matching_native_return_observed'])
+        for bad in (lines[2].replace('reason 32','reason 5'),lines[2].replace('actor id 88','actor id 89'),
+                    lines[2].replace('generation 3','generation 4'),lines[3].replace('0x400000','0')):
+            changed=lines.copy(); changed[2 if 'kind resume' in bad else 3]=bad
+            self.assertFalse(diagnose.native_activity_summary(changed,continuity)['correlations'][0]['matching_native_return_observed'])
+        changed=lines.copy(); changed[1]=changed[1].replace('0x210000','0x200000')
+        self.assertFalse(diagnose.native_activity_summary(changed,continuity)['correlations'])
+        malformed=lines+['coop native npc activity: invalid']
+        self.assertTrue(diagnose.native_activity_summary(malformed,continuity)['malformed_events'])
+        self.assertFalse(diagnose.native_activity_summary(malformed,continuity)['correlations'])
+        self.assertTrue(diagnose.native_activity_summary(lines+[lines[0]],continuity)['malformed_events'])
+
     def test_native_pose_script_separates_nearby_pose_acceptance_from_long_walk_reproduction(self):
         near=diagnose.diagnostic_script(60,'controls',True)
         far=diagnose.diagnostic_script(60,'controls',True,True)

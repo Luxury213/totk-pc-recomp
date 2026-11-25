@@ -1,5 +1,50 @@
 # Co-op native research notes
 
+## Active-policy experiment and remaining integration (November 25, 2026)
+
+Read-only `coop_adapter_activity_request` records the original owned NPC's suspend/wake arguments,
+caller, actor identity/world, state and request flags. Events are deduplicated and limited to 16 per probe.
+At the inspected suspension caller, x19 retains the policy component: its +0x18 owner must match the actor,
+and a bounded scan of that actor's component table must find the same component. Live observations identify
+slot +0xf8 and vtable `main+0x366c6c8`; no policy flag is written. The report correlates these requests
+with a same-identity update gap and native return, without establishing a callable wake API.
+
+The ABIs differ: `main+0x65399c` accepts a reason **index**, while `main+0x1b4884` accepts a reason **mask**.
+Suspension index 5 corresponds to wake mask 32, not wake argument 5. `run-dbaafa0970` and `run-198bfa86c6`
+observed the original suspension caller `main+0x3475f8`, queued state transition and native wake caller
+`main+0x64f268`. The latter also established the owned policy component. Both complete return diagnostics
+still failed movement acceptance, exited normally and preserved the source saves.
+
+Private linker-wrapper experiments narrowed the problem further:
+
+| Experiment | Result on the unchanged longer-walk reconnect scenario |
+| --- | --- |
+| Refuse only the owned actor's reason-5 suspension | Actor updates continue, but body deactivation later stops physical movement; full acceptance fails |
+| Also refuse one inspected physical pause request | Body movement continues, but the second actor's published position freezes during the diagonal; repeated full failures in `run-f228709e9c` and `run-7e0d85f64b` |
+| Preserve the native active-policy branch | Complete bounded acceptance passes in `run-994b511a03` and the smaller `run-e48bf733f9` |
+
+The smaller successful experiment wraps only `main+0x3476e4` from its original caller `main+0x347478`.
+It executes the original predicate, then changes a zero boolean result to one only for the live owned NPC
+policy/body, verified 1.4.3 callee/caller hashes and timed mode-12 copied profile with an additional exact marker.
+It rechecks actor/body/generation/observation identity after the original call and expires 20 world seconds
+after the initial body observation. This lets `main+0x34744c` execute its original active branch, including
+native task-policy bookkeeping. Refusing the later suspension omitted that earlier bookkeeping.
+No body/actor field, transform, worker slot or TLS value is directly written. Other actors and expired,
+retiring, unverified or unarmed cases retain the original predicate result.
+
+The smaller run used executable SHA-256 `463216e6b0a46f14042fc8041415956f1bd6790982ddf9c09abe5598baabfa38`.
+Its two actors passed forward/reverse/diagonal displacement, both lease-expiry rests, original pose/origin,
+visibility, native retirement and reconnection. Both peers and the game exited normally; source saves were
+unchanged. The existing 200 ms receive lease, eight-second/256-request movement budget and two retained
+creation slots were unchanged. These are short scripted-loopback results, not persistent activity, human
+control, Internet acceptance or a completed Phase 2.
+
+**The wrapper is not integrated into public builds yet.** Ordinary builds retain read-only instrumentation
+and the longer-walk failure. Next, integrate the smaller wrapper behind an explicit v143 build flag and
+copied-profile runner option; test original forwarding, identity changes, code mismatch, strict markers,
+CPU/FP preservation and expiry, then repeat on/off and nearby native regressions. Do not promote the larger
+physical-request wrapper or publish private executables/game-derived outputs.
+
 ## Native update interruption and return test (November 23, 2026)
 
 The longer-walk failure is recoverable without creating another actor. A return using the original Player
@@ -53,7 +98,7 @@ callback stayed unchanged. These are stronger state-transition observations, not
 Targeted static inspection found `main+0x54cb00`'s state-4/state-5 branches removing/inserting the actor in
 native manager lists and invoking native callbacks. A direct state-field store would omit those operations.
 `main+0x65399c` sets a reason-indexed bit in the actor's request flags and can queue the transition to state 5;
-`main+0x1b4884` removes a corresponding reason bit and can queue a return from state 5. Both inspect native
+`main+0x1b4884` removes a corresponding reason mask and can queue a return from state 5. Both inspect native
 task context and manager locking. These candidate routes were read, not called or validated as cooperative
 operations. Next, correlate their original actor/reason/caller and the state-handler request mask during
 the retained failure, then verify the ownership and matching lifetime of a keep-active policy. Do not use a

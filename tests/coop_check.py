@@ -39,6 +39,7 @@ static unsigned guest_reads;
 static int64_t world_us = -1;
 static unsigned char probe_actor[0x600], probe_data[0x50], probe_descriptor[0x170], probe_context[0x18];
 static unsigned char npc_task[0x28];
+static unsigned char activity_policy[0x220],activity_components[0x508];
 static char probe_name[] = "Weapon_Sword_Test";
 static unsigned char request_stack[0x18], probe_owner[0x40], probe_heap[8], probe_heap_vtable[0x40];
 static unsigned char probe_resource[0xe0];
@@ -96,6 +97,7 @@ int mem_guest_readable(uint64_t p, uint64_t n) {
            in_range(p,n,request_arg,sizeof request_arg) ||
            in_range(p,n,probe_actor,sizeof probe_actor) || in_range(p,n,probe_data,sizeof probe_data) ||
            in_range(p,n,npc_task,sizeof npc_task) ||
+           in_range(p,n,activity_policy,sizeof activity_policy) || in_range(p,n,activity_components,sizeof activity_components) ||
            in_range(p,n,probe_descriptor,sizeof probe_descriptor) || in_range(p,n,probe_context,sizeof probe_context) ||
            in_range(p,n,probe_name,sizeof probe_name) || in_range(p,n,request_stack,sizeof request_stack) ||
            in_range(p,n,probe_owner,sizeof probe_owner) || in_range(p,n,probe_heap,sizeof probe_heap) ||
@@ -730,6 +732,30 @@ int main(void) {
     npc_schedule_report(0,(uintptr_t)probe_actor,world_us+1000000,world_us);
     npc_schedule_report(0,(uintptr_t)probe_actor,world_us+2000000,world_us);
     assert(probe_entries[0].schedule_reports==7);
+    Cpu activity={0}; activity.x[0]=(uintptr_t)probe_actor; activity.x[1]=2; activity.x[30]=MOD_MAIN_BASE+0x1234;
+    Cpu activity_before=activity; unsigned char actor_before[sizeof probe_actor]; memcpy(actor_before,probe_actor,sizeof probe_actor);
+    coop_adapter_activity_request(MOD_MAIN_BASE+0x65399c,&activity);
+    assert(probe_entries[0].activity_logs==1);
+    coop_adapter_activity_request(MOD_MAIN_BASE+0x65399c,&activity);
+    assert(probe_entries[0].activity_logs==1);
+    coop_adapter_activity_request(MOD_MAIN_BASE+0x1b4884,&activity);
+    assert(probe_entries[0].activity_logs==2);
+    uint64_t components_before=guest_pointer((uintptr_t)probe_actor+0x228);
+    ptr(probe_actor+0x228,(uintptr_t)activity_components); ptr(activity_components+0x40,(uintptr_t)activity_policy);
+    ptr(activity_policy+0x18,(uintptr_t)probe_actor); ptr(activity_policy,MOD_MAIN_BASE+0x100);
+    activity.x[19]=(uintptr_t)activity_policy; activity.x[1]=5; activity.x[30]=MOD_MAIN_BASE+0x3475f8;
+    Cpu policy_cpu_before=activity; unsigned char policy_before[sizeof activity_policy]; memcpy(policy_before,activity_policy,sizeof activity_policy);
+    coop_adapter_activity_request(MOD_MAIN_BASE+0x65399c,&activity);
+    assert(probe_entries[0].activity_logs==3 && !memcmp(&policy_cpu_before,&activity,sizeof activity));
+    assert(!memcmp(policy_before,activity_policy,sizeof activity_policy));
+    ptr(probe_actor+0x228,components_before); activity=activity_before;
+    probe_entries[0].stages=1; schedule_reads=guest_reads;
+    coop_adapter_activity_request(MOD_MAIN_BASE+0x54cb00,&activity);
+    assert(guest_reads==schedule_reads && probe_entries[0].activity_logs==3); probe_entries[0].stages=0;
+    for(unsigned k=0;k<30;k++) { activity.x[1]=k; coop_adapter_activity_request(MOD_MAIN_BASE+0x65399c,&activity); }
+    assert(probe_entries[0].activity_logs==16);
+    activity.x[1]=activity_before.x[1];
+    assert(!memcmp(&activity,&activity_before,sizeof activity) && !memcmp(actor_before,probe_actor,sizeof probe_actor));
     // Reuse the authored actor/body addresses with a new metadata ID in the same world.
     NpcPhysicsSnapshot old_initial=npc_physics[0], old_late=npc_late_physics[0];
     int64_t old_physics_time=world_us;
@@ -738,6 +764,7 @@ int main(void) {
     probe_entries[1].update_count=probe_entries[1].update_gap_reported=0; probe_entries[1].update_last_us=0;
     memset(probe_entries[1].dispatch_count,0,sizeof probe_entries[1].dispatch_count);
     memset(probe_entries[1].dispatch_last_us,0,sizeof probe_entries[1].dispatch_last_us); probe_entries[1].schedule_reports=0;
+    memset(probe_entries[1].activity_key,0,sizeof probe_entries[1].activity_key); probe_entries[1].activity_logs=0;
     probe_entries[0].stages=15;
     // Publication can expose the new index before the separate active-address hint changes.
     probe_entries[1].actor=(uintptr_t)other_actor;

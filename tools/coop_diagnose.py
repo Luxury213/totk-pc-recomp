@@ -769,6 +769,45 @@ def native_update_summary(lines):
                 activation_requested=False)
 
 
+def native_activity_summary(lines,continuity):
+    events=[]; malformed=0; seen=set()
+    entries={'suspend':0x65399c,'resume':0x1b4884,'state':0x54cb00}
+    for line in lines:
+        if 'coop native npc activity:' not in line: continue
+        m=re.search(r'activity: probe (\d+), generation (\d+), actor id (-?\d+), world us (\d+), kind (suspend|resume|state), entry main\+(0x[0-9a-f]+), caller main\+(0x[0-9a-f]+|0), reason (\d+), state (\d+), flags (0x[0-9a-f]+|0); original native entry, request outcome unverified',line)
+        if not m: malformed+=1; continue
+        p,g,a,t,kind,entry,caller,arg,state,flags=m.groups()
+        arg=int(arg); entry=int(entry,0)
+        identity=(p,g,a,t,kind,entry,caller,arg,state,flags)
+        if identity in seen: malformed+=1; continue
+        seen.add(identity)
+        if entry!=entries[kind] or (kind=='suspend' and arg>5) or (kind=='resume' and arg>63) or (kind=='state' and arg!=0xffffffff):
+            malformed+=1; continue
+        events.append(dict(probe=int(p),generation=int(g),actor_id=int(a),world_us=int(t),kind=kind,
+            caller=int(caller,0),argument=arg,reason_mask=(1<<arg) if kind=='suspend' else arg if kind=='resume' else 0,
+            state=int(state),flags=int(flags,0)))
+    correlations=[]
+    for gap in continuity['gaps']:
+        scoped=[e for e in events if all(e[k]==gap[k] for k in ('probe','generation','actor_id'))]
+        suspends=[e for e in scoped if e['kind']=='suspend' and e['state']==4 and 0<gap['world_us']-e['world_us']<=1000000]
+        for suspend in suspends:
+            mask=suspend['reason_mask']; flag=mask<<11
+            queued=any(e['kind']=='state' and e['state']==4 and e['flags']&flag and e['flags']&0x200000 and
+                       suspend['world_us']<=e['world_us']<gap['world_us'] for e in scoped)
+            resumes=[e for e in scoped if e['kind']=='resume' and e['state']==5 and e['reason_mask']==mask and e['world_us']>gap['world_us']]
+            returned=next((r for r in continuity['resumes'] if all(r[k]==gap[k] for k in ('probe','generation','actor_id')) and
+                           any(e['world_us']<=r['world_us'] for e in resumes) and
+                           any(e['kind']=='state' and e['state']==5 and e['flags']&0x400000 and
+                               any(x['world_us']<=e['world_us'] for x in resumes) and e['world_us']<=r['world_us'] for e in scoped)),None)
+            if queued:
+                correlations.append(dict(probe=gap['probe'],generation=gap['generation'],actor_id=gap['actor_id'],
+                    suspend_reason=suspend['argument'],wake_mask=mask,suspend_caller=suspend['caller'],
+                    suspension_request_correlated=True,matching_native_return_observed=returned is not None))
+    if malformed: correlations=[]
+    return dict(events=events,correlations=correlations,malformed_events=malformed,
+                native_keep_active_verified=False,native_calls_added=False)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--build-dir', type=Path, default=ROOT / 'build/coop-v143')
@@ -1062,6 +1101,8 @@ def main():
                   native_pose_return_walk=args.native_pose_return_walk,
                   native_update_continuity=native_update_summary(lines),
                   native_schedule_observations=[s for s in lines if 'coop native npc schedule:' in s],
+                  native_activity_observations=[s for s in lines if 'coop native npc activity:' in s],
+                  native_activity_policy_observations=[s for s in lines if 'coop native npc activity policy:' in s],
                   native_update_gap_observations=[s for s in lines if 'coop native npc update gap:' in s or 'coop native npc update resumed:' in s],
                   elapsed_seconds=round(time.monotonic() - started, 2), source_save_unchanged=intact,
                   scenario='custom' if args.input_script and args.scenario == 'idle' else args.scenario,
@@ -1111,6 +1152,7 @@ def main():
                   playable_actor_observed=any('player observed' in line for line in observations),
                   native_actor_creation_verified=False, world_mutation_phase_verified=False,
                   native_gameplay_enabled=False, log=str(log))
+    report['native_activity']=native_activity_summary(lines,report['native_update_continuity'])
     report['native_npc_velocity_experiment'] = npc_velocity_summary(lines, report['native_spawn_experiment'])
     consumer = npc_consumer_reapply_summary(lines, report['native_npc_velocity_experiment'])
     report['native_npc_velocity_experiment']['consumer_reapply'] = consumer

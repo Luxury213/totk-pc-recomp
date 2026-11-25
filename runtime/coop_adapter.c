@@ -419,6 +419,8 @@ static struct {
     int64_t motion_last_us,update_last_us;
     unsigned dispatch_count[3],schedule_reports;
     int64_t dispatch_last_us[3];
+    uint64_t activity_key[3];
+    unsigned activity_logs;
 } probe_entries[PROBE_LIMIT];
 // Only the isolated host-injected request is sampled here. Native calls supply a live receiver;
 // retirement disables sampling before cleanup, and metadata/ID checks reject recycled storage.
@@ -464,6 +466,45 @@ static int probe_identity_live(unsigned i, uint64_t actor) {
     return actor == probe_entries[i].actor && guest_readable(actor, 0x1b0) && guest_readable(meta, 0x50) &&
            guest_pointer(actor + 0x1a8) == meta && guest_pointer(meta + 0x40) == actor &&
            guest_s32(actor + 0x10) == id && guest_s32(meta + 0x48) == id;
+}
+
+void coop_adapter_activity_request(uint64_t address,const Cpu *cpu) {
+    if (!cpu || rt_game_version!=143 || !__atomic_load_n(&trace_enabled,__ATOMIC_RELAXED)) return;
+    unsigned kind=address==MOD_MAIN_BASE+0x65399cull ? 1 : address==MOD_MAIN_BASE+0x1b4884ull ? 2 :
+                  address==MOD_MAIN_BASE+0x54cb00ull ? 3 : 0;
+    if (!kind) return;
+    unsigned i=npc_probe_index(); uint64_t actor=cpu->x[0];
+    if (i>=PROBE_LIMIT || !__atomic_load_n(&probe_entries[i].ready,__ATOMIC_ACQUIRE) ||
+        __atomic_load_n(&probe_entries[i].activity_logs,__ATOMIC_RELAXED)>=16 || !probe_identity_live(i,actor)) return;
+    unsigned request=probe_entries[i].request;
+    if (request>=ACTOR_REQUEST_TRACE_LIMIT || strcmp(actor_request_entries[request].name,"Npc_Road_001")) return;
+    uint32_t state,flags,reason=kind==3 ? UINT32_MAX : (uint32_t)cpu->x[1];
+    if (!guest_readable(actor+0x24,8) || !plat_mem_read(actor+0x24,&state,4) ||
+        !plat_mem_read(actor+0x28,&flags,4) || !probe_identity_live(i,actor)) return;
+    if (kind==3 && state!=5 && !(flags&0x700000u)) return;
+    // The state-handler has no reason argument. Keep only changes in kind/state/request mask for bounded logs.
+    uint64_t key=(uint64_t)kind<<56 | (uint64_t)(state&255)<<48 | (uint64_t)(reason&255)<<40 | flags;
+    if (__atomic_exchange_n(&probe_entries[i].activity_key[kind-1],key,__ATOMIC_RELAXED)==key) return;
+    if (__atomic_fetch_add(&probe_entries[i].activity_logs,1,__ATOMIC_RELAXED)>=16) return;
+    rt_log("coop native npc activity: probe %u, generation %u, actor id %d, world us %lld, kind %s, entry main+%#llx, caller main+%#llx, reason %u, state %u, flags %#x; original native entry, request outcome unverified",
+        i,probe_entries[i].generation,probe_entries[i].id,(long long)frame_step_world_us(),
+        kind==1 ? "suspend" : kind==2 ? "resume" : "state",
+        (unsigned long long)main_relative(address),(unsigned long long)main_relative(cpu->x[30]),reason,state,flags);
+    // This inspected caller retains its policy component in x19 across the original suspension call.
+    // Resolve only that native receiver's owner and bounded component table; never search the heap.
+    if (kind==1 && cpu->x[30]==MOD_MAIN_BASE+0x3475f8ull) {
+        uint64_t policy=cpu->x[19],components=guest_pointer(actor+0x228),policy_flags;
+        uint32_t control,slot=UINT32_MAX;
+        if (!guest_readable(policy,0x220) || guest_pointer(policy+0x18)!=actor ||
+            !guest_readable(components,0x508) || !plat_mem_read(policy+0x160,&policy_flags,8) ||
+            !plat_mem_read(policy+0x21c,&control,4)) return;
+        for (unsigned off=0;off<=0x500;off+=8) if (guest_pointer(components+off)==policy) { slot=off; break; }
+        if (slot==UINT32_MAX || !probe_identity_live(i,actor) || guest_pointer(policy+0x18)!=actor ||
+            guest_pointer(actor+0x228)!=components || guest_pointer(components+slot)!=policy) return;
+        rt_log("coop native npc activity policy: probe %u, generation %u, actor id %d, world us %lld, component slot %#x, vtable main+%#llx, flags160 %#llx, flags21c %#x; native caller x19, owner and component slot matched, read-only",
+            i,probe_entries[i].generation,probe_entries[i].id,(long long)frame_step_world_us(),slot,
+            (unsigned long long)main_relative(guest_pointer(policy)),(unsigned long long)policy_flags,control);
+    }
 }
 
 // All three inspected actor-task dispatchers take a task with its actor at +0x20. Count only the
